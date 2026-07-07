@@ -172,8 +172,8 @@ public final class MonitorScreenSystem {
 	static final double DISPLAY_SEARCH_RADIUS = 0.8D;
 	static final double DISPLAY_PLANE_OFFSET = 0.49D;
 	static final double TOUCH_TOLERANCE = 0.08D;
-	static final String SCREEN_OFF_RESOURCE = "/assets/lg2/textures/monitor/screen_off.png";
-	static final String SCREEN_ON_RESOURCE = "/assets/lg2/textures/monitor/screen_on.png";
+	static final String SCREEN_OFF_RESOURCE = "/monitor/screen_off.png";
+	static final String SCREEN_ON_RESOURCE = "/monitor/screen_on.png";
 	static final long PROGRESS_RENDER_INTERVAL_MS = 300L;
 	static final int PROGRESS_FADE_RENDER_STEPS = 5;
 	static final long MEDIA_SCROLL_FOCUS_TIMEOUT_MS = 6000L;

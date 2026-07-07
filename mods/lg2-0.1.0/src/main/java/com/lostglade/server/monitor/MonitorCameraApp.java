@@ -13,7 +13,7 @@ public final class MonitorCameraApp implements MonitorApp {
 
 	@Override
 	public String iconResourcePath() {
-		return "/assets/lg2/textures/monitor/camera_app.png";
+		return "/monitor/camera_app.png";
 	}
 
 	@Override

@@ -13,7 +13,7 @@ public final class MonitorYoutubeApp implements MonitorApp {
 
 	@Override
 	public String iconResourcePath() {
-		return "/assets/lg2/textures/monitor/youtube_app.png";
+		return "/monitor/youtube_app.png";
 	}
 
 	@Override

@@ -13,7 +13,7 @@ public final class MonitorYandexMapsApp implements MonitorApp {
 
 	@Override
 	public String iconResourcePath() {
-		return "/assets/lg2/textures/monitor/yandex_maps_app.png";
+		return "/monitor/yandex_maps_app.png";
 	}
 
 	@Override

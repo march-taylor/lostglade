@@ -86,7 +86,7 @@ public final class MonitorMediaApp implements MonitorApp {
 
 	@Override
 	public String iconResourcePath() {
-		return "/assets/lg2/textures/monitor/media_app.png";
+		return "/monitor/media_app.png";
 	}
 
 	@Override

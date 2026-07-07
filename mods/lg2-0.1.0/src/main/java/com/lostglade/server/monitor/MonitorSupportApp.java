@@ -13,7 +13,7 @@ public final class MonitorSupportApp implements MonitorApp {
 
 	@Override
 	public String iconResourcePath() {
-		return "/assets/lg2/textures/monitor/support_app.png";
+		return "/monitor/support_app.png";
 	}
 
 	@Override

@@ -1,7 +1,0 @@
-{
-  "parent": "lg2:item/drone_paint_base",
-  "textures": {
-    "0": "lg2:item/drone_paint_red",
-    "particle": "lg2:item/drone_paint_red"
-  }
-}

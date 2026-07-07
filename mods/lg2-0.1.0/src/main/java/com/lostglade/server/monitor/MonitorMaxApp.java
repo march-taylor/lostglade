@@ -13,7 +13,7 @@ public final class MonitorMaxApp implements MonitorApp {
 
 	@Override
 	public String iconResourcePath() {
-		return "/assets/lg2/textures/monitor/max_app.png";
+		return "/monitor/max_app.png";
 	}
 
 	@Override

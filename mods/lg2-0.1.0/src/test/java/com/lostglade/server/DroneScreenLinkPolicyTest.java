@@ -151,7 +151,7 @@ public final class DroneScreenLinkPolicyTest {
 				"offscreen renderer must support exact camera positions without adding static eye height"
 		);
 		require(
-				offscreenRenderer.contains("request != null && request.absoluteCameraPosition() ? 0 : MIN_READY_CHUNK_RADIUS"),
+				offscreenRenderer.contains("request != null && (request.absoluteCameraPosition() || request.topDownMap()) ? 0 : MIN_READY_CHUNK_RADIUS"),
 				"pose-updated live drone rendering must not wait for a full 5x5 ready-chunk square before every frame"
 		);
 		require(

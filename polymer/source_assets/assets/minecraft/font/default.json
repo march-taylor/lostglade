@@ -22,7 +22,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/tab_lostglade_logo.png",
+      "file": "lg2:font/tab_lostglade_logo.png",
       "ascent": 36,
       "height": 44,
       "chars": [
@@ -31,7 +31,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/tab_status_icons.png",
+      "file": "lg2:font/tab_status_icons.png",
       "ascent": 7,
       "height": 8,
       "chars": [
@@ -40,7 +40,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/tab_metanart_small.png",
+      "file": "lg2:font/tab_metanart_small.png",
       "ascent": 9,
       "height": 12,
       "chars": [
@@ -49,7 +49,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/stability.png",
+      "file": "lg2:font/stability.png",
       "ascent": 13,
       "height": 55,
       "chars": [
@@ -58,7 +58,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/ui_main_menu_background.png",
+      "file": "lg2:font/ui_main_menu_background.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -67,7 +67,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/main_menu_logo_anim.png",
+      "file": "lg2:font/main_menu_logo_anim.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -79,7 +79,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/main_menu_logo_dvd_anim.png",
+      "file": "lg2:font/main_menu_logo_dvd_anim.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -100,7 +100,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/main_menu_logo_spin_anim.png",
+      "file": "lg2:font/main_menu_logo_spin_anim.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -114,7 +114,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/main_menu_logo_archive_anim.png",
+      "file": "lg2:font/main_menu_logo_archive_anim.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -126,7 +126,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/ui_it_branch_background.png",
+      "file": "lg2:font/ui_it_branch_background.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -135,7 +135,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/ui_drone_tuning_background.png",
+      "file": "lg2:font/ui_drone_tuning_background.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -144,7 +144,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/upgrade_balance_digits.png",
+      "file": "lg2:font/upgrade_balance_digits.png",
       "ascent": 5,
       "height": 240,
       "chars": [
@@ -153,7 +153,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/ui_worlds_background.png",
+      "file": "lg2:font/ui_worlds_background.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -162,7 +162,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/ui_mechanics_background.png",
+      "file": "lg2:font/ui_mechanics_background.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -171,7 +171,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/ui_races_background.png",
+      "file": "lg2:font/ui_races_background.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -180,7 +180,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/ui_eras_background.png",
+      "file": "lg2:font/ui_eras_background.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -189,7 +189,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/eras_progress_00.png",
+      "file": "lg2:font/eras_progress_00.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -198,7 +198,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/eras_progress_01.png",
+      "file": "lg2:font/eras_progress_01.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -207,7 +207,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/eras_progress_02.png",
+      "file": "lg2:font/eras_progress_02.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -216,7 +216,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/eras_progress_03.png",
+      "file": "lg2:font/eras_progress_03.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -225,7 +225,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/eras_progress_04.png",
+      "file": "lg2:font/eras_progress_04.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -234,7 +234,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/eras_progress_05.png",
+      "file": "lg2:font/eras_progress_05.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -243,7 +243,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/eras_progress_06.png",
+      "file": "lg2:font/eras_progress_06.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -252,7 +252,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/eras_progress_07.png",
+      "file": "lg2:font/eras_progress_07.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -261,7 +261,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/eras_progress_08.png",
+      "file": "lg2:font/eras_progress_08.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -270,7 +270,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/eras_progress_09.png",
+      "file": "lg2:font/eras_progress_09.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -279,7 +279,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/eras_progress_10.png",
+      "file": "lg2:font/eras_progress_10.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -288,7 +288,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/eras_progress_11.png",
+      "file": "lg2:font/eras_progress_11.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -297,7 +297,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/eras_progress_12.png",
+      "file": "lg2:font/eras_progress_12.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -306,7 +306,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/eras_progress_13.png",
+      "file": "lg2:font/eras_progress_13.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -315,7 +315,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/eras_progress_14.png",
+      "file": "lg2:font/eras_progress_14.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -324,7 +324,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/eras_progress_15.png",
+      "file": "lg2:font/eras_progress_15.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -333,7 +333,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/eras_progress_16.png",
+      "file": "lg2:font/eras_progress_16.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -342,7 +342,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/eras_progress_17.png",
+      "file": "lg2:font/eras_progress_17.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -351,7 +351,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/eras_progress_18.png",
+      "file": "lg2:font/eras_progress_18.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -360,7 +360,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/eras_progress_19.png",
+      "file": "lg2:font/eras_progress_19.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -369,7 +369,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/eras_progress_20.png",
+      "file": "lg2:font/eras_progress_20.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -378,7 +378,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/eras_progress_21.png",
+      "file": "lg2:font/eras_progress_21.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -387,7 +387,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/eras_progress_22.png",
+      "file": "lg2:font/eras_progress_22.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -396,7 +396,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/eras_progress_23.png",
+      "file": "lg2:font/eras_progress_23.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -405,7 +405,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/eras_progress_24.png",
+      "file": "lg2:font/eras_progress_24.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -414,7 +414,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/eras_progress_25.png",
+      "file": "lg2:font/eras_progress_25.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -423,7 +423,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/eras_progress_26.png",
+      "file": "lg2:font/eras_progress_26.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -432,7 +432,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/eras_progress_27.png",
+      "file": "lg2:font/eras_progress_27.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -441,7 +441,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/eras_progress_28.png",
+      "file": "lg2:font/eras_progress_28.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -450,7 +450,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/eras_progress_29.png",
+      "file": "lg2:font/eras_progress_29.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -459,7 +459,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/eras_progress_30.png",
+      "file": "lg2:font/eras_progress_30.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -468,7 +468,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/eras_progress_31.png",
+      "file": "lg2:font/eras_progress_31.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -477,7 +477,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/eras_progress_32.png",
+      "file": "lg2:font/eras_progress_32.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -486,7 +486,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/eras_progress_33.png",
+      "file": "lg2:font/eras_progress_33.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -495,7 +495,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/eras_progress_34.png",
+      "file": "lg2:font/eras_progress_34.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -504,7 +504,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/eras_available_0.png",
+      "file": "lg2:font/eras_available_0.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -513,7 +513,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/eras_available_1.png",
+      "file": "lg2:font/eras_available_1.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -522,7 +522,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/eras_available_2.png",
+      "file": "lg2:font/eras_available_2.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -531,7 +531,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/eras_available_3.png",
+      "file": "lg2:font/eras_available_3.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -540,7 +540,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/eras_available_4.png",
+      "file": "lg2:font/eras_available_4.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -549,7 +549,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/eras_available_5.png",
+      "file": "lg2:font/eras_available_5.png",
       "ascent": 14,
       "height": 204,
       "chars": [
@@ -558,7 +558,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/vanilla_generic_3row.png",
+      "file": "lg2:font/vanilla_generic_3row.png",
       "ascent": 13,
       "height": 168,
       "chars": [
@@ -567,7 +567,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/vanilla_generic_6row.png",
+      "file": "lg2:font/vanilla_generic_6row.png",
       "ascent": 13,
       "height": 222,
       "chars": [
@@ -576,7 +576,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/vanilla_shulker.png",
+      "file": "lg2:font/vanilla_shulker.png",
       "ascent": 13,
       "height": 167,
       "chars": [
@@ -585,7 +585,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/inventory_label_generic_3row_en_us.png",
+      "file": "lg2:font/inventory_label_generic_3row_en_us.png",
       "ascent": 13,
       "height": 168,
       "chars": [
@@ -594,7 +594,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/inventory_label_generic_3row_ru_ru.png",
+      "file": "lg2:font/inventory_label_generic_3row_ru_ru.png",
       "ascent": 13,
       "height": 168,
       "chars": [
@@ -603,7 +603,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/inventory_label_generic_3row_uk_ua.png",
+      "file": "lg2:font/inventory_label_generic_3row_uk_ua.png",
       "ascent": 13,
       "height": 168,
       "chars": [
@@ -612,7 +612,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/inventory_label_generic_3row_ja_jp.png",
+      "file": "lg2:font/inventory_label_generic_3row_ja_jp.png",
       "ascent": 13,
       "height": 168,
       "chars": [
@@ -621,7 +621,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/inventory_label_generic_3row_rpr.png",
+      "file": "lg2:font/inventory_label_generic_3row_rpr.png",
       "ascent": 13,
       "height": 168,
       "chars": [
@@ -630,7 +630,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/inventory_label_generic_6row_en_us.png",
+      "file": "lg2:font/inventory_label_generic_6row_en_us.png",
       "ascent": 13,
       "height": 222,
       "chars": [
@@ -639,7 +639,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/inventory_label_generic_6row_ru_ru.png",
+      "file": "lg2:font/inventory_label_generic_6row_ru_ru.png",
       "ascent": 13,
       "height": 222,
       "chars": [
@@ -648,7 +648,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/inventory_label_generic_6row_uk_ua.png",
+      "file": "lg2:font/inventory_label_generic_6row_uk_ua.png",
       "ascent": 13,
       "height": 222,
       "chars": [
@@ -657,7 +657,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/inventory_label_generic_6row_ja_jp.png",
+      "file": "lg2:font/inventory_label_generic_6row_ja_jp.png",
       "ascent": 13,
       "height": 222,
       "chars": [
@@ -666,7 +666,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/inventory_label_generic_6row_rpr.png",
+      "file": "lg2:font/inventory_label_generic_6row_rpr.png",
       "ascent": 13,
       "height": 222,
       "chars": [
@@ -675,7 +675,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/inventory_label_shulker_en_us.png",
+      "file": "lg2:font/inventory_label_shulker_en_us.png",
       "ascent": 13,
       "height": 167,
       "chars": [
@@ -684,7 +684,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/inventory_label_shulker_ru_ru.png",
+      "file": "lg2:font/inventory_label_shulker_ru_ru.png",
       "ascent": 13,
       "height": 167,
       "chars": [
@@ -693,7 +693,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/inventory_label_shulker_uk_ua.png",
+      "file": "lg2:font/inventory_label_shulker_uk_ua.png",
       "ascent": 13,
       "height": 167,
       "chars": [
@@ -702,7 +702,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/inventory_label_shulker_ja_jp.png",
+      "file": "lg2:font/inventory_label_shulker_ja_jp.png",
       "ascent": 13,
       "height": 167,
       "chars": [
@@ -711,7 +711,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/inventory_label_shulker_rpr.png",
+      "file": "lg2:font/inventory_label_shulker_rpr.png",
       "ascent": 13,
       "height": 167,
       "chars": [
@@ -720,7 +720,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/respect_rainbow_en_us.png",
+      "file": "lg2:font/respect_rainbow_en_us.png",
       "ascent": 7,
       "height": 8,
       "chars": [
@@ -729,7 +729,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/respect_rainbow_ru_ru.png",
+      "file": "lg2:font/respect_rainbow_ru_ru.png",
       "ascent": 7,
       "height": 8,
       "chars": [
@@ -738,7 +738,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/respect_rainbow_uk_ua.png",
+      "file": "lg2:font/respect_rainbow_uk_ua.png",
       "ascent": 7,
       "height": 8,
       "chars": [
@@ -747,7 +747,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/respect_rainbow_rpr.png",
+      "file": "lg2:font/respect_rainbow_rpr.png",
       "ascent": 7,
       "height": 8,
       "chars": [
@@ -756,7 +756,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/respect_rainbow_ja_jp.png",
+      "file": "lg2:font/respect_rainbow_ja_jp.png",
       "ascent": 7,
       "height": 8,
       "chars": [
@@ -765,7 +765,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/respect_rainbow_digits.png",
+      "file": "lg2:font/respect_rainbow_digits.png",
       "ascent": 7,
       "height": 8,
       "chars": [
@@ -774,7 +774,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/drone_hud_stick.png",
+      "file": "lg2:font/drone_hud_stick.png",
       "ascent": 12,
       "height": 32,
       "chars": [
@@ -793,7 +793,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:font/drone_hud_speed_bar.png",
+      "file": "lg2:font/drone_hud_speed_bar.png",
       "ascent": 12,
       "height": 32,
       "chars": [
