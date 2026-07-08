@@ -23,11 +23,20 @@ public final class Lg2VoicechatPlugin implements VoicechatPlugin {
 	@Override
 	public void registerEvents(EventRegistration registration) {
 		registration.registerEvent(MicrophonePacketEvent.class, event -> {
+			SeasonStartVoiceSystem.onMicrophonePacket(event);
+			if (event.isCancelled()) {
+				return;
+			}
 			LittleDictatorVoiceSystem.onMicrophonePacket(event);
 			MicrophoneSystem.onMicrophonePacket(event);
 			DroneSystem.onVoicechatMicrophonePacket(event);
 		});
-		registration.registerEvent(VoiceDistanceEvent.class, LittleDictatorVoiceSystem::onVoiceDistance);
+		registration.registerEvent(VoiceDistanceEvent.class, event -> {
+			SeasonStartVoiceSystem.onVoiceDistance(event);
+			if (!event.isCancelled()) {
+				LittleDictatorVoiceSystem.onVoiceDistance(event);
+			}
+		});
 		registration.registerEvent(VoicechatServerStartedEvent.class, event ->
 				ServerVoicechatIntegration.setServerApi(event.getVoicechat())
 		);

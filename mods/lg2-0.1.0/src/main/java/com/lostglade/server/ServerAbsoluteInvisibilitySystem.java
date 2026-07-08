@@ -85,6 +85,20 @@ public final class ServerAbsoluteInvisibilitySystem {
 		scheduleSelfInventoryResync(player, 1L);
 	}
 
+	public static void deactivate(ServerPlayer player) {
+		if (player == null || player.level().isClientSide()) {
+			return;
+		}
+		if (ACTIVE_UNTIL_TICK.remove(player.getUUID()) == null) {
+			return;
+		}
+		markSharedFlagsDirty(player);
+		broadcastArmorVisibilityUpdate(player, false);
+		scheduleSelfInventoryResync(player, 0L);
+		COMBAT_REVEALS.remove(player.getUUID());
+		TEMPT_REVEALS.remove(player.getUUID());
+	}
+
 	public static MobEffectInstance createEffectInstance() {
 		return new MobEffectInstance(MobEffects.INVISIBILITY, DURATION_TICKS, 0, false, false, true);
 	}

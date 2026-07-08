@@ -166,6 +166,11 @@ public abstract class ServerCommonPacketListenerAbsoluteInvisibilityMixin {
 			return;
 		}
 
+		if (com.lostglade.server.SeasonStartSystem.shouldSuppressOutgoingPacket(receiver, packet)) {
+			ci.cancel();
+			return;
+		}
+
 		if (ServerAbsoluteInvisibilitySystem.shouldSuppressOutgoingPacket(receiver, packet)) {
 			ci.cancel();
 		}

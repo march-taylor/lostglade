@@ -1,0 +1,160 @@
+{
+  "autoStartOnFirstLaunch": true,
+  "boxHalfWidth": 18,
+  "boxHalfDepth": 18,
+  "boxHeight": 10,
+  "playerSlotSpacing": 4,
+  "introBlindnessTicks": 24000,
+  "guidanceRepeatTicks": 60,
+  "sharedReminderIntervalTicks": 600,
+  "serverVoiceDistance": 40,
+  "cues": [
+    {
+      "id": "intro_boot",
+      "trigger": "player_intro_assigned",
+      "audience": "player",
+      "channel": "player",
+      "audioFile": "voice/intro_boot.wav",
+      "chatText": "Система запускается. Найдите свой первый биткоин.",
+      "delayTicks": 0,
+      "durationTicks": 90,
+      "onceGlobal": false,
+      "oncePerPlayer": true,
+      "requires": []
+    },
+    {
+      "id": "intro_mined",
+      "trigger": "player_mined_intro_bitcoin",
+      "audience": "player",
+      "channel": "player",
+      "audioFile": "voice/intro_mined.wav",
+      "chatText": "Отлично. Теперь подойдите к серверу в темноте и запитайте его.",
+      "delayTicks": 10,
+      "durationTicks": 100,
+      "onceGlobal": false,
+      "oncePerPlayer": true,
+      "requires": [
+        "intro_boot"
+      ]
+    },
+    {
+      "id": "guide_turn_left",
+      "trigger": "guide_turn_left",
+      "audience": "player",
+      "channel": "player",
+      "audioFile": "voice/guide_turn_left.wav",
+      "chatText": "Поверните налево.",
+      "delayTicks": 0,
+      "durationTicks": 35,
+      "onceGlobal": false,
+      "oncePerPlayer": true,
+      "requires": []
+    },
+    {
+      "id": "guide_turn_right",
+      "trigger": "guide_turn_right",
+      "audience": "player",
+      "channel": "player",
+      "audioFile": "voice/guide_turn_right.wav",
+      "chatText": "Поверните направо.",
+      "delayTicks": 0,
+      "durationTicks": 35,
+      "onceGlobal": false,
+      "oncePerPlayer": true,
+      "requires": []
+    },
+    {
+      "id": "guide_forward",
+      "trigger": "guide_forward",
+      "audience": "player",
+      "channel": "player",
+      "audioFile": "voice/guide_forward.wav",
+      "chatText": "Идите вперёд.",
+      "delayTicks": 0,
+      "durationTicks": 35,
+      "onceGlobal": false,
+      "oncePerPlayer": true,
+      "requires": []
+    },
+    {
+      "id": "guide_back",
+      "trigger": "guide_back",
+      "audience": "player",
+      "channel": "player",
+      "audioFile": "voice/guide_back.wav",
+      "chatText": "Вы ушли слишком далеко. Вернитесь назад.",
+      "delayTicks": 0,
+      "durationTicks": 45,
+      "onceGlobal": false,
+      "oncePerPlayer": true,
+      "requires": []
+    },
+    {
+      "id": "guide_drop_coin",
+      "trigger": "guide_drop_coin",
+      "audience": "player",
+      "channel": "player",
+      "audioFile": "voice/guide_drop_coin.wav",
+      "chatText": "Бросьте биткоин прямо в сервер.",
+      "delayTicks": 0,
+      "durationTicks": 55,
+      "onceGlobal": false,
+      "oncePerPlayer": true,
+      "requires": []
+    },
+    {
+      "id": "intro_powered_private",
+      "trigger": "player_powered_server",
+      "audience": "player",
+      "channel": "player",
+      "audioFile": "voice/intro_powered_private.wav",
+      "chatText": "Питание восстановлено. Теперь вы видите остальных.",
+      "delayTicks": 0,
+      "durationTicks": 90,
+      "onceGlobal": false,
+      "oncePerPlayer": true,
+      "requires": [
+        "intro_mined"
+      ]
+    },
+    {
+      "id": "shared_first_light",
+      "trigger": "first_player_shared_phase",
+      "audience": "shared",
+      "channel": "global",
+      "audioFile": "voice/shared_first_light.wav",
+      "chatText": "Свет есть. Собирайте биткоины и следите за стабильностью сервера.",
+      "delayTicks": 20,
+      "durationTicks": 120,
+      "onceGlobal": true,
+      "oncePerPlayer": false,
+      "requires": []
+    },
+    {
+      "id": "shared_reminder",
+      "trigger": "shared_phase_reminder",
+      "audience": "shared",
+      "channel": "global",
+      "audioFile": "voice/shared_reminder.wav",
+      "chatText": "Биткоины поддерживают стабильность. Несите их к серверу.",
+      "delayTicks": 0,
+      "durationTicks": 100,
+      "onceGlobal": false,
+      "oncePerPlayer": false,
+      "requires": []
+    },
+    {
+      "id": "season_finish",
+      "trigger": "season_finished",
+      "audience": "all_active",
+      "channel": "global",
+      "audioFile": "voice/season_finish.wav",
+      "chatText": "Инициализация завершена. Мир прогружен.",
+      "delayTicks": 0,
+      "durationTicks": 100,
+      "onceGlobal": true,
+      "oncePerPlayer": false,
+      "requires": []
+    }
+  ]
+}

@@ -79,20 +79,28 @@ public class ServerBlock extends SimplePolymerBlock {
 		}
 
 		Direction forward = resolveHorizontalFacing(placer);
-		Direction.Axis axis = forward.getAxis();
+		placeServerStructure(serverLevel, pos, forward);
+	}
+
+	public static void placeServerStructure(ServerLevel level, BlockPos pos, Direction forward) {
+		if (level == null || pos == null) {
+			return;
+		}
+		Direction safeForward = forward != null && forward.getAxis().isHorizontal() ? forward : Direction.NORTH;
+		Direction.Axis axis = safeForward.getAxis();
 		List<BlockPos> structurePositions = ServerStructureBreakSystem.getStructurePositions(pos, axis);
 
 		for (BlockPos targetPos : structurePositions) {
 			if (targetPos.equals(pos)) {
 				continue;
 			}
-			serverLevel.setBlock(targetPos, ModBlocks.SERVER.defaultBlockState(), 3);
+			level.setBlock(targetPos, ModBlocks.SERVER.defaultBlockState(), 3);
 		}
 
-		ServerStabilitySystem.onServerStructurePlaced(serverLevel, pos);
-		spawnServerDisplay(serverLevel, pos, forward, axis);
-		serverLevel.playSound(null, pos, SoundEvents.UI_TOAST_CHALLENGE_COMPLETE, SoundSource.BLOCKS, 1.0F, 1.0F);
-		spawnStructureParticles(serverLevel, structurePositions);
+		ServerStabilitySystem.onServerStructurePlaced(level, pos);
+		spawnServerDisplay(level, pos, safeForward, axis);
+		level.playSound(null, pos, SoundEvents.UI_TOAST_CHALLENGE_COMPLETE, SoundSource.BLOCKS, 1.0F, 1.0F);
+		spawnStructureParticles(level, structurePositions);
 	}
 
 	private InteractionResult openServerMenu(Level level, Player player) {

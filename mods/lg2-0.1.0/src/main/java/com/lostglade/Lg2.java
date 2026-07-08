@@ -3,6 +3,7 @@ package com.lostglade;
 import com.lostglade.block.ModBlocks;
 import com.lostglade.config.Lg2Config;
 import com.lostglade.config.RaceConfig;
+import com.lostglade.config.SeasonStartConfig;
 import com.lostglade.network.Lg2Payloads;
 import com.lostglade.network.RendererBotPayloads;
 import com.lostglade.server.ServerGlitchSystem;
@@ -41,6 +42,8 @@ import com.lostglade.server.ServerStructureBreakSystem;
 import com.lostglade.server.ServerMechanicsGateSystem;
 import com.lostglade.server.ServerRespectSystem;
 import com.lostglade.server.ServerRaceSystem;
+import com.lostglade.server.SeasonStartSystem;
+import com.lostglade.server.SeasonStartVoiceSystem;
 import com.lostglade.server.ServerTabIntegration;
 import com.lostglade.server.ServerSelectionHighlightSystem;
 import com.lostglade.server.ServerTrojanRoosterSystem;
@@ -69,6 +72,7 @@ public class Lg2 implements ModInitializer {
 	@Override
 	public void onInitialize() {
 		Lg2Config.load();
+		SeasonStartConfig.load();
 		CameraMediaCache.initialize(FabricLoader.getInstance().getGameDir());
 		RendererBotProcessSystem.preflightServerProperties();
 		RaceConfig.load();
@@ -111,6 +115,7 @@ public class Lg2 implements ModInitializer {
 		ServerBackroomsBlockBreakSystem.register();
 		ServerBackroomsStalkerSystem.register();
 		ServerStructureBreakSystem.register();
+		SeasonStartSystem.register();
 		ServerMechanicsGateSystem.register();
 		ServerRespectSystem.register();
 		CopperManGogglesSystem.registerLateInteractions();
@@ -122,6 +127,7 @@ public class Lg2 implements ModInitializer {
 		}
 		if (FabricLoader.getInstance().isModLoaded("voicechat")) {
 			ServerVoicechatIntegration.register();
+			SeasonStartVoiceSystem.register();
 			SpeakerSystem.register();
 			MicrophoneSystem.register();
 		}

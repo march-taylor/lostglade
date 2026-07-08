@@ -490,6 +490,7 @@ public final class ServerStabilitySystem {
 		}
 
 		handleFeedFeedback(level, itemEntity, serverPos);
+		SeasonStartSystem.onServerFed(level, serverPos);
 		return true;
 	}
 
