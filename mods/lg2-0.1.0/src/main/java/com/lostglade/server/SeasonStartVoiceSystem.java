@@ -48,6 +48,10 @@ public final class SeasonStartVoiceSystem {
 	private static final int AUDIO_FRAME_SAMPLES = 960;
 	private static final long AUDIO_FRAME_DURATION_MS = 20L;
 	private static final long REALTIME_INTERRUPT_GRACE_TICKS = 18L;
+	private static final long FEEDBACK_PREEMPT_GRACE_TICKS = 6L;
+	private static final long FEEDBACK_QUEUE_TTL_TICKS = 20L * 3L;
+	private static final long GUIDANCE_QUEUE_TTL_TICKS = 20L * 4L;
+	private static final long URGENT_QUEUE_TTL_TICKS = 20L * 2L;
 	private static final UUID SERVER_VOICE_SOURCE_ID = UUID.nameUUIDFromBytes("lg2:season_start_server_voice".getBytes(StandardCharsets.UTF_8));
 	private static final Map<String, Deque<QueuedCue>> CHANNEL_QUEUES = new HashMap<>();
 	private static final Map<String, ActiveCuePlayback> ACTIVE_PLAYBACKS = new HashMap<>();
@@ -173,7 +177,7 @@ public final class SeasonStartVoiceSystem {
 	}
 
 	private static void queueCue(MinecraftServer server, VoiceCue cue, ServerPlayer focusPlayer, long executeTick) {
-		if (cue == null || !shouldQueueCue(cue, focusPlayer)) {
+		if (server == null || cue == null || !shouldQueueCue(cue, focusPlayer)) {
 			return;
 		}
 		String channelKey = resolveChannelKey(cue, focusPlayer);
@@ -181,13 +185,19 @@ public final class SeasonStartVoiceSystem {
 			return;
 		}
 
+		long nowTick = server.overworld().getGameTime();
 		QueuedCue queuedCue = new QueuedCue(cue, focusPlayer == null ? null : focusPlayer.getUUID(), executeTick, channelKey);
 		Deque<QueuedCue> queue = CHANNEL_QUEUES.computeIfAbsent(channelKey, ignored -> new ArrayDeque<>());
-		if (isRealtimeCue(cue)) {
-			queue.removeIf(existing -> existing != null && isRealtimeCue(existing.cue));
+		pruneExpiredQueuedCues(queue, nowTick);
+		CueRole cueRole = classifyCue(cue);
+		queue.removeIf(existing -> existing != null && shouldReplaceQueuedCue(existing.cue, cueRole));
+
+		ActiveCuePlayback activePlayback = ACTIVE_PLAYBACKS.get(channelKey);
+		if (shouldInterruptTransientPlayback(activePlayback, queuedCue, nowTick)) {
+			interruptActivePlayback(channelKey);
+			activePlayback = null;
 		}
 		if (cue.interruptCurrent && shouldInterruptImmediately(cue)) {
-			ActiveCuePlayback activePlayback = ACTIVE_PLAYBACKS.get(channelKey);
 			if (activePlayback != null && executeTick - activePlayback.startedTick < REALTIME_INTERRUPT_GRACE_TICKS) {
 				for (QueuedCue existing : queue) {
 					if (sameCue(existing, queuedCue)) {
@@ -209,7 +219,7 @@ public final class SeasonStartVoiceSystem {
 		if (active != null && sameCue(active.queuedCue, queuedCue)) {
 			return;
 		}
-		queue.addLast(queuedCue);
+		insertQueuedCue(queue, queuedCue);
 	}
 
 	private static void interruptActivePlayback(String channelKey) {
@@ -301,16 +311,27 @@ public final class SeasonStartVoiceSystem {
 
 		long nowTick = server.overworld().getGameTime();
 		for (Map.Entry<String, Deque<QueuedCue>> entry : CHANNEL_QUEUES.entrySet()) {
+			pruneExpiredQueuedCues(entry.getValue(), nowTick);
 			if (ACTIVE_PLAYBACKS.containsKey(entry.getKey())) {
 				continue;
 			}
-			QueuedCue next = entry.getValue().peekFirst();
-			if (next == null || next.executeTick > nowTick) {
-				continue;
+			while (true) {
+				QueuedCue next = entry.getValue().peekFirst();
+				if (next == null) {
+					break;
+				}
+				if (isExpired(next, nowTick)) {
+					entry.getValue().pollFirst();
+					continue;
+				}
+				if (next.executeTick > nowTick) {
+					break;
+				}
+				entry.getValue().pollFirst();
+				CompletableFuture<Void> future = startPlayback(server, next);
+				ACTIVE_PLAYBACKS.put(entry.getKey(), new ActiveCuePlayback(next, future, nowTick));
+				break;
 			}
-			entry.getValue().pollFirst();
-			CompletableFuture<Void> future = startPlayback(server, next);
-			ACTIVE_PLAYBACKS.put(entry.getKey(), new ActiveCuePlayback(next, future, nowTick));
 		}
 
 		CHANNEL_QUEUES.entrySet().removeIf(entry -> entry.getValue().isEmpty());
@@ -622,13 +643,126 @@ public final class SeasonStartVoiceSystem {
 		resetSceneState();
 	}
 
-	private static boolean isRealtimeCue(VoiceCue cue) {
-		if (cue == null || cue.id == null) {
+	private static void pruneExpiredQueuedCues(Deque<QueuedCue> queue, long nowTick) {
+		if (queue == null || queue.isEmpty()) {
+			return;
+		}
+		queue.removeIf(queuedCue -> isExpired(queuedCue, nowTick));
+	}
+
+	private static boolean isExpired(QueuedCue queuedCue, long nowTick) {
+		if (queuedCue == null || queuedCue.cue == null) {
+			return true;
+		}
+		long ttlTicks = resolveQueueTtlTicks(queuedCue.cue);
+		return ttlTicks != Long.MAX_VALUE && nowTick > queuedCue.executeTick + ttlTicks;
+	}
+
+	private static long resolveQueueTtlTicks(VoiceCue cue) {
+		return switch (classifyCue(cue)) {
+			case FEEDBACK -> FEEDBACK_QUEUE_TTL_TICKS;
+			case GUIDANCE -> GUIDANCE_QUEUE_TTL_TICKS;
+			case URGENT -> URGENT_QUEUE_TTL_TICKS;
+			case STORY -> Long.MAX_VALUE;
+		};
+	}
+
+	private static boolean shouldReplaceQueuedCue(VoiceCue existingCue, CueRole incomingRole) {
+		if (existingCue == null || incomingRole == null) {
 			return false;
 		}
-		return cue.id.startsWith("guide_")
-				|| cue.id.startsWith("intro_target_")
-				|| cue.id.startsWith("intro_guide_");
+		CueRole existingRole = classifyCue(existingCue);
+		if (incomingRole == CueRole.FEEDBACK) {
+			return existingRole == CueRole.FEEDBACK;
+		}
+		if (incomingRole == CueRole.GUIDANCE || incomingRole == CueRole.URGENT) {
+			return existingRole == CueRole.FEEDBACK || existingRole == CueRole.GUIDANCE || existingRole == CueRole.URGENT;
+		}
+		return false;
+	}
+
+	private static boolean shouldInterruptTransientPlayback(ActiveCuePlayback activePlayback, QueuedCue incomingCue, long nowTick) {
+		if (activePlayback == null || activePlayback.queuedCue == null || incomingCue == null || incomingCue.cue == null) {
+			return false;
+		}
+		CueRole activeRole = classifyCue(activePlayback.queuedCue.cue);
+		CueRole incomingRole = classifyCue(incomingCue.cue);
+		if (activeRole != CueRole.FEEDBACK) {
+			return false;
+		}
+		if (incomingRole != CueRole.GUIDANCE && incomingRole != CueRole.URGENT) {
+			return false;
+		}
+		return nowTick - activePlayback.startedTick >= FEEDBACK_PREEMPT_GRACE_TICKS;
+	}
+
+	private static void insertQueuedCue(Deque<QueuedCue> queue, QueuedCue queuedCue) {
+		if (queue == null || queuedCue == null) {
+			return;
+		}
+		if (queue.isEmpty()) {
+			queue.addLast(queuedCue);
+			return;
+		}
+		List<QueuedCue> ordered = new ArrayList<>(queue.size() + 1);
+		boolean inserted = false;
+		while (!queue.isEmpty()) {
+			QueuedCue existing = queue.pollFirst();
+			if (!inserted && compareQueuedCues(queuedCue, existing) < 0) {
+				ordered.add(queuedCue);
+				inserted = true;
+			}
+			ordered.add(existing);
+		}
+		if (!inserted) {
+			ordered.add(queuedCue);
+		}
+		queue.addAll(ordered);
+	}
+
+	private static int compareQueuedCues(QueuedCue first, QueuedCue second) {
+		if (first == second) {
+			return 0;
+		}
+		if (first == null) {
+			return 1;
+		}
+		if (second == null) {
+			return -1;
+		}
+		int tickCompare = Long.compare(first.executeTick, second.executeTick);
+		if (tickCompare != 0) {
+			return tickCompare;
+		}
+		return Integer.compare(classifyCue(second.cue).priority, classifyCue(first.cue).priority);
+	}
+
+	private static CueRole classifyCue(VoiceCue cue) {
+		if (cue == null) {
+			return CueRole.STORY;
+		}
+		String id = cue.id == null ? "" : cue.id;
+		String trigger = cue.trigger == null ? "" : cue.trigger;
+		if (id.startsWith("guide_wrong_way_")
+				|| id.startsWith("guide_passed_server_")
+				|| id.startsWith("intro_guide_wrong_way_")) {
+			return CueRole.URGENT;
+		}
+		if (trigger.startsWith("intro_phase1_")
+				|| trigger.startsWith("intro_target_")
+				|| id.startsWith("guide_locked_on_")
+				|| id.startsWith("guide_heading_lost_")
+				|| id.startsWith("guide_server_in_sight_")
+				|| id.startsWith("guide_close_presence_")
+				|| id.startsWith("guide_stall_")
+				|| id.startsWith("guide_turn_left_recover_")
+				|| id.startsWith("guide_turn_right_recover_")) {
+			return CueRole.FEEDBACK;
+		}
+		if (trigger.startsWith("guide_") || trigger.startsWith("intro_guide_")) {
+			return CueRole.GUIDANCE;
+		}
+		return CueRole.STORY;
 	}
 
 	private static boolean shouldInterruptImmediately(VoiceCue cue) {
@@ -648,6 +782,19 @@ public final class SeasonStartVoiceSystem {
 	}
 
 	private record ActiveCuePlayback(QueuedCue queuedCue, CompletableFuture<Void> future, long startedTick) {
+	}
+
+	private enum CueRole {
+		STORY(1),
+		FEEDBACK(0),
+		GUIDANCE(2),
+		URGENT(3);
+
+		private final int priority;
+
+		CueRole(int priority) {
+			this.priority = priority;
+		}
 	}
 
 	private static final class PcmClip {

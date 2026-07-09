@@ -583,45 +583,45 @@
       "generatorVersion": 4
     },
     "guide_stall_aligned_01": {
-      "fingerprint": "b63849908dbedbcdce514d50da2cb6a429c0dc61cc36aa8a512569179664c098",
-      "text": "Направление верное. Теперь идите.",
+      "fingerprint": "8c3832e964e79414535682e46718a8bea6cac8f3a0e66b97a7bfdaab26232025",
+      "text": "Вот теперь можно идти прямо.",
       "outputPath": "config/lg2-season-start/voice/guide_stall_aligned_01.wav",
-      "durationTicks": 60,
+      "durationTicks": 41,
       "generatorVersion": 4
     },
     "guide_stall_aligned_02": {
-      "fingerprint": "75439963e01f86d091bcddf334d0058a0b986afb7d5a098a3694025aebe8ee7f",
-      "text": "Стоять красиво, но бесполезно. Вперёд.",
+      "fingerprint": "f5d9e60e9344775dbf879f74888c44989db64b871bef82a7df5b5669a4f61267",
+      "text": "Курс собран. Теперь вперёд.",
       "outputPath": "config/lg2-season-start/voice/guide_stall_aligned_02.wav",
-      "durationTicks": 68,
+      "durationTicks": 57,
       "generatorVersion": 4
     },
     "guide_stall_aligned_03": {
-      "fingerprint": "4c5a72ac6fc36c43b68795c8cceba45253f7690b1e2060beb9a1026eb09810f8",
-      "text": "Да, курс правильный. Ноги тоже нужны.",
+      "fingerprint": "b5233f9d7040ad8a09efe0c0286c1d43841e812b383560fb3e3a999a0c0d8d12",
+      "text": "Направление уже хорошее. Осталось просто пойти.",
       "outputPath": "config/lg2-season-start/voice/guide_stall_aligned_03.wav",
-      "durationTicks": 60,
+      "durationTicks": 73,
       "generatorVersion": 4
     },
     "guide_stall_misaligned_01": {
-      "fingerprint": "5e6b7df5bbbfff5786e5859254ddd6790ed71d26737b4c016f9589c3e26e28a6",
-      "text": "Стоять рано. Вы ещё даже смотрите не туда.",
+      "fingerprint": "cf67b34f8a200c06a79b172bd74f2af59fe681ff860374ed81314a4794718575",
+      "text": "Почти. Сначала доверните совсем немного.",
       "outputPath": "config/lg2-season-start/voice/guide_stall_misaligned_01.wav",
-      "durationTicks": 68,
+      "durationTicks": 63,
       "generatorVersion": 4
     },
     "guide_stall_misaligned_02": {
-      "fingerprint": "89689f9b01786a755f604af2e1d433e0c4e1df919b83fcf921c5fd7c37b4547e",
-      "text": "Не замирайте. Сначала повернитесь как надо.",
+      "fingerprint": "f678acffb9c96b6a78282076d716da351da939e604ab7b1de4f4b1553a4042ca",
+      "text": "Вы почти навелись. Чуть поправьте курс, потом идите.",
       "outputPath": "config/lg2-season-start/voice/guide_stall_misaligned_02.wav",
-      "durationTicks": 71,
+      "durationTicks": 73,
       "generatorVersion": 4
     },
     "guide_stall_misaligned_03": {
-      "fingerprint": "e3c5a93db864b48f0ba1e0b2bce0aaef646e51e177ae9cfc73899af299a95c35",
-      "text": "Сейчас пауза выглядит не драматично, а ошибочно.",
+      "fingerprint": "2b7186f7a286898efb0b9e29240cc4c3b9ccef238b8c09e343ed5d4e38969b52",
+      "text": "Не спешите идти. Сначала совсем небольшая доводка направления.",
       "outputPath": "config/lg2-season-start/voice/guide_stall_misaligned_03.wav",
-      "durationTicks": 68,
+      "durationTicks": 94,
       "generatorVersion": 4
     },
     "guide_wrong_way_01": {
@@ -804,6 +804,34 @@
       "text": "Нет, не туда. Право было с другой стороны. Теперь уже туда.",
       "outputPath": "config/lg2-season-start/voice/guide_turn_right_recover_03.wav",
       "durationTicks": 91,
+      "generatorVersion": 4
+    },
+    "intro_target_look_up_01": {
+      "fingerprint": "eda8ae1dd9e256be0b88ff5e1d78dc64e8742302cd0130be30edf705e3361fa7",
+      "text": "Чуть выше взгляд. Руда не в полу.",
+      "outputPath": "config/lg2-season-start/voice/intro_target_look_up_01.wav",
+      "durationTicks": 59,
+      "generatorVersion": 4
+    },
+    "intro_target_look_up_02": {
+      "fingerprint": "5d225fcded2d38349d16c30650b8a747d3c11a90e6e8fb7a6f080b17dbe2afb3",
+      "text": "Поднимите голову немного выше. Вы почти навелись.",
+      "outputPath": "config/lg2-season-start/voice/intro_target_look_up_02.wav",
+      "durationTicks": 71,
+      "generatorVersion": 4
+    },
+    "intro_target_look_down_01": {
+      "fingerprint": "0378f776bd63ea6711a0cbf11afa1da5394897e57c868ea48bb1026854e19de4",
+      "text": "Ниже взгляд. Руда не на потолке.",
+      "outputPath": "config/lg2-season-start/voice/intro_target_look_down_01.wav",
+      "durationTicks": 55,
+      "generatorVersion": 4
+    },
+    "intro_target_look_down_02": {
+      "fingerprint": "ba7984e760385a45bf79533b0458b6d3cd84fee738bfd4839d3b7a5d48bb75ed",
+      "text": "Опустите голову чуть ниже. Вы почти у цели.",
+      "outputPath": "config/lg2-season-start/voice/intro_target_look_down_02.wav",
+      "durationTicks": 70,
       "generatorVersion": 4
     }
   }

@@ -76,13 +76,13 @@ public final class SeasonStartSystem {
 	private static final ItemStack INTRO_TOOL_TEMPLATE = createIntroToolTemplate();
 	private static final long WAITING_START_INITIAL_PROMPT_TICKS = 20L * 3L;
 	private static final long WAITING_START_REPEAT_TICKS = 20L * 15L;
-	private static final long INTRO_IDLE_TRIGGER_TICKS = 20L * 7L;
+	private static final long INTRO_IDLE_TRIGGER_TICKS = 20L * 9L;
 	private static final long INTRO_IDLE_REPEAT_TICKS = 20L * 10L;
 	private static final long INTRO_LEAVE_REPEAT_TICKS = 20L * 7L;
 	private static final long INTRO_SPIN_REPEAT_TICKS = 20L * 6L;
 	private static final long INTRO_JUMP_REPEAT_TICKS = 20L * 4L;
 	private static final long INTRO_AIR_PUNCH_REPEAT_TICKS = 20L * 5L;
-	private static final long INTRO_TARGET_REACTION_REPEAT_TICKS = 20L * 4L;
+	private static final long INTRO_TARGET_REACTION_REPEAT_TICKS = 20L * 9L;
 	private static final long GUIDANCE_EVALUATE_TICKS = 4L;
 	private static final long GUIDANCE_MIN_VOICE_GAP_TICKS = 20L;
 	private static final long GUIDANCE_CATEGORY_COOLDOWN_TICKS = 10L;
@@ -90,9 +90,15 @@ public final class SeasonStartSystem {
 	private static final long GUIDANCE_FORWARD_COOLDOWN_TICKS = 16L;
 	private static final long GUIDANCE_STALL_COOLDOWN_TICKS = 24L;
 	private static final long GUIDANCE_RECOVER_REACTION_WINDOW_TICKS = 28L;
+	private static final long GUIDANCE_STALL_AFTER_ALIGNMENT_TICKS = 20L;
+	private static final long GUIDANCE_STALL_AFTER_TURN_TICKS = 18L;
+	private static final int BARRIER_FLOOR_DEPTH = 5;
 	private static final double INTRO_ACTIVITY_MOVE_SQR = 0.04D * 0.04D;
 	private static final double INTRO_SPIN_TRIGGER_SCORE = 200.0D;
 	private static final double INTRO_PICK_REACH = 5.0D;
+	private static final double INTRO_TARGET_VERTICAL_GUIDANCE_DISTANCE = 4.8D;
+	private static final double INTRO_TARGET_VERTICAL_YAW_WINDOW = 14.0D;
+	private static final double INTRO_TARGET_VERTICAL_PITCH_THRESHOLD = 24.0D;
 	private static final float INTRO_ACTIVITY_YAW_DEGREES = 6.0F;
 	private static final float INTRO_ACTIVITY_PITCH_DEGREES = 4.0F;
 	private static final double GUIDANCE_LOCK_ANGLE = 6.0D;
@@ -102,8 +108,8 @@ public final class SeasonStartSystem {
 	private static final double GUIDANCE_TURN_AROUND_ANGLE = 140.0D;
 	private static final double GUIDANCE_CLOSE_APPROACH_DISTANCE = 3.0D;
 	private static final double GUIDANCE_QUIET_DISTANCE = 2.05D;
-	private static final double GUIDANCE_DROP_DISTANCE = 0.85D;
-	private static final double GUIDANCE_SERVER_SIGHT_DISTANCE = 2.6D;
+	private static final double GUIDANCE_DROP_DISTANCE = 1.35D;
+	private static final double GUIDANCE_SERVER_SIGHT_DISTANCE = 4.2D;
 	private static final double GUIDANCE_PROGRESS_AWAY = 0.16D;
 	private static final double GUIDANCE_PROGRESS_TOWARD = -0.14D;
 	private static final double GUIDANCE_STALL_DELTA = 0.05D;
@@ -127,6 +133,14 @@ public final class SeasonStartSystem {
 	private static final String[] INTRO_TARGET_STARE_TRIGGERS = {
 			"intro_target_stare_01",
 			"intro_target_stare_02"
+	};
+	private static final String[] INTRO_TARGET_LOOK_UP_TRIGGERS = {
+			"intro_target_look_up_01",
+			"intro_target_look_up_02"
+	};
+	private static final String[] INTRO_TARGET_LOOK_DOWN_TRIGGERS = {
+			"intro_target_look_down_01",
+			"intro_target_look_down_02"
 	};
 	private static final String[] INTRO_GUIDE_WRONG_WAY_TRIGGERS = {
 			"intro_guide_wrong_way_01",
@@ -400,6 +414,10 @@ public final class SeasonStartSystem {
 
 		long nowTick = level.getGameTime();
 		state.lastActivityTick = nowTick;
+		if (nowTick < state.guidanceNarrationGateTick) {
+			updateObservationBaseline(player, state);
+			return;
+		}
 		if (isLookingAtIntroOre(player, slot)) {
 			if (!state.introTargetLocked || nowTick >= state.nextIntroTargetReactionTick) {
 				fireTriggerCycle(level.getServer(), player, state, "intro_target_locked", INTRO_TARGET_LOCK_TRIGGERS);
@@ -836,7 +854,8 @@ public final class SeasonStartSystem {
 		}
 		double distanceDelta = snapshot.horizontalDistance - state.lastGuidanceDistance;
 		boolean lookingAtOre = isLookingAtIntroOre(player, slot);
-		GuidanceInstruction instruction = resolveIntroGuidanceInstruction(snapshot, distanceDelta, lookingAtOre, state, nowTick);
+		VerticalAimHint verticalAimHint = resolveIntroVerticalAimHint(player, slot, snapshot, lookingAtOre);
+		GuidanceInstruction instruction = resolveIntroGuidanceInstruction(snapshot, distanceDelta, lookingAtOre, verticalAimHint, state, nowTick);
 		state.lastGuidanceDistance = snapshot.horizontalDistance;
 		if (instruction == null) {
 			state.wasGuidanceAligned = snapshot.aligned;
@@ -874,6 +893,11 @@ public final class SeasonStartSystem {
 		long nowTick = player.level().getGameTime();
 		if (state.lastObservationTick == Long.MIN_VALUE) {
 			primeObservationState(player, state);
+			return;
+		}
+		if (nowTick < state.guidanceNarrationGateTick) {
+			state.lastActivityTick = nowTick;
+			updateObservationBaseline(player, state);
 			return;
 		}
 
@@ -980,7 +1004,7 @@ public final class SeasonStartSystem {
 		if (hasBitcoin && state.wasGuidanceClose && snapshot.horizontalDistance >= 3.1D && distanceDelta >= GUIDANCE_PROGRESS_AWAY) {
 			return new GuidanceInstruction("guide_passed_server", "guide_passed_server", GUIDE_PASSED_SERVER_TRIGGERS, GUIDANCE_CATEGORY_COOLDOWN_TICKS);
 		}
-		if (hasBitcoin && inDropZone && absYaw <= GUIDANCE_MICRO_ANGLE) {
+		if (hasBitcoin && inDropZone) {
 			return new GuidanceInstruction("guide_drop_coin", "guide_drop_coin", GUIDE_DROP_COIN_TRIGGERS, GUIDANCE_FORWARD_COOLDOWN_TICKS);
 		}
 		if (hasBitcoin && quietZone) {
@@ -1010,9 +1034,10 @@ public final class SeasonStartSystem {
 			return new GuidanceInstruction("guide_locked_on", "guide_locked_on", GUIDE_LOCKED_ON_TRIGGERS, GUIDANCE_FORWARD_COOLDOWN_TICKS);
 		}
 		if (Math.abs(distanceDelta) < GUIDANCE_STALL_DELTA) {
-			return snapshot.aligned
-					? new GuidanceInstruction("guide_stall_aligned", "guide_stall_aligned", GUIDE_STALL_ALIGNED_TRIGGERS, GUIDANCE_STALL_COOLDOWN_TICKS)
-					: new GuidanceInstruction("guide_stall_misaligned", "guide_stall_misaligned", GUIDE_STALL_MISALIGNED_TRIGGERS, GUIDANCE_STALL_COOLDOWN_TICKS);
+			GuidanceInstruction stallInstruction = resolveStallInstruction(snapshot, state, nowTick);
+			if (stallInstruction != null) {
+				return stallInstruction;
+			}
 		}
 		if (snapshot.distanceBucket != state.lastGuidanceDistanceBucket || distanceDelta <= GUIDANCE_PROGRESS_TOWARD) {
 			return switch (snapshot.distanceBucket) {
@@ -1029,11 +1054,18 @@ public final class SeasonStartSystem {
 			GuidanceSnapshot snapshot,
 			double distanceDelta,
 			boolean lookingAtOre,
+			VerticalAimHint verticalAimHint,
 			PlayerSceneState state,
 			long nowTick
 	) {
 		if (snapshot == null || state == null || lookingAtOre) {
 			return null;
+		}
+		if (verticalAimHint == VerticalAimHint.UP) {
+			return new GuidanceInstruction("intro_target_look_up", "intro_target_look_up", INTRO_TARGET_LOOK_UP_TRIGGERS, GUIDANCE_STALL_COOLDOWN_TICKS);
+		}
+		if (verticalAimHint == VerticalAimHint.DOWN) {
+			return new GuidanceInstruction("intro_target_look_down", "intro_target_look_down", INTRO_TARGET_LOOK_DOWN_TRIGGERS, GUIDANCE_STALL_COOLDOWN_TICKS);
 		}
 		double absYaw = Math.abs(snapshot.deltaYaw);
 		GuidanceInstruction turnInstruction = resolveTurnInstruction(snapshot, absYaw, state, nowTick);
@@ -1047,9 +1079,10 @@ public final class SeasonStartSystem {
 			return new GuidanceInstruction("guide_locked_on", "guide_locked_on", GUIDE_LOCKED_ON_TRIGGERS, GUIDANCE_FORWARD_COOLDOWN_TICKS);
 		}
 		if (Math.abs(distanceDelta) < GUIDANCE_STALL_DELTA) {
-			return snapshot.aligned
-					? new GuidanceInstruction("guide_stall_aligned", "guide_stall_aligned", GUIDE_STALL_ALIGNED_TRIGGERS, GUIDANCE_STALL_COOLDOWN_TICKS)
-					: new GuidanceInstruction("guide_stall_misaligned", "guide_stall_misaligned", GUIDE_STALL_MISALIGNED_TRIGGERS, GUIDANCE_STALL_COOLDOWN_TICKS);
+			GuidanceInstruction stallInstruction = resolveStallInstruction(snapshot, state, nowTick);
+			if (stallInstruction != null) {
+				return stallInstruction;
+			}
 		}
 		if (snapshot.distanceBucket != state.lastGuidanceDistanceBucket || distanceDelta <= GUIDANCE_PROGRESS_TOWARD) {
 			return switch (snapshot.distanceBucket) {
@@ -1126,6 +1159,56 @@ public final class SeasonStartSystem {
 				: new GuidanceInstruction("guide_turn_right_recover", "guide_turn_right_recover", GUIDE_TURN_RIGHT_RECOVER_TRIGGERS, GUIDANCE_CORRECTION_COOLDOWN_TICKS);
 	}
 
+	private static VerticalAimHint resolveIntroVerticalAimHint(
+			ServerPlayer player,
+			SlotDefinition slot,
+			GuidanceSnapshot snapshot,
+			boolean lookingAtOre
+	) {
+		if (player == null || slot == null || snapshot == null || lookingAtOre) {
+			return VerticalAimHint.NONE;
+		}
+		if (snapshot.horizontalDistance > INTRO_TARGET_VERTICAL_GUIDANCE_DISTANCE
+				|| Math.abs(snapshot.deltaYaw) > INTRO_TARGET_VERTICAL_YAW_WINDOW) {
+			return VerticalAimHint.NONE;
+		}
+		Vec3 eyePos = player.getEyePosition();
+		Vec3 toTarget = centerOf(slot.orePos).subtract(eyePos);
+		double horizontalDistance = Math.sqrt(toTarget.x * toTarget.x + toTarget.z * toTarget.z);
+		if (horizontalDistance <= 1.0E-4D) {
+			return VerticalAimHint.NONE;
+		}
+		double targetPitch = -(Math.atan2(toTarget.y, horizontalDistance) * Mth.RAD_TO_DEG);
+		double pitchDelta = Mth.wrapDegrees(targetPitch - player.getXRot());
+		if (pitchDelta >= INTRO_TARGET_VERTICAL_PITCH_THRESHOLD) {
+			return VerticalAimHint.DOWN;
+		}
+		if (pitchDelta <= -INTRO_TARGET_VERTICAL_PITCH_THRESHOLD) {
+			return VerticalAimHint.UP;
+		}
+		return VerticalAimHint.NONE;
+	}
+
+	private static GuidanceInstruction resolveStallInstruction(
+			GuidanceSnapshot snapshot,
+			PlayerSceneState state,
+			long nowTick
+	) {
+		if (snapshot == null || state == null) {
+			return null;
+		}
+		if (snapshot.aligned) {
+			if (nowTick - state.lastGuidanceAlignedTick < GUIDANCE_STALL_AFTER_ALIGNMENT_TICKS) {
+				return null;
+			}
+			return new GuidanceInstruction("guide_stall_aligned", "guide_stall_aligned", GUIDE_STALL_ALIGNED_TRIGGERS, GUIDANCE_STALL_COOLDOWN_TICKS);
+		}
+		if (nowTick - state.lastGuidanceTurnTick < GUIDANCE_STALL_AFTER_TURN_TICKS) {
+			return null;
+		}
+		return new GuidanceInstruction("guide_stall_misaligned", "guide_stall_misaligned", GUIDE_STALL_MISALIGNED_TRIGGERS, GUIDANCE_STALL_COOLDOWN_TICKS);
+	}
+
 	private static int guidanceDistanceBucket(double distance) {
 		if (distance <= 2.6D) {
 			return 2;
@@ -1153,6 +1236,7 @@ public final class SeasonStartSystem {
 		updateGuidanceTurnContext(state, instruction, absYaw, nowTick);
 		if ("guide_locked_on".equals(instruction.stateKey)) {
 			state.guidanceAlignedEver = true;
+			state.lastGuidanceAlignedTick = nowTick;
 			return;
 		}
 		if ("guide_heading_lost".equals(instruction.stateKey)
@@ -1344,6 +1428,7 @@ public final class SeasonStartSystem {
 		state.lastGuidanceDistanceBucket = Integer.MIN_VALUE;
 		state.wasGuidanceAligned = false;
 		state.wasGuidanceClose = false;
+		state.lastGuidanceAlignedTick = Long.MIN_VALUE;
 		state.guidanceRouteStarted = true;
 		state.guidanceAlignedEver = false;
 		state.guidanceMistakeCount = 0;
@@ -1491,10 +1576,11 @@ public final class SeasonStartSystem {
 
 	private static List<BlockPos> collectBarrierShellBlocks(BoxGeometry geometry) {
 		List<BlockPos> blocks = new ArrayList<>();
-		int floorBarrierY = geometry.floorY - 1;
-		for (int x = geometry.minX; x <= geometry.maxX; x++) {
-			for (int z = geometry.minZ; z <= geometry.maxZ; z++) {
-				blocks.add(new BlockPos(x, floorBarrierY, z));
+		for (int y = geometry.floorY; y >= geometry.floorY - (BARRIER_FLOOR_DEPTH - 1); y--) {
+			for (int x = geometry.minX; x <= geometry.maxX; x++) {
+				for (int z = geometry.minZ; z <= geometry.maxZ; z++) {
+					blocks.add(new BlockPos(x, y, z));
+				}
 			}
 		}
 		for (int y = geometry.floorY + 1; y <= geometry.roofY; y++) {
@@ -1866,14 +1952,15 @@ public final class SeasonStartSystem {
 	private static BoxGeometry computeOuterBoxGeometry(BlockPos anchor) {
 		int halfWidth = get().boxHalfWidth;
 		int halfDepth = get().boxHalfDepth;
-		int floorY = anchor.getY() - 1;
+		int barrierFloorY = anchor.getY() - 1;
+		int floorY = barrierFloorY - BARRIER_FLOOR_DEPTH;
 		return new BoxGeometry(
 				anchor.getX() - halfWidth,
 				anchor.getX() + halfWidth,
 				anchor.getZ() - halfDepth,
 				anchor.getZ() + halfDepth,
 				floorY,
-				floorY + get().boxHeight
+				barrierFloorY + get().boxHeight
 		);
 	}
 
@@ -2025,6 +2112,7 @@ public final class SeasonStartSystem {
 		state.lastGuidanceDistanceBucket = Integer.MIN_VALUE;
 		state.wasGuidanceAligned = false;
 		state.wasGuidanceClose = false;
+		state.lastGuidanceAlignedTick = Long.MIN_VALUE;
 		state.guidanceRouteStarted = false;
 		state.guidanceAlignedEver = false;
 		state.guidanceMistakeCount = 0;
@@ -2191,6 +2279,7 @@ public final class SeasonStartSystem {
 		private int lastGuidanceDistanceBucket = Integer.MIN_VALUE;
 		private boolean wasGuidanceAligned = false;
 		private boolean wasGuidanceClose = false;
+		private long lastGuidanceAlignedTick = Long.MIN_VALUE;
 		private boolean guidanceRouteStarted = false;
 		private boolean guidanceAlignedEver = false;
 		private int guidanceMistakeCount = 0;
@@ -2244,6 +2333,12 @@ public final class SeasonStartSystem {
 		NONE,
 		LEFT,
 		RIGHT
+	}
+
+	private enum VerticalAimHint {
+		NONE,
+		UP,
+		DOWN
 	}
 
 	private static final class PersistedState {
