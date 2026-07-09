@@ -11,6 +11,7 @@ import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.entity.event.v1.ServerPlayerEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+import net.fabricmc.fabric.api.message.v1.ServerMessageEvents;
 import net.fabricmc.fabric.api.event.player.PlayerBlockBreakEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.minecraft.commands.CommandSourceStack;
@@ -20,6 +21,8 @@ import net.minecraft.core.Direction;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.ChatType;
+import net.minecraft.network.chat.PlayerChatMessage;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientboundLevelParticlesPacket;
 import net.minecraft.network.protocol.game.ClientboundSoundEntityPacket;
@@ -31,8 +34,11 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.permissions.Permissions;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
+import net.minecraft.util.Mth;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.Relative;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.item.ItemStack;
@@ -42,6 +48,8 @@ import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.storage.LevelResource;
 import net.minecraft.world.level.storage.LevelData;
 import net.minecraft.world.level.GameType;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 
 import java.io.Reader;
@@ -65,6 +73,165 @@ public final class SeasonStartSystem {
 	private static final Set<Relative> ABSOLUTE_TELEPORT = EnumSet.noneOf(Relative.class);
 	private static final int DISSOLVE_BATCH_BLOCKS = 96;
 	private static final ItemStack INTRO_TOOL_TEMPLATE = createIntroToolTemplate();
+	private static final long WAITING_START_INITIAL_PROMPT_TICKS = 20L * 3L;
+	private static final long WAITING_START_REPEAT_TICKS = 20L * 15L;
+	private static final long INTRO_IDLE_TRIGGER_TICKS = 20L * 7L;
+	private static final long INTRO_IDLE_REPEAT_TICKS = 20L * 10L;
+	private static final long INTRO_LEAVE_REPEAT_TICKS = 20L * 7L;
+	private static final long INTRO_SPIN_REPEAT_TICKS = 20L * 6L;
+	private static final long INTRO_JUMP_REPEAT_TICKS = 20L * 4L;
+	private static final long INTRO_AIR_PUNCH_REPEAT_TICKS = 20L * 5L;
+	private static final long INTRO_TARGET_REACTION_REPEAT_TICKS = 20L * 4L;
+	private static final long GUIDANCE_EVALUATE_TICKS = 4L;
+	private static final long GUIDANCE_MIN_VOICE_GAP_TICKS = 20L;
+	private static final long GUIDANCE_CATEGORY_COOLDOWN_TICKS = 10L;
+	private static final long GUIDANCE_CORRECTION_COOLDOWN_TICKS = 8L;
+	private static final long GUIDANCE_FORWARD_COOLDOWN_TICKS = 16L;
+	private static final long GUIDANCE_STALL_COOLDOWN_TICKS = 24L;
+	private static final double INTRO_ACTIVITY_MOVE_SQR = 0.04D * 0.04D;
+	private static final double INTRO_SPIN_TRIGGER_SCORE = 200.0D;
+	private static final double INTRO_PICK_REACH = 5.0D;
+	private static final float INTRO_ACTIVITY_YAW_DEGREES = 6.0F;
+	private static final float INTRO_ACTIVITY_PITCH_DEGREES = 4.0F;
+	private static final double GUIDANCE_LOCK_ANGLE = 6.0D;
+	private static final double GUIDANCE_MICRO_ANGLE = 12.0D;
+	private static final double GUIDANCE_MEDIUM_ANGLE = 26.0D;
+	private static final double GUIDANCE_HARD_ANGLE = 62.0D;
+	private static final double GUIDANCE_TURN_AROUND_ANGLE = 140.0D;
+	private static final double GUIDANCE_CLOSE_APPROACH_DISTANCE = 2.7D;
+	private static final double GUIDANCE_DROP_DISTANCE = 1.9D;
+	private static final double GUIDANCE_SERVER_SIGHT_DISTANCE = 3.1D;
+	private static final double GUIDANCE_PROGRESS_AWAY = 0.16D;
+	private static final double GUIDANCE_PROGRESS_TOWARD = -0.14D;
+	private static final double GUIDANCE_STALL_DELTA = 0.05D;
+	private static final String START_WORD_EN = "start";
+	private static final String START_WORD_RU = "старт";
+	private static final String[] WAITING_START_PROMPT_TRIGGERS = {
+			"player_waiting_start_prompt_01",
+			"player_waiting_start_prompt_02",
+			"player_waiting_start_prompt_03"
+	};
+	private static final String[] WAITING_START_WRONG_TRIGGERS = {
+			"player_waiting_start_wrong_01",
+			"player_waiting_start_wrong_02"
+	};
+	private static final String[] INTRO_TARGET_LOCK_TRIGGERS = {
+			"intro_target_locked_01",
+			"intro_target_locked_02",
+			"intro_target_locked_03"
+	};
+	private static final String[] INTRO_TARGET_STARE_TRIGGERS = {
+			"intro_target_stare_01",
+			"intro_target_stare_02"
+	};
+	private static final String[] INTRO_GUIDE_WRONG_WAY_TRIGGERS = {
+			"intro_guide_wrong_way_01",
+			"intro_guide_wrong_way_02",
+			"intro_guide_wrong_way_03"
+	};
+	private static final String[] GUIDE_TURN_LEFT_HARD_TRIGGERS = {
+			"guide_turn_left_hard_01",
+			"guide_turn_left_hard_02",
+			"guide_turn_left_hard_03"
+	};
+	private static final String[] GUIDE_TURN_LEFT_MEDIUM_TRIGGERS = {
+			"guide_turn_left_medium_01",
+			"guide_turn_left_medium_02",
+			"guide_turn_left_medium_03"
+	};
+	private static final String[] GUIDE_TURN_LEFT_SOFT_TRIGGERS = {
+			"guide_turn_left_soft_01",
+			"guide_turn_left_soft_02",
+			"guide_turn_left_soft_03"
+	};
+	private static final String[] GUIDE_TURN_RIGHT_HARD_TRIGGERS = {
+			"guide_turn_right_hard_01",
+			"guide_turn_right_hard_02",
+			"guide_turn_right_hard_03"
+	};
+	private static final String[] GUIDE_TURN_RIGHT_MEDIUM_TRIGGERS = {
+			"guide_turn_right_medium_01",
+			"guide_turn_right_medium_02",
+			"guide_turn_right_medium_03"
+	};
+	private static final String[] GUIDE_TURN_RIGHT_SOFT_TRIGGERS = {
+			"guide_turn_right_soft_01",
+			"guide_turn_right_soft_02",
+			"guide_turn_right_soft_03"
+	};
+	private static final String[] GUIDE_TURN_AROUND_LEFT_TRIGGERS = {
+			"guide_turn_around_left_01",
+			"guide_turn_around_left_02",
+			"guide_turn_around_left_03"
+	};
+	private static final String[] GUIDE_TURN_AROUND_RIGHT_TRIGGERS = {
+			"guide_turn_around_right_01",
+			"guide_turn_around_right_02",
+			"guide_turn_around_right_03"
+	};
+	private static final String[] GUIDE_LOCKED_ON_TRIGGERS = {
+			"guide_locked_on_01",
+			"guide_locked_on_02",
+			"guide_locked_on_03",
+			"guide_locked_on_04"
+	};
+	private static final String[] GUIDE_HEADING_LOST_TRIGGERS = {
+			"guide_heading_lost_01",
+			"guide_heading_lost_02",
+			"guide_heading_lost_03"
+	};
+	private static final String[] GUIDE_SERVER_IN_SIGHT_TRIGGERS = {
+			"guide_server_in_sight_01",
+			"guide_server_in_sight_02",
+			"guide_server_in_sight_03"
+	};
+	private static final String[] GUIDE_FORWARD_FAR_TRIGGERS = {
+			"guide_forward_far_01",
+			"guide_forward_far_02",
+			"guide_forward_far_03"
+	};
+	private static final String[] GUIDE_FORWARD_MID_TRIGGERS = {
+			"guide_forward_mid_01",
+			"guide_forward_mid_02",
+			"guide_forward_mid_03"
+	};
+	private static final String[] GUIDE_FORWARD_NEAR_TRIGGERS = {
+			"guide_forward_near_01",
+			"guide_forward_near_02",
+			"guide_forward_near_03"
+	};
+	private static final String[] GUIDE_FORWARD_CLOSE_TRIGGERS = {
+			"guide_forward_close_01",
+			"guide_forward_close_02",
+			"guide_forward_close_03"
+	};
+	private static final String[] GUIDE_DROP_COIN_TRIGGERS = {
+			"guide_drop_coin_01",
+			"guide_drop_coin_02",
+			"guide_drop_coin_03",
+			"guide_drop_coin_04"
+	};
+	private static final String[] GUIDE_WRONG_WAY_TRIGGERS = {
+			"guide_wrong_way_01",
+			"guide_wrong_way_02",
+			"guide_wrong_way_03",
+			"guide_wrong_way_04"
+	};
+	private static final String[] GUIDE_STALL_ALIGNED_TRIGGERS = {
+			"guide_stall_aligned_01",
+			"guide_stall_aligned_02",
+			"guide_stall_aligned_03"
+	};
+	private static final String[] GUIDE_STALL_MISALIGNED_TRIGGERS = {
+			"guide_stall_misaligned_01",
+			"guide_stall_misaligned_02",
+			"guide_stall_misaligned_03"
+	};
+	private static final String[] GUIDE_PASSED_SERVER_TRIGGERS = {
+			"guide_passed_server_01",
+			"guide_passed_server_02",
+			"guide_passed_server_03"
+	};
 
 	private static final Map<UUID, PlayerSceneState> PLAYER_STATES = new LinkedHashMap<>();
 	private static final List<BlockPos> SHELL_DISSOLVE_ORDER = new ArrayList<>();
@@ -102,6 +269,7 @@ public final class SeasonStartSystem {
 		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) ->
 				server.execute(() -> onPlayerJoined(server, (ServerPlayer) handler.player)));
 		ServerPlayerEvents.AFTER_RESPAWN.register((oldPlayer, newPlayer, alive) -> onPlayerJoined(newPlayer.level().getServer(), newPlayer));
+		ServerMessageEvents.ALLOW_CHAT_MESSAGE.register(SeasonStartSystem::onAllowChatMessage);
 
 		PlayerBlockBreakEvents.BEFORE.register((world, player, pos, state, blockEntity) -> {
 			if (!(world instanceof ServerLevel level) || !(player instanceof ServerPlayer serverPlayer)) {
@@ -193,6 +361,40 @@ public final class SeasonStartSystem {
 		}
 	}
 
+	public static void onPlayerAnimate(ServerPlayer player) {
+		if (!active || player == null || !(player.level() instanceof ServerLevel level) || serverAnchor == null) {
+			return;
+		}
+		PlayerSceneState state = PLAYER_STATES.get(player.getUUID());
+		if (state == null || state.phase != PlayerPhase.ISOLATED || state.minedIntroBitcoin) {
+			return;
+		}
+		SlotDefinition slot = resolveSlotDefinition(computeBarrierGeometry(resolveServerAnchor(level)), state.slotIndex);
+		if (slot == null) {
+			return;
+		}
+
+		long nowTick = level.getGameTime();
+		state.lastActivityTick = nowTick;
+		if (isLookingAtIntroOre(player, slot)) {
+			if (!state.introTargetLocked || nowTick >= state.nextIntroTargetReactionTick) {
+				fireTriggerCycle(level.getServer(), player, state, "intro_target_locked", INTRO_TARGET_LOCK_TRIGGERS);
+				state.introTargetLocked = true;
+				state.nextIntroTargetReactionTick = nowTick + INTRO_TARGET_REACTION_REPEAT_TICKS;
+			}
+			updateObservationBaseline(player, state);
+			return;
+		}
+		if (nowTick < state.nextAirPunchReactionTick) {
+			updateObservationBaseline(player, state);
+			return;
+		}
+
+		state.nextAirPunchReactionTick = nowTick + INTRO_AIR_PUNCH_REPEAT_TICKS;
+		updateObservationBaseline(player, state);
+		SeasonStartVoiceSystem.fireTrigger(level.getServer(), "intro_phase1_air_punch", player);
+	}
+
 	private static void onServerStarted(MinecraftServer server) {
 		loadState(server);
 		ensureBootstrap(server);
@@ -218,6 +420,7 @@ public final class SeasonStartSystem {
 		if (active) {
 			ServerLevel overworld = server.overworld();
 			if (overworld != null) {
+				clearSceneMobs(overworld);
 				for (ServerPlayer player : server.getPlayerList().getPlayers()) {
 					PlayerSceneState state = PLAYER_STATES.get(player.getUUID());
 					if (state == null) {
@@ -252,7 +455,11 @@ public final class SeasonStartSystem {
 		if (state == null) {
 			return true;
 		}
-		SlotDefinition slot = resolveSlotDefinition(computeBoxGeometry(resolveServerAnchor(level)), state.slotIndex);
+		if (state.phase == PlayerPhase.WAITING_START) {
+			player.displayClientMessage(Component.literal("Сначала напишите в чат start или старт."), true);
+			return false;
+		}
+		SlotDefinition slot = resolveSlotDefinition(computeBarrierGeometry(resolveServerAnchor(level)), state.slotIndex);
 		if (slot != null && slot.orePos.equals(pos) && !state.minedIntroBitcoin) {
 			handleIntroOreBroken(level, player, pos, state);
 			return false;
@@ -262,6 +469,31 @@ public final class SeasonStartSystem {
 			return false;
 		}
 		return true;
+	}
+
+	private static boolean onAllowChatMessage(PlayerChatMessage message, ServerPlayer sender, ChatType.Bound params) {
+		if (!active || message == null || sender == null || params == null) {
+			return true;
+		}
+		PlayerSceneState state = PLAYER_STATES.get(sender.getUUID());
+		if (state == null || state.phase != PlayerPhase.WAITING_START) {
+			return true;
+		}
+		MinecraftServer server = sender.level().getServer();
+		if (server == null) {
+			return true;
+		}
+
+		String raw = message.signedContent() == null ? "" : message.signedContent().trim();
+		String transformed = shouldUseLatinReplacement(raw) ? "srat" : "срать";
+		server.getPlayerList().broadcastSystemMessage(params.decorate(Component.literal(transformed)), false);
+
+		if (matchesStartWord(raw)) {
+			beginIntroAfterChatStart(server, sender, state);
+		} else {
+			fireRoundRobinTrigger(server, sender, state, WAITING_START_WRONG_TRIGGERS, false);
+		}
+		return false;
 	}
 
 	private static int toggleSeasonStart(CommandContext<CommandSourceStack> context) {
@@ -324,10 +556,10 @@ public final class SeasonStartSystem {
 		ensureSceneBuilt(overworld);
 		for (Map.Entry<UUID, PlayerSceneState> entry : PLAYER_STATES.entrySet()) {
 			PlayerSceneState state = entry.getValue();
-			if (state == null || state.minedIntroBitcoin) {
+			if (state == null || state.minedIntroBitcoin || state.phase == PlayerPhase.WAITING_START) {
 				continue;
 			}
-			SlotDefinition slot = resolveSlotDefinition(computeBoxGeometry(resolveServerAnchor(overworld)), state.slotIndex);
+			SlotDefinition slot = resolveSlotDefinition(computeBarrierGeometry(resolveServerAnchor(overworld)), state.slotIndex);
 			if (slot != null) {
 				placeIntroOre(overworld, slot);
 			}
@@ -372,7 +604,7 @@ public final class SeasonStartSystem {
 		ServerLevel overworld = server.overworld();
 		if (overworld != null) {
 			SHELL_DISSOLVE_ORDER.clear();
-			SHELL_DISSOLVE_ORDER.addAll(collectShellBlocks(computeBoxGeometry(resolveServerAnchor(overworld))));
+			SHELL_DISSOLVE_ORDER.addAll(collectSceneShellBlocks(resolveServerAnchor(overworld)));
 			for (ServerPlayer player : server.getPlayerList().getPlayers()) {
 				applyFreeState(player);
 			}
@@ -389,13 +621,13 @@ public final class SeasonStartSystem {
 		if (overworld == null) {
 			return;
 		}
-		BoxGeometry geometry = computeBoxGeometry(resolveServerAnchor(overworld));
+		BoxGeometry geometry = computeBarrierGeometry(resolveServerAnchor(overworld));
 		PlayerSceneState state = PLAYER_STATES.get(player.getUUID());
 		boolean created = false;
 		if (state == null) {
 			state = new PlayerSceneState();
 			state.slotIndex = allocateSlotIndex(geometry);
-			state.phase = PlayerPhase.ISOLATED;
+			state.phase = PlayerPhase.WAITING_START;
 			PLAYER_STATES.put(player.getUUID(), state);
 			created = true;
 			stateDirty = true;
@@ -405,21 +637,24 @@ public final class SeasonStartSystem {
 			return;
 		}
 		teleportPlayer(player, overworld, slot.spawnPos, slot.yaw);
-		if (state.phase == PlayerPhase.ISOLATED || state.phase == PlayerPhase.GUIDED_TO_SERVER) {
+		if (state.phase == PlayerPhase.WAITING_START) {
+			ensureWaitingStartPlayerState(player, state, slot);
+		} else if (state.phase == PlayerPhase.ISOLATED || state.phase == PlayerPhase.GUIDED_TO_SERVER) {
 			ensureIntroPlayerState(player, state, slot);
 		} else {
 			applyStateForPhase(player, state);
 		}
-		if (!state.minedIntroBitcoin) {
+		primeObservationState(player, state);
+		if ((state.phase == PlayerPhase.ISOLATED || state.phase == PlayerPhase.GUIDED_TO_SERVER) && !state.minedIntroBitcoin) {
 			placeIntroOre(overworld, slot);
 		}
-		if ((created || announceIntro) && state.phase == PlayerPhase.ISOLATED) {
-			SeasonStartVoiceSystem.fireTrigger(server, "player_intro_assigned", player);
+		if ((created || announceIntro) && state.phase == PlayerPhase.WAITING_START && state.nextStartPromptTick <= 0L) {
+			state.nextStartPromptTick = overworld.getGameTime() + WAITING_START_INITIAL_PROMPT_TICKS;
 		}
 	}
 
 	private static void tickPlayerState(MinecraftServer server, ServerLevel level, ServerPlayer player, PlayerSceneState state) {
-		BoxGeometry geometry = computeBoxGeometry(resolveServerAnchor(level));
+		BoxGeometry geometry = computeBarrierGeometry(resolveServerAnchor(level));
 		SlotDefinition slot = resolveSlotDefinition(geometry, state.slotIndex);
 		if (slot == null) {
 			return;
@@ -430,11 +665,19 @@ public final class SeasonStartSystem {
 			if (!state.minedIntroBitcoin) {
 				placeIntroOre(level, slot);
 			}
+			tickIsolatedPhaseReactions(server, player, state, slot);
+			tickIntroOreGuidance(server, player, state, slot);
+			return;
+		}
+
+		if (state.phase == PlayerPhase.WAITING_START) {
+			ensureWaitingStartPlayerState(player, state, slot);
+			tickWaitingStart(server, player, state);
 			return;
 		}
 
 		if (state.phase == PlayerPhase.GUIDED_TO_SERVER) {
-			ensureIntroPlayerState(player, state, slot);
+			ensureGuidedPlayerState(player, state, slot);
 			tickGuidance(server, player, state);
 			return;
 		}
@@ -442,6 +685,22 @@ public final class SeasonStartSystem {
 		if (state.phase == PlayerPhase.SHARED) {
 			ensureSharedPlayerState(player);
 		}
+	}
+
+	private static void tickWaitingStart(MinecraftServer server, ServerPlayer player, PlayerSceneState state) {
+		if (server == null || player == null || state == null || player.level() == null) {
+			return;
+		}
+		long nowTick = player.level().getGameTime();
+		if (state.nextStartPromptTick <= 0L) {
+			state.nextStartPromptTick = nowTick + WAITING_START_INITIAL_PROMPT_TICKS;
+			return;
+		}
+		if (nowTick < state.nextStartPromptTick) {
+			return;
+		}
+		fireRoundRobinTrigger(server, player, state, WAITING_START_PROMPT_TRIGGERS, true);
+		state.nextStartPromptTick = nowTick + WAITING_START_REPEAT_TICKS;
 	}
 
 	private static void tickGuidance(MinecraftServer server, ServerPlayer player, PlayerSceneState state) {
@@ -452,45 +711,326 @@ public final class SeasonStartSystem {
 		if (nowTick < state.nextGuidanceTick) {
 			return;
 		}
+		state.nextGuidanceTick = nowTick + GUIDANCE_EVALUATE_TICKS;
 
-		String trigger = resolveGuidanceTrigger(player);
-		if (trigger != null && !trigger.equals(state.lastGuidanceTrigger)) {
-			SeasonStartVoiceSystem.fireTrigger(server, trigger, player);
-			state.lastGuidanceTrigger = trigger;
-		} else if (trigger != null && trigger.equals(state.lastGuidanceTrigger)) {
-			SeasonStartVoiceSystem.fireTrigger(server, trigger, player);
+		GuidanceSnapshot snapshot = resolveGuidanceSnapshot(player);
+		if (snapshot == null) {
+			return;
 		}
-		state.nextGuidanceTick = nowTick + get().guidanceRepeatTicks;
+
+		if (!Double.isFinite(state.lastGuidanceDistance)) {
+			state.lastGuidanceDistance = snapshot.horizontalDistance;
+		}
+		double distanceDelta = snapshot.horizontalDistance - state.lastGuidanceDistance;
+		boolean seesServer = snapshot.horizontalDistance <= GUIDANCE_SERVER_SIGHT_DISTANCE && isLookingAtServerStructure(player);
+		GuidanceInstruction instruction = resolveGuidanceInstruction(snapshot, distanceDelta, hasBitcoin(player), seesServer, state);
+		state.lastGuidanceDistance = snapshot.horizontalDistance;
+		if (instruction == null) {
+			state.wasGuidanceAligned = snapshot.aligned;
+			state.lastGuidanceDistanceBucket = snapshot.distanceBucket;
+			state.wasGuidanceClose = snapshot.horizontalDistance <= GUIDANCE_CLOSE_APPROACH_DISTANCE;
+			return;
+		}
+
+		boolean changed = !instruction.stateKey.equals(state.lastGuidanceStateKey);
+		if (nowTick < state.nextGuidanceEarliestTick) {
+			state.wasGuidanceAligned = snapshot.aligned;
+			state.lastGuidanceDistanceBucket = snapshot.distanceBucket;
+			state.wasGuidanceClose = snapshot.horizontalDistance <= GUIDANCE_CLOSE_APPROACH_DISTANCE;
+			return;
+		}
+		if (!changed && nowTick < state.nextGuidanceVoiceTick) {
+			return;
+		}
+
+		fireTriggerCycle(server, player, state, instruction.groupKey, instruction.triggers);
+		state.lastGuidanceStateKey = instruction.stateKey;
+		state.lastGuidanceDistanceBucket = snapshot.distanceBucket;
+		state.wasGuidanceAligned = snapshot.aligned;
+		state.wasGuidanceClose = snapshot.horizontalDistance <= GUIDANCE_CLOSE_APPROACH_DISTANCE;
+		if ("guide_server_in_sight".equals(instruction.stateKey)) {
+			state.announcedServerSight = true;
+		}
+		state.nextGuidanceVoiceTick = nowTick + instruction.cooldownTicks;
+		state.nextGuidanceEarliestTick = nowTick + GUIDANCE_MIN_VOICE_GAP_TICKS;
 	}
 
-	private static String resolveGuidanceTrigger(ServerPlayer player) {
+	private static void tickIntroOreGuidance(MinecraftServer server, ServerPlayer player, PlayerSceneState state, SlotDefinition slot) {
+		if (server == null || player == null || state == null || slot == null || player.level() == null || state.minedIntroBitcoin) {
+			return;
+		}
+		long nowTick = player.level().getGameTime();
+		if (nowTick < state.nextGuidanceTick) {
+			return;
+		}
+		state.nextGuidanceTick = nowTick + GUIDANCE_EVALUATE_TICKS;
+
+		GuidanceSnapshot snapshot = resolveGuidanceSnapshot(player, centerOf(slot.orePos));
+		if (snapshot == null) {
+			return;
+		}
+		if (!Double.isFinite(state.lastGuidanceDistance)) {
+			state.lastGuidanceDistance = snapshot.horizontalDistance;
+		}
+		double distanceDelta = snapshot.horizontalDistance - state.lastGuidanceDistance;
+		boolean lookingAtOre = isLookingAtIntroOre(player, slot);
+		GuidanceInstruction instruction = resolveIntroGuidanceInstruction(snapshot, distanceDelta, lookingAtOre, state);
+		state.lastGuidanceDistance = snapshot.horizontalDistance;
+		if (instruction == null) {
+			state.wasGuidanceAligned = snapshot.aligned;
+			state.lastGuidanceDistanceBucket = snapshot.distanceBucket;
+			return;
+		}
+
+		boolean changed = !instruction.stateKey.equals(state.lastGuidanceStateKey);
+		if (nowTick < state.nextGuidanceEarliestTick) {
+			state.wasGuidanceAligned = snapshot.aligned;
+			state.lastGuidanceDistanceBucket = snapshot.distanceBucket;
+			return;
+		}
+		if (!changed && nowTick < state.nextGuidanceVoiceTick) {
+			return;
+		}
+
+		fireTriggerCycle(server, player, state, instruction.groupKey, instruction.triggers);
+		state.lastGuidanceStateKey = instruction.stateKey;
+		state.lastGuidanceDistanceBucket = snapshot.distanceBucket;
+		state.wasGuidanceAligned = snapshot.aligned;
+		state.nextGuidanceVoiceTick = nowTick + instruction.cooldownTicks;
+		state.nextGuidanceEarliestTick = nowTick + GUIDANCE_MIN_VOICE_GAP_TICKS;
+	}
+
+	private static void tickIsolatedPhaseReactions(MinecraftServer server, ServerPlayer player, PlayerSceneState state, SlotDefinition slot) {
+		if (server == null || player == null || state == null || slot == null || player.level() == null) {
+			return;
+		}
+		long nowTick = player.level().getGameTime();
+		if (state.lastObservationTick == Long.MIN_VALUE) {
+			primeObservationState(player, state);
+			return;
+		}
+
+		double horizontalMoveSqr = horizontalDistanceSqr(player.position(), new Vec3(state.lastObservedX, player.getY(), state.lastObservedZ));
+		double verticalMove = Math.abs(player.getY() - state.lastObservedY);
+		float yawDelta = Math.abs(Mth.wrapDegrees(player.getYRot() - state.lastYaw));
+		float pitchDelta = Math.abs(player.getXRot() - state.lastPitch);
+		boolean moved = horizontalMoveSqr > INTRO_ACTIVITY_MOVE_SQR || verticalMove > 0.12D;
+		boolean looked = yawDelta >= INTRO_ACTIVITY_YAW_DEGREES || pitchDelta >= INTRO_ACTIVITY_PITCH_DEGREES;
+		boolean lookingAtOre = isLookingAtIntroOre(player, slot);
+
+		if (moved || looked) {
+			state.lastActivityTick = nowTick;
+		}
+
+		if (lookingAtOre && (!state.introTargetLocked || nowTick >= state.nextIntroTargetReactionTick)) {
+			fireTriggerCycle(
+					server,
+					player,
+					state,
+					state.introTargetLocked ? "intro_target_stare" : "intro_target_locked",
+					state.introTargetLocked ? INTRO_TARGET_STARE_TRIGGERS : INTRO_TARGET_LOCK_TRIGGERS
+			);
+			state.introTargetLocked = true;
+			state.nextIntroTargetReactionTick = nowTick + INTRO_TARGET_REACTION_REPEAT_TICKS;
+		}
+
+		state.spinScore = Math.max(
+				0.0D,
+				state.spinScore * 0.72D + yawDelta + pitchDelta * 0.45D - (moved ? 8.0D : 0.0D)
+		);
+
+		if (state.lastOnGround && !player.onGround() && player.getDeltaMovement().y > 0.18D && nowTick >= state.nextJumpReactionTick) {
+			state.nextJumpReactionTick = nowTick + INTRO_JUMP_REPEAT_TICKS;
+			SeasonStartVoiceSystem.fireTrigger(server, "intro_phase1_jump", player);
+		}
+
+		if (state.spinScore >= INTRO_SPIN_TRIGGER_SCORE && nowTick >= state.nextSpinReactionTick) {
+			state.nextSpinReactionTick = nowTick + INTRO_SPIN_REPEAT_TICKS;
+			state.spinScore = 0.0D;
+			SeasonStartVoiceSystem.fireTrigger(server, "intro_phase1_spin", player);
+		}
+
+		double leaveDistanceSqr = horizontalDistanceSqr(player.position(), slot.spawnPos);
+		double oreDistanceSqr = horizontalDistanceSqr(player.position(), centerOf(slot.orePos));
+		if (leaveDistanceSqr >= 12.0D * 12.0D && oreDistanceSqr >= 7.0D * 7.0D && nowTick >= state.nextLeaveReactionTick) {
+			state.nextLeaveReactionTick = nowTick + INTRO_LEAVE_REPEAT_TICKS;
+			SeasonStartVoiceSystem.fireTrigger(server, "intro_phase1_leave_attempt", player);
+		}
+
+		if (nowTick - state.lastActivityTick >= INTRO_IDLE_TRIGGER_TICKS && nowTick >= state.nextIdleReactionTick) {
+			state.nextIdleReactionTick = nowTick + INTRO_IDLE_REPEAT_TICKS;
+			SeasonStartVoiceSystem.fireTrigger(server, "intro_phase1_idle", player);
+		}
+
+		updateObservationBaseline(player, state);
+	}
+
+	private static GuidanceSnapshot resolveGuidanceSnapshot(ServerPlayer player) {
 		if (player == null || serverAnchor == null) {
 			return null;
 		}
-		boolean hasBitcoin = hasBitcoin(player);
-		Vec3 target = new Vec3(serverAnchor.getX() + 0.5D, player.getY(), serverAnchor.getZ() + 0.5D);
-		Vec3 toTarget = target.subtract(player.position());
+		return resolveGuidanceSnapshot(player, new Vec3(serverAnchor.getX() + 0.5D, player.getY(), serverAnchor.getZ() + 0.5D));
+	}
+
+	private static GuidanceSnapshot resolveGuidanceSnapshot(ServerPlayer player, Vec3 target) {
+		if (player == null || target == null) {
+			return null;
+		}
+		Vec3 playerPos = player.position();
+		Vec3 toTarget = target.subtract(playerPos);
 		double horizontalDistance = Math.sqrt(toTarget.x * toTarget.x + toTarget.z * toTarget.z);
-		if (horizontalDistance <= 2.4D && hasBitcoin) {
-			return "guide_drop_coin";
+		if (horizontalDistance <= 1.0E-4D) {
+			return new GuidanceSnapshot(0.0D, 0.0D, true, 0);
 		}
-		if (horizontalDistance <= 1.25D) {
-			return "guide_forward";
+		float targetYaw = (float) (Math.atan2(-toTarget.x, toTarget.z) * Mth.RAD_TO_DEG);
+		double deltaYaw = Mth.wrapDegrees(targetYaw - player.getYRot());
+		boolean aligned = Math.abs(deltaYaw) <= GUIDANCE_LOCK_ANGLE;
+		return new GuidanceSnapshot(horizontalDistance, deltaYaw, aligned, guidanceDistanceBucket(horizontalDistance));
+	}
+
+	private static GuidanceInstruction resolveGuidanceInstruction(
+			GuidanceSnapshot snapshot,
+			double distanceDelta,
+			boolean hasBitcoin,
+			boolean seesServer,
+			PlayerSceneState state
+	) {
+		if (snapshot == null || state == null) {
+			return null;
+		}
+		double absYaw = Math.abs(snapshot.deltaYaw);
+		boolean closeToServer = snapshot.horizontalDistance <= GUIDANCE_CLOSE_APPROACH_DISTANCE;
+		boolean inDropZone = snapshot.horizontalDistance <= GUIDANCE_DROP_DISTANCE;
+
+		if (hasBitcoin && state.wasGuidanceClose && snapshot.horizontalDistance >= 3.1D && distanceDelta >= GUIDANCE_PROGRESS_AWAY) {
+			return new GuidanceInstruction("guide_passed_server", "guide_passed_server", GUIDE_PASSED_SERVER_TRIGGERS, GUIDANCE_CATEGORY_COOLDOWN_TICKS);
+		}
+		if (hasBitcoin && seesServer && !state.announcedServerSight) {
+			return new GuidanceInstruction("guide_server_in_sight", "guide_server_in_sight", GUIDE_SERVER_IN_SIGHT_TRIGGERS, GUIDANCE_FORWARD_COOLDOWN_TICKS);
+		}
+		if (hasBitcoin && inDropZone) {
+			if (absYaw > GUIDANCE_MICRO_ANGLE) {
+				return snapshot.deltaYaw < 0.0D
+						? new GuidanceInstruction("guide_turn_left_soft", "guide_turn_left_soft", GUIDE_TURN_LEFT_SOFT_TRIGGERS, GUIDANCE_CORRECTION_COOLDOWN_TICKS)
+						: new GuidanceInstruction("guide_turn_right_soft", "guide_turn_right_soft", GUIDE_TURN_RIGHT_SOFT_TRIGGERS, GUIDANCE_CORRECTION_COOLDOWN_TICKS);
+			}
+			return new GuidanceInstruction("guide_drop_coin", "guide_drop_coin", GUIDE_DROP_COIN_TRIGGERS, GUIDANCE_FORWARD_COOLDOWN_TICKS);
 		}
 
-		double yawRadians = Math.toRadians(player.getYRot());
-		Vec3 facing = new Vec3(-Math.sin(yawRadians), 0.0D, Math.cos(yawRadians)).normalize();
-		Vec3 horizontalTarget = new Vec3(toTarget.x, 0.0D, toTarget.z).normalize();
-		double alignment = facing.dot(horizontalTarget);
-		double cross = facing.x * horizontalTarget.z - facing.z * horizontalTarget.x;
+		if (absYaw >= GUIDANCE_TURN_AROUND_ANGLE) {
+			return snapshot.deltaYaw < 0.0D
+					? new GuidanceInstruction("guide_turn_around_left", "guide_turn_around_left", GUIDE_TURN_AROUND_LEFT_TRIGGERS, GUIDANCE_CATEGORY_COOLDOWN_TICKS)
+					: new GuidanceInstruction("guide_turn_around_right", "guide_turn_around_right", GUIDE_TURN_AROUND_RIGHT_TRIGGERS, GUIDANCE_CATEGORY_COOLDOWN_TICKS);
+		}
+		if (state.wasGuidanceAligned && absYaw >= GUIDANCE_MICRO_ANGLE) {
+			return new GuidanceInstruction("guide_heading_lost", "guide_heading_lost", GUIDE_HEADING_LOST_TRIGGERS, GUIDANCE_CORRECTION_COOLDOWN_TICKS);
+		}
+		if (absYaw >= GUIDANCE_HARD_ANGLE) {
+			return snapshot.deltaYaw < 0.0D
+					? new GuidanceInstruction("guide_turn_left_hard", "guide_turn_left_hard", GUIDE_TURN_LEFT_HARD_TRIGGERS, GUIDANCE_CATEGORY_COOLDOWN_TICKS)
+					: new GuidanceInstruction("guide_turn_right_hard", "guide_turn_right_hard", GUIDE_TURN_RIGHT_HARD_TRIGGERS, GUIDANCE_CATEGORY_COOLDOWN_TICKS);
+		}
+		if (absYaw >= GUIDANCE_MEDIUM_ANGLE) {
+			return snapshot.deltaYaw < 0.0D
+					? new GuidanceInstruction("guide_turn_left_medium", "guide_turn_left_medium", GUIDE_TURN_LEFT_MEDIUM_TRIGGERS, GUIDANCE_CORRECTION_COOLDOWN_TICKS)
+					: new GuidanceInstruction("guide_turn_right_medium", "guide_turn_right_medium", GUIDE_TURN_RIGHT_MEDIUM_TRIGGERS, GUIDANCE_CORRECTION_COOLDOWN_TICKS);
+		}
+		if (absYaw >= GUIDANCE_MICRO_ANGLE) {
+			return snapshot.deltaYaw < 0.0D
+					? new GuidanceInstruction("guide_turn_left_soft", "guide_turn_left_soft", GUIDE_TURN_LEFT_SOFT_TRIGGERS, GUIDANCE_CORRECTION_COOLDOWN_TICKS)
+					: new GuidanceInstruction("guide_turn_right_soft", "guide_turn_right_soft", GUIDE_TURN_RIGHT_SOFT_TRIGGERS, GUIDANCE_CORRECTION_COOLDOWN_TICKS);
+		}
+		if (distanceDelta >= GUIDANCE_PROGRESS_AWAY) {
+			return new GuidanceInstruction("guide_wrong_way", "guide_wrong_way", GUIDE_WRONG_WAY_TRIGGERS, GUIDANCE_CATEGORY_COOLDOWN_TICKS);
+		}
+		if (!state.wasGuidanceAligned && snapshot.aligned) {
+			return new GuidanceInstruction("guide_locked_on", "guide_locked_on", GUIDE_LOCKED_ON_TRIGGERS, GUIDANCE_FORWARD_COOLDOWN_TICKS);
+		}
+		if (Math.abs(distanceDelta) < GUIDANCE_STALL_DELTA) {
+			return snapshot.aligned
+					? new GuidanceInstruction("guide_stall_aligned", "guide_stall_aligned", GUIDE_STALL_ALIGNED_TRIGGERS, GUIDANCE_STALL_COOLDOWN_TICKS)
+					: new GuidanceInstruction("guide_stall_misaligned", "guide_stall_misaligned", GUIDE_STALL_MISALIGNED_TRIGGERS, GUIDANCE_STALL_COOLDOWN_TICKS);
+		}
+		if (snapshot.distanceBucket != state.lastGuidanceDistanceBucket || distanceDelta <= GUIDANCE_PROGRESS_TOWARD) {
+			return switch (snapshot.distanceBucket) {
+				case 2 -> new GuidanceInstruction("guide_forward_close", "guide_forward_close", GUIDE_FORWARD_CLOSE_TRIGGERS, GUIDANCE_FORWARD_COOLDOWN_TICKS);
+				case 4 -> new GuidanceInstruction("guide_forward_near", "guide_forward_near", GUIDE_FORWARD_NEAR_TRIGGERS, GUIDANCE_FORWARD_COOLDOWN_TICKS);
+				case 7 -> new GuidanceInstruction("guide_forward_mid", "guide_forward_mid", GUIDE_FORWARD_MID_TRIGGERS, GUIDANCE_FORWARD_COOLDOWN_TICKS);
+				default -> new GuidanceInstruction("guide_forward_far", "guide_forward_far", GUIDE_FORWARD_FAR_TRIGGERS, GUIDANCE_FORWARD_COOLDOWN_TICKS);
+			};
+		}
+		if (closeToServer && hasBitcoin) {
+			return new GuidanceInstruction("guide_drop_coin", "guide_drop_coin", GUIDE_DROP_COIN_TRIGGERS, GUIDANCE_FORWARD_COOLDOWN_TICKS);
+		}
+		return null;
+	}
 
-		if (alignment < -0.25D) {
-			return "guide_back";
+	private static GuidanceInstruction resolveIntroGuidanceInstruction(
+			GuidanceSnapshot snapshot,
+			double distanceDelta,
+			boolean lookingAtOre,
+			PlayerSceneState state
+	) {
+		if (snapshot == null || state == null || lookingAtOre) {
+			return null;
 		}
-		if (alignment < 0.65D) {
-			return cross > 0.0D ? "guide_turn_left" : "guide_turn_right";
+		double absYaw = Math.abs(snapshot.deltaYaw);
+		if (absYaw >= GUIDANCE_TURN_AROUND_ANGLE) {
+			return snapshot.deltaYaw < 0.0D
+					? new GuidanceInstruction("guide_turn_around_left", "guide_turn_around_left", GUIDE_TURN_AROUND_LEFT_TRIGGERS, GUIDANCE_CATEGORY_COOLDOWN_TICKS)
+					: new GuidanceInstruction("guide_turn_around_right", "guide_turn_around_right", GUIDE_TURN_AROUND_RIGHT_TRIGGERS, GUIDANCE_CATEGORY_COOLDOWN_TICKS);
 		}
-		return "guide_forward";
+		if (state.wasGuidanceAligned && absYaw >= GUIDANCE_MICRO_ANGLE) {
+			return new GuidanceInstruction("guide_heading_lost", "guide_heading_lost", GUIDE_HEADING_LOST_TRIGGERS, GUIDANCE_CORRECTION_COOLDOWN_TICKS);
+		}
+		if (absYaw >= GUIDANCE_HARD_ANGLE) {
+			return snapshot.deltaYaw < 0.0D
+					? new GuidanceInstruction("guide_turn_left_hard", "guide_turn_left_hard", GUIDE_TURN_LEFT_HARD_TRIGGERS, GUIDANCE_CATEGORY_COOLDOWN_TICKS)
+					: new GuidanceInstruction("guide_turn_right_hard", "guide_turn_right_hard", GUIDE_TURN_RIGHT_HARD_TRIGGERS, GUIDANCE_CATEGORY_COOLDOWN_TICKS);
+		}
+		if (absYaw >= GUIDANCE_MEDIUM_ANGLE) {
+			return snapshot.deltaYaw < 0.0D
+					? new GuidanceInstruction("guide_turn_left_medium", "guide_turn_left_medium", GUIDE_TURN_LEFT_MEDIUM_TRIGGERS, GUIDANCE_CORRECTION_COOLDOWN_TICKS)
+					: new GuidanceInstruction("guide_turn_right_medium", "guide_turn_right_medium", GUIDE_TURN_RIGHT_MEDIUM_TRIGGERS, GUIDANCE_CORRECTION_COOLDOWN_TICKS);
+		}
+		if (absYaw >= GUIDANCE_MICRO_ANGLE) {
+			return snapshot.deltaYaw < 0.0D
+					? new GuidanceInstruction("guide_turn_left_soft", "guide_turn_left_soft", GUIDE_TURN_LEFT_SOFT_TRIGGERS, GUIDANCE_CORRECTION_COOLDOWN_TICKS)
+					: new GuidanceInstruction("guide_turn_right_soft", "guide_turn_right_soft", GUIDE_TURN_RIGHT_SOFT_TRIGGERS, GUIDANCE_CORRECTION_COOLDOWN_TICKS);
+		}
+		if (distanceDelta >= GUIDANCE_PROGRESS_AWAY) {
+			return new GuidanceInstruction("intro_guide_wrong_way", "intro_guide_wrong_way", INTRO_GUIDE_WRONG_WAY_TRIGGERS, GUIDANCE_CATEGORY_COOLDOWN_TICKS);
+		}
+		if (!state.wasGuidanceAligned && snapshot.aligned) {
+			return new GuidanceInstruction("guide_locked_on", "guide_locked_on", GUIDE_LOCKED_ON_TRIGGERS, GUIDANCE_FORWARD_COOLDOWN_TICKS);
+		}
+		if (Math.abs(distanceDelta) < GUIDANCE_STALL_DELTA) {
+			return snapshot.aligned
+					? new GuidanceInstruction("guide_stall_aligned", "guide_stall_aligned", GUIDE_STALL_ALIGNED_TRIGGERS, GUIDANCE_STALL_COOLDOWN_TICKS)
+					: new GuidanceInstruction("guide_stall_misaligned", "guide_stall_misaligned", GUIDE_STALL_MISALIGNED_TRIGGERS, GUIDANCE_STALL_COOLDOWN_TICKS);
+		}
+		if (snapshot.distanceBucket != state.lastGuidanceDistanceBucket || distanceDelta <= GUIDANCE_PROGRESS_TOWARD) {
+			return switch (snapshot.distanceBucket) {
+				case 2 -> new GuidanceInstruction("guide_forward_close", "guide_forward_close", GUIDE_FORWARD_CLOSE_TRIGGERS, GUIDANCE_FORWARD_COOLDOWN_TICKS);
+				case 4 -> new GuidanceInstruction("guide_forward_near", "guide_forward_near", GUIDE_FORWARD_NEAR_TRIGGERS, GUIDANCE_FORWARD_COOLDOWN_TICKS);
+				case 7 -> new GuidanceInstruction("guide_forward_mid", "guide_forward_mid", GUIDE_FORWARD_MID_TRIGGERS, GUIDANCE_FORWARD_COOLDOWN_TICKS);
+				default -> new GuidanceInstruction("guide_forward_far", "guide_forward_far", GUIDE_FORWARD_FAR_TRIGGERS, GUIDANCE_FORWARD_COOLDOWN_TICKS);
+			};
+		}
+		return null;
+	}
+
+	private static int guidanceDistanceBucket(double distance) {
+		if (distance <= 2.6D) {
+			return 2;
+		}
+		if (distance <= 4.7D) {
+			return 4;
+		}
+		if (distance <= 7.5D) {
+			return 7;
+		}
+		return 10;
 	}
 
 	private static void transitionPlayerToShared(MinecraftServer server, ServerPlayer player) {
@@ -503,8 +1043,10 @@ public final class SeasonStartSystem {
 		}
 		state.phase = PlayerPhase.SHARED;
 		state.poweredServer = true;
-		state.lastGuidanceTrigger = "";
 		state.nextGuidanceTick = Long.MAX_VALUE;
+		state.nextGuidanceVoiceTick = Long.MAX_VALUE;
+		state.nextGuidanceEarliestTick = Long.MAX_VALUE;
+		state.lastGuidanceStateKey = "";
 		stateDirty = true;
 
 		applySharedPlayerState(player);
@@ -519,6 +1061,9 @@ public final class SeasonStartSystem {
 
 	private static void handleIntroOreBroken(ServerLevel level, ServerPlayer player, BlockPos pos, PlayerSceneState state) {
 		level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
+		if (level.getBlockState(pos.below()).is(Blocks.BLACK_CONCRETE)) {
+			level.setBlock(pos.below(), Blocks.AIR.defaultBlockState(), 3);
+		}
 		level.sendParticles(ParticleTypes.CRIT, pos.getX() + 0.5D, pos.getY() + 0.5D, pos.getZ() + 0.5D, 16, 0.3D, 0.3D, 0.3D, 0.02D);
 		level.playSound(null, pos, SoundEvents.STONE_BREAK, SoundSource.BLOCKS, 1.0F, 0.85F);
 		if (!hasBitcoin(player)) {
@@ -527,7 +1072,18 @@ public final class SeasonStartSystem {
 		state.minedIntroBitcoin = true;
 		state.phase = PlayerPhase.GUIDED_TO_SERVER;
 		state.nextGuidanceTick = 0L;
-		state.lastGuidanceTrigger = "";
+		state.nextGuidanceVoiceTick = level.getGameTime() + 28L;
+		state.nextGuidanceEarliestTick = level.getGameTime() + 28L;
+		state.lastGuidanceStateKey = "";
+		state.lastGuidanceDistance = Double.NaN;
+		state.lastGuidanceDistanceBucket = Integer.MIN_VALUE;
+		state.wasGuidanceAligned = false;
+		state.wasGuidanceClose = false;
+		state.announcedServerSight = false;
+		state.guidanceCueCycles.clear();
+		state.spinScore = 0.0D;
+		state.introTargetLocked = false;
+		state.nextIntroTargetReactionTick = 0L;
 		stateDirty = true;
 		SeasonStartVoiceSystem.fireTrigger(level.getServer(), "player_mined_intro_bitcoin", player);
 	}
@@ -565,10 +1121,12 @@ public final class SeasonStartSystem {
 		}
 		for (int i = 0; i < DISSOLVE_BATCH_BLOCKS && dissolveCursor < SHELL_DISSOLVE_ORDER.size(); i++, dissolveCursor++) {
 			BlockPos pos = SHELL_DISSOLVE_ORDER.get(dissolveCursor);
-			if (!overworld.getBlockState(pos).is(Blocks.BLACK_CONCRETE)) {
+			if (!overworld.getBlockState(pos).is(Blocks.BLACK_CONCRETE) && !overworld.getBlockState(pos).is(Blocks.BARRIER)) {
 				continue;
 			}
-			overworld.sendParticles(ParticleTypes.SMOKE, pos.getX() + 0.5D, pos.getY() + 0.5D, pos.getZ() + 0.5D, 4, 0.2D, 0.2D, 0.2D, 0.01D);
+			if (overworld.getBlockState(pos).is(Blocks.BLACK_CONCRETE)) {
+				overworld.sendParticles(ParticleTypes.SMOKE, pos.getX() + 0.5D, pos.getY() + 0.5D, pos.getZ() + 0.5D, 4, 0.2D, 0.2D, 0.2D, 0.01D);
+			}
 			overworld.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
 		}
 		if (dissolveCursor >= SHELL_DISSOLVE_ORDER.size()) {
@@ -586,6 +1144,7 @@ public final class SeasonStartSystem {
 		}
 		preparePlatformFloor(level);
 		buildSceneShell(level);
+		clearSceneMobs(level);
 		if (!isServerStructurePresent(level, serverAnchor)) {
 			ServerBlock.placeServerStructure(level, serverAnchor, Direction.NORTH);
 		}
@@ -593,7 +1152,7 @@ public final class SeasonStartSystem {
 	}
 
 	private static void preparePlatformFloor(ServerLevel level) {
-		BoxGeometry geometry = computeBoxGeometry(resolveServerAnchor(level));
+		BoxGeometry geometry = computeOuterBoxGeometry(resolveServerAnchor(level));
 		for (int x = geometry.minX; x <= geometry.maxX; x++) {
 			for (int z = geometry.minZ; z <= geometry.maxZ; z++) {
 				BlockPos floorPos = new BlockPos(x, geometry.floorY, z);
@@ -612,9 +1171,13 @@ public final class SeasonStartSystem {
 	}
 
 	private static void buildSceneShell(ServerLevel level) {
-		BoxGeometry geometry = computeBoxGeometry(resolveServerAnchor(level));
-		for (BlockPos pos : collectShellBlocks(geometry)) {
+		BoxGeometry outerGeometry = computeOuterBoxGeometry(resolveServerAnchor(level));
+		for (BlockPos pos : collectBlackShellBlocks(outerGeometry)) {
 			level.setBlock(pos, Blocks.BLACK_CONCRETE.defaultBlockState(), 3);
+		}
+		BoxGeometry barrierGeometry = computeBarrierGeometry(resolveServerAnchor(level));
+		for (BlockPos pos : collectBarrierShellBlocks(barrierGeometry)) {
+			level.setBlock(pos, Blocks.BARRIER.defaultBlockState(), 3);
 		}
 	}
 
@@ -622,15 +1185,38 @@ public final class SeasonStartSystem {
 		if (level == null || serverAnchor == null) {
 			return;
 		}
-		for (BlockPos pos : collectShellBlocks(computeBoxGeometry(serverAnchor))) {
-			if (level.getBlockState(pos).is(Blocks.BLACK_CONCRETE)) {
+		for (BlockPos pos : collectSceneShellBlocks(serverAnchor)) {
+			if (level.getBlockState(pos).is(Blocks.BLACK_CONCRETE) || level.getBlockState(pos).is(Blocks.BARRIER)) {
 				level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
 			}
 		}
 		scenePrepared = false;
 	}
 
-	private static List<BlockPos> collectShellBlocks(BoxGeometry geometry) {
+	private static List<BlockPos> collectSceneShellBlocks(BlockPos anchor) {
+		List<BlockPos> blocks = new ArrayList<>();
+		blocks.addAll(collectBarrierShellBlocks(computeBarrierGeometry(anchor)));
+		blocks.addAll(collectBlackShellBlocks(computeOuterBoxGeometry(anchor)));
+		return blocks;
+	}
+
+	private static List<BlockPos> collectBlackShellBlocks(BoxGeometry geometry) {
+		List<BlockPos> blocks = new ArrayList<>();
+		for (int y = geometry.floorY + 1; y <= geometry.roofY; y++) {
+			for (int x = geometry.minX; x <= geometry.maxX; x++) {
+				for (int z = geometry.minZ; z <= geometry.maxZ; z++) {
+					boolean wall = x == geometry.minX || x == geometry.maxX || z == geometry.minZ || z == geometry.maxZ;
+					boolean roof = y == geometry.roofY;
+					if (wall || roof) {
+						blocks.add(new BlockPos(x, y, z));
+					}
+				}
+			}
+		}
+		return blocks;
+	}
+
+	private static List<BlockPos> collectBarrierShellBlocks(BoxGeometry geometry) {
 		List<BlockPos> blocks = new ArrayList<>();
 		for (int y = geometry.floorY + 1; y <= geometry.roofY; y++) {
 			for (int x = geometry.minX; x <= geometry.maxX; x++) {
@@ -650,19 +1236,20 @@ public final class SeasonStartSystem {
 		if (level == null || pos == null || serverAnchor == null) {
 			return false;
 		}
-		BoxGeometry geometry = computeBoxGeometry(serverAnchor);
-		if (!isInsideFootprint(geometry, pos)) {
+		BoxGeometry outerGeometry = computeOuterBoxGeometry(serverAnchor);
+		if (!isInsideFootprint(outerGeometry, pos)) {
 			return false;
 		}
-		if (level.getBlockState(pos).is(Blocks.BLACK_CONCRETE)) {
+		if (level.getBlockState(pos).is(Blocks.BLACK_CONCRETE) || level.getBlockState(pos).is(Blocks.BARRIER)) {
 			return true;
 		}
 		if (isServerStructureFootprint(pos)) {
 			return true;
 		}
+		BoxGeometry barrierGeometry = computeBarrierGeometry(serverAnchor);
 		for (PlayerSceneState state : PLAYER_STATES.values()) {
-			SlotDefinition slot = resolveSlotDefinition(geometry, state.slotIndex);
-			if (slot != null && (slot.spawnFloorPos.equals(pos) || slot.orePos.equals(pos))) {
+			SlotDefinition slot = resolveSlotDefinition(barrierGeometry, state.slotIndex);
+			if (slot != null && (slot.spawnFloorPos.equals(pos) || slot.oreSupportPos.equals(pos) || slot.orePos.equals(pos))) {
 				return true;
 			}
 		}
@@ -689,7 +1276,7 @@ public final class SeasonStartSystem {
 		if (level == null || slot == null) {
 			return;
 		}
-		level.setBlock(slot.orePos.below(), Blocks.BLACK_CONCRETE.defaultBlockState(), 3);
+		level.setBlock(slot.oreSupportPos, Blocks.BLACK_CONCRETE.defaultBlockState(), 3);
 		level.setBlock(slot.orePos, ModBlocks.BITCOIN_ORE.defaultBlockState(), 3);
 	}
 
@@ -697,16 +1284,12 @@ public final class SeasonStartSystem {
 		if (level == null || serverAnchor == null) {
 			return;
 		}
-		BoxGeometry geometry = computeBoxGeometry(serverAnchor);
+		BoxGeometry geometry = computeBarrierGeometry(serverAnchor);
 		List<BlockPos> orePositions = List.of(
-				serverAnchor.offset(-6, 0, 0),
-				serverAnchor.offset(6, 0, 0),
-				serverAnchor.offset(0, 0, -6),
-				serverAnchor.offset(0, 0, 6),
-				serverAnchor.offset(-4, 0, -4),
-				serverAnchor.offset(4, 0, -4),
-				serverAnchor.offset(-4, 0, 4),
-				serverAnchor.offset(4, 0, 4)
+				serverAnchor.offset(-5, 0, 0),
+				serverAnchor.offset(5, 0, 0),
+				serverAnchor.offset(0, 0, -5),
+				serverAnchor.offset(0, 0, 5)
 		);
 		for (BlockPos origin : orePositions) {
 			BlockPos orePos = new BlockPos(origin.getX(), geometry.floorY + 1, origin.getZ());
@@ -715,6 +1298,18 @@ public final class SeasonStartSystem {
 			}
 			if (level.getBlockState(orePos).isAir()) {
 				level.setBlock(orePos, ModBlocks.DEEPSLATE_BITCOIN_ORE.defaultBlockState(), 3);
+			}
+		}
+	}
+
+	private static void clearSceneMobs(ServerLevel level) {
+		if (level == null || serverAnchor == null) {
+			return;
+		}
+		BoxGeometry geometry = computeOuterBoxGeometry(serverAnchor);
+		for (Entity entity : level.getAllEntities()) {
+			if (entity instanceof Mob && isInsideFootprint(geometry, entity.blockPosition())) {
+				entity.discard();
 			}
 		}
 	}
@@ -737,6 +1332,49 @@ public final class SeasonStartSystem {
 		}
 		ServerAbsoluteInvisibilitySystem.activate(player);
 		ensureIntroTool(player);
+	}
+
+	private static void ensureGuidedPlayerState(ServerPlayer player, PlayerSceneState state, SlotDefinition slot) {
+		if (player == null || state == null || slot == null || serverAnchor == null) {
+			return;
+		}
+		ServerLevel level = player.level() instanceof ServerLevel serverLevel ? serverLevel : null;
+		if (level == null) {
+			return;
+		}
+		BoxGeometry barrierGeometry = computeBarrierGeometry(resolveServerAnchor(level));
+		Vec3 target = slot.spawnPos;
+		if (!player.level().dimension().equals(Level.OVERWORLD) || !isInsideFootprint(barrierGeometry, player.blockPosition())) {
+			teleportPlayer(player, level, target, slot.yaw);
+		}
+		player.setSilent(true);
+		player.setGameMode(GameType.SURVIVAL);
+		player.addEffect(new MobEffectInstance(MobEffects.BLINDNESS, get().introBlindnessTicks, 0, false, false, true));
+		if (!player.hasEffect(MobEffects.INVISIBILITY)) {
+			player.addEffect(ServerAbsoluteInvisibilitySystem.createEffectInstance());
+		}
+		ServerAbsoluteInvisibilitySystem.activate(player);
+		ensureIntroTool(player);
+	}
+
+	private static void ensureWaitingStartPlayerState(ServerPlayer player, PlayerSceneState state, SlotDefinition slot) {
+		if (player == null || state == null || slot == null) {
+			return;
+		}
+		Vec3 target = slot.spawnPos;
+		if (!player.level().dimension().equals(Level.OVERWORLD) || player.distanceToSqr(target.x, target.y, target.z) > 225.0D) {
+			MinecraftServer server = player.level().getServer();
+			ServerLevel overworld = server == null ? null : server.overworld();
+			teleportPlayer(player, overworld, target, slot.yaw);
+		}
+		player.setSilent(true);
+		player.setGameMode(GameType.ADVENTURE);
+		player.addEffect(new MobEffectInstance(MobEffects.BLINDNESS, get().introBlindnessTicks, 0, false, false, true));
+		if (!player.hasEffect(MobEffects.INVISIBILITY)) {
+			player.addEffect(ServerAbsoluteInvisibilitySystem.createEffectInstance());
+		}
+		ServerAbsoluteInvisibilitySystem.activate(player);
+		removeIntroTool(player);
 	}
 
 	private static void ensureSharedPlayerState(ServerPlayer player) {
@@ -783,7 +1421,7 @@ public final class SeasonStartSystem {
 		PlayerSceneState state = player == null ? null : PLAYER_STATES.get(player.getUUID());
 		return active
 				&& state != null
-				&& (state.phase == PlayerPhase.ISOLATED || state.phase == PlayerPhase.GUIDED_TO_SERVER);
+				&& (state.phase == PlayerPhase.WAITING_START || state.phase == PlayerPhase.ISOLATED || state.phase == PlayerPhase.GUIDED_TO_SERVER);
 	}
 
 	private static void ensureIntroTool(ServerPlayer player) {
@@ -886,7 +1524,7 @@ public final class SeasonStartSystem {
 		if (level == null || serverAnchor == null) {
 			return;
 		}
-		BlockPos spawn = serverAnchor.offset(0, 0, get().boxHalfDepth - 3);
+		BlockPos spawn = serverAnchor.offset(0, 0, get().barrierHalfDepth - 2);
 		MinecraftServer server = level.getServer();
 		if (server != null) {
 			server.setRespawnData(LevelData.RespawnData.of(level.dimension(), spawn, 180.0F, 0.0F));
@@ -921,28 +1559,32 @@ public final class SeasonStartSystem {
 		int floorY = geometry.floorY;
 		List<SlotDefinition> slots = new ArrayList<>();
 		for (int x = geometry.minX + inset; x <= geometry.maxX - inset; x += spacing) {
-			slots.add(createSlot(floorY, x, geometry.minZ + inset, Direction.SOUTH));
+			slots.add(createSlot(slots.size(), floorY, x, geometry.minZ + inset, Direction.SOUTH));
 		}
 		for (int z = geometry.minZ + inset + spacing; z <= geometry.maxZ - inset; z += spacing) {
-			slots.add(createSlot(floorY, geometry.maxX - inset, z, Direction.WEST));
+			slots.add(createSlot(slots.size(), floorY, geometry.maxX - inset, z, Direction.WEST));
 		}
 		for (int x = geometry.maxX - inset - spacing; x >= geometry.minX + inset; x -= spacing) {
-			slots.add(createSlot(floorY, x, geometry.maxZ - inset, Direction.NORTH));
+			slots.add(createSlot(slots.size(), floorY, x, geometry.maxZ - inset, Direction.NORTH));
 		}
 		for (int z = geometry.maxZ - inset - spacing; z >= geometry.minZ + inset + spacing; z -= spacing) {
-			slots.add(createSlot(floorY, geometry.minX + inset, z, Direction.EAST));
+			slots.add(createSlot(slots.size(), floorY, geometry.minX + inset, z, Direction.EAST));
 		}
 		return slots;
 	}
 
-	private static SlotDefinition createSlot(int floorY, int x, int z, Direction facing) {
+	private static SlotDefinition createSlot(int slotIndex, int floorY, int x, int z, Direction facing) {
 		BlockPos floor = new BlockPos(x, floorY, z);
-		BlockPos orePos = floor.relative(facing).above();
+		int[] lateralOffsets = {-4, -2, 0, 2, 4};
+		int lateral = lateralOffsets[Math.floorMod(slotIndex * 3 + 1, lateralOffsets.length)];
+		Direction lateralDirection = lateral >= 0 ? facing.getClockWise() : facing.getCounterClockWise();
+		BlockPos oreSupportPos = floor.relative(facing, 8).relative(lateralDirection, Math.abs(lateral)).above();
+		BlockPos orePos = oreSupportPos.above();
 		Vec3 spawnPos = new Vec3(x + 0.5D, floorY + 1.0D, z + 0.5D);
-		return new SlotDefinition(floor, orePos, spawnPos, facing.toYRot());
+		return new SlotDefinition(floor, oreSupportPos, orePos, spawnPos, facing.toYRot());
 	}
 
-	private static BoxGeometry computeBoxGeometry(BlockPos anchor) {
+	private static BoxGeometry computeOuterBoxGeometry(BlockPos anchor) {
 		int halfWidth = get().boxHalfWidth;
 		int halfDepth = get().boxHalfDepth;
 		int floorY = anchor.getY() - 1;
@@ -953,6 +1595,20 @@ public final class SeasonStartSystem {
 				anchor.getZ() + halfDepth,
 				floorY,
 				floorY + get().boxHeight
+		);
+	}
+
+	private static BoxGeometry computeBarrierGeometry(BlockPos anchor) {
+		int halfWidth = get().barrierHalfWidth;
+		int halfDepth = get().barrierHalfDepth;
+		int floorY = anchor.getY() - 1;
+		return new BoxGeometry(
+				anchor.getX() - halfWidth,
+				anchor.getX() + halfWidth,
+				anchor.getZ() - halfDepth,
+				anchor.getZ() + halfDepth,
+				floorY,
+				floorY + get().barrierHeight
 		);
 	}
 
@@ -1068,7 +1724,148 @@ public final class SeasonStartSystem {
 		return stack;
 	}
 
+	private static void primeObservationState(ServerPlayer player, PlayerSceneState state) {
+		if (player == null || state == null || player.level() == null) {
+			return;
+		}
+		long nowTick = player.level().getGameTime();
+		state.lastActivityTick = nowTick;
+		state.nextIdleReactionTick = nowTick + INTRO_IDLE_TRIGGER_TICKS;
+		state.nextLeaveReactionTick = 0L;
+		state.nextSpinReactionTick = 0L;
+		state.nextJumpReactionTick = 0L;
+		state.nextAirPunchReactionTick = 0L;
+		state.nextIntroTargetReactionTick = 0L;
+		state.introTargetLocked = false;
+		state.nextGuidanceTick = 0L;
+		state.nextGuidanceVoiceTick = 0L;
+		state.nextGuidanceEarliestTick = 0L;
+		state.lastGuidanceStateKey = "";
+		state.lastGuidanceDistance = Double.NaN;
+		state.lastGuidanceDistanceBucket = Integer.MIN_VALUE;
+		state.wasGuidanceAligned = false;
+		state.wasGuidanceClose = false;
+		state.announcedServerSight = false;
+		state.guidanceCueCycles.clear();
+		if (state.phase == PlayerPhase.WAITING_START && state.nextStartPromptTick <= 0L && player.level() != null) {
+			state.nextStartPromptTick = player.level().getGameTime() + WAITING_START_INITIAL_PROMPT_TICKS;
+		}
+		state.lastOnGround = player.onGround();
+		state.spinScore = 0.0D;
+		updateObservationBaseline(player, state);
+	}
+
+	private static void beginIntroAfterChatStart(MinecraftServer server, ServerPlayer player, PlayerSceneState state) {
+		if (server == null || player == null || state == null || state.phase != PlayerPhase.WAITING_START) {
+			return;
+		}
+		state.phase = PlayerPhase.ISOLATED;
+		state.nextStartPromptTick = Long.MAX_VALUE;
+		stateDirty = true;
+		primeObservationState(player, state);
+		SeasonStartVoiceSystem.fireTrigger(server, "player_waiting_start_confirmed", player);
+		SeasonStartVoiceSystem.fireTrigger(server, "player_intro_assigned", player);
+	}
+
+	private static void fireRoundRobinTrigger(
+			MinecraftServer server,
+			ServerPlayer player,
+			PlayerSceneState state,
+			String[] triggers,
+			boolean promptCycle
+	) {
+		if (server == null || player == null || state == null || triggers == null || triggers.length == 0) {
+			return;
+		}
+		int index;
+		if (promptCycle) {
+			index = Math.floorMod(state.startPromptVariantIndex++, triggers.length);
+		} else {
+			index = Math.floorMod(state.wrongStartVariantIndex++, triggers.length);
+		}
+		SeasonStartVoiceSystem.fireTrigger(server, triggers[index], player);
+	}
+
+	private static void fireTriggerCycle(
+			MinecraftServer server,
+			ServerPlayer player,
+			PlayerSceneState state,
+			String cycleKey,
+			String[] triggers
+	) {
+		if (server == null || player == null || state == null || cycleKey == null || cycleKey.isBlank() || triggers == null || triggers.length == 0) {
+			return;
+		}
+		int nextIndex = Math.floorMod(state.guidanceCueCycles.getOrDefault(cycleKey, 0), triggers.length);
+		state.guidanceCueCycles.put(cycleKey, nextIndex + 1);
+		SeasonStartVoiceSystem.fireTrigger(server, triggers[nextIndex], player);
+	}
+
+	private static boolean matchesStartWord(String content) {
+		if (content == null) {
+			return false;
+		}
+		String normalized = content.trim();
+		return START_WORD_EN.equalsIgnoreCase(normalized) || START_WORD_RU.equalsIgnoreCase(normalized);
+	}
+
+	private static boolean shouldUseLatinReplacement(String content) {
+		if (content == null || content.isBlank()) {
+			return false;
+		}
+		for (int index = 0; index < content.length(); index++) {
+			if (Character.UnicodeScript.of(content.charAt(index)) == Character.UnicodeScript.LATIN) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static void updateObservationBaseline(ServerPlayer player, PlayerSceneState state) {
+		if (player == null || state == null || player.level() == null) {
+			return;
+		}
+		state.lastObservedX = player.getX();
+		state.lastObservedY = player.getY();
+		state.lastObservedZ = player.getZ();
+		state.lastYaw = player.getYRot();
+		state.lastPitch = player.getXRot();
+		state.lastOnGround = player.onGround();
+		state.lastObservationTick = player.level().getGameTime();
+	}
+
+	private static double horizontalDistanceSqr(Vec3 first, Vec3 second) {
+		double dx = first.x - second.x;
+		double dz = first.z - second.z;
+		return dx * dx + dz * dz;
+	}
+
+	private static Vec3 centerOf(BlockPos pos) {
+		return pos == null ? Vec3.ZERO : new Vec3(pos.getX() + 0.5D, pos.getY() + 0.5D, pos.getZ() + 0.5D);
+	}
+
+	private static boolean isLookingAtIntroOre(ServerPlayer player, SlotDefinition slot) {
+		if (player == null || slot == null) {
+			return false;
+		}
+		HitResult hit = player.pick(INTRO_PICK_REACH, 0.0F, false);
+		return hit instanceof BlockHitResult blockHit
+				&& hit.getType() == HitResult.Type.BLOCK
+				&& slot.orePos.equals(blockHit.getBlockPos());
+	}
+
+	private static boolean isLookingAtServerStructure(ServerPlayer player) {
+		if (player == null || serverAnchor == null) {
+			return false;
+		}
+		HitResult hit = player.pick(INTRO_PICK_REACH, 0.0F, false);
+		return hit instanceof BlockHitResult blockHit
+				&& hit.getType() == HitResult.Type.BLOCK
+				&& isServerStructureFootprint(blockHit.getBlockPos());
+	}
+
 	private enum PlayerPhase {
+		WAITING_START("waiting_start"),
 		ISOLATED("isolated"),
 		GUIDED_TO_SERVER("guided"),
 		SHARED("shared"),
@@ -1096,13 +1893,46 @@ public final class SeasonStartSystem {
 		private boolean minedIntroBitcoin;
 		private boolean poweredServer;
 		private long nextGuidanceTick = 0L;
-		private String lastGuidanceTrigger = "";
+		private long nextGuidanceVoiceTick = 0L;
+		private long nextGuidanceEarliestTick = 0L;
+		private String lastGuidanceStateKey = "";
+		private double lastGuidanceDistance = Double.NaN;
+		private int lastGuidanceDistanceBucket = Integer.MIN_VALUE;
+		private boolean wasGuidanceAligned = false;
+		private boolean wasGuidanceClose = false;
+		private boolean announcedServerSight = false;
+		private final Map<String, Integer> guidanceCueCycles = new LinkedHashMap<>();
+		private long lastActivityTick = 0L;
+		private long nextIdleReactionTick = 0L;
+		private long nextLeaveReactionTick = 0L;
+		private long nextSpinReactionTick = 0L;
+		private long nextJumpReactionTick = 0L;
+		private long nextAirPunchReactionTick = 0L;
+		private long nextIntroTargetReactionTick = 0L;
+		private long lastObservationTick = Long.MIN_VALUE;
+		private double lastObservedX;
+		private double lastObservedY;
+		private double lastObservedZ;
+		private float lastYaw;
+		private float lastPitch;
+		private boolean lastOnGround = true;
+		private boolean introTargetLocked = false;
+		private double spinScore = 0.0D;
+		private long nextStartPromptTick = 0L;
+		private int startPromptVariantIndex = 0;
+		private int wrongStartVariantIndex = 0;
 	}
 
 	private record BoxGeometry(int minX, int maxX, int minZ, int maxZ, int floorY, int roofY) {
 	}
 
-	private record SlotDefinition(BlockPos spawnFloorPos, BlockPos orePos, Vec3 spawnPos, float yaw) {
+	private record SlotDefinition(BlockPos spawnFloorPos, BlockPos oreSupportPos, BlockPos orePos, Vec3 spawnPos, float yaw) {
+	}
+
+	private record GuidanceSnapshot(double horizontalDistance, double deltaYaw, boolean aligned, int distanceBucket) {
+	}
+
+	private record GuidanceInstruction(String stateKey, String groupKey, String[] triggers, long cooldownTicks) {
 	}
 
 	private static final class PersistedState {

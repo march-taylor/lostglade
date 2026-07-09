@@ -108,7 +108,6 @@ public class Lg2 implements ModInitializer {
 		PhotoFramePlacementSystem.register();
 		ServerStabilitySystem.register();
 		ServerTrojanRoosterSystem.register();
-		ServerGlitchSystem.register();
 		ServerAbsoluteInvisibilitySystem.register();
 		ServerBackroomsSystem.register();
 		ServerMilkPocketDimensionSystem.register();
@@ -116,18 +115,19 @@ public class Lg2 implements ModInitializer {
 		ServerBackroomsStalkerSystem.register();
 		ServerStructureBreakSystem.register();
 		SeasonStartSystem.register();
+		ServerGlitchSystem.register();
 		ServerMechanicsGateSystem.register();
 		ServerRespectSystem.register();
 		CopperManGogglesSystem.registerLateInteractions();
 		CopperManRepulsorSystem.registerLateInteractions();
 		ServerRaceSystem.register();
 		ServerUnusedMobSpawnSystem.register();
+		SeasonStartVoiceSystem.register();
 		if (FabricLoader.getInstance().isModLoaded("tab")) {
 			ServerTabIntegration.register();
 		}
 		if (FabricLoader.getInstance().isModLoaded("voicechat")) {
 			ServerVoicechatIntegration.register();
-			SeasonStartVoiceSystem.register();
 			SpeakerSystem.register();
 			MicrophoneSystem.register();
 		}

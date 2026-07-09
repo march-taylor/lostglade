@@ -1,6 +1,7 @@
 package com.lostglade.mixin;
 
 import com.lostglade.server.CameraCaptureSystem;
+import com.lostglade.server.SeasonStartSystem;
 import net.minecraft.network.protocol.game.ServerboundSwingPacket;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.network.ServerGamePacketListenerImpl;
@@ -17,6 +18,7 @@ public abstract class ServerGamePacketListenerCameraCaptureMixin {
 
 	@Inject(method = "handleAnimate", at = @At("HEAD"), cancellable = true)
 	private void lg2$captureCameraOnLeftClickAir(ServerboundSwingPacket packet, CallbackInfo ci) {
+		SeasonStartSystem.onPlayerAnimate(this.player);
 		if (CameraCaptureSystem.handleLeftClickAir(this.player, packet.getHand())) {
 			ci.cancel();
 		}

@@ -47,6 +47,7 @@ public final class SeasonStartVoiceSystem {
 	private static final int AUDIO_SAMPLE_RATE = 48_000;
 	private static final int AUDIO_FRAME_SAMPLES = 960;
 	private static final long AUDIO_FRAME_DURATION_MS = 20L;
+	private static final long REALTIME_INTERRUPT_GRACE_TICKS = 18L;
 	private static final UUID SERVER_VOICE_SOURCE_ID = UUID.nameUUIDFromBytes("lg2:season_start_server_voice".getBytes(StandardCharsets.UTF_8));
 	private static final Map<String, Deque<QueuedCue>> CHANNEL_QUEUES = new HashMap<>();
 	private static final Map<String, ActiveCuePlayback> ACTIVE_PLAYBACKS = new HashMap<>();
@@ -175,6 +176,23 @@ public final class SeasonStartVoiceSystem {
 
 		QueuedCue queuedCue = new QueuedCue(cue, focusPlayer == null ? null : focusPlayer.getUUID(), executeTick, channelKey);
 		Deque<QueuedCue> queue = CHANNEL_QUEUES.computeIfAbsent(channelKey, ignored -> new ArrayDeque<>());
+		if (isRealtimeCue(cue)) {
+			queue.removeIf(existing -> existing != null && isRealtimeCue(existing.cue));
+		}
+		if (cue.interruptCurrent && shouldInterruptImmediately(cue)) {
+			ActiveCuePlayback activePlayback = ACTIVE_PLAYBACKS.get(channelKey);
+			if (activePlayback != null && executeTick - activePlayback.startedTick < REALTIME_INTERRUPT_GRACE_TICKS) {
+				for (QueuedCue existing : queue) {
+					if (sameCue(existing, queuedCue)) {
+						return;
+					}
+				}
+				queue.addLast(queuedCue);
+				return;
+			}
+			queue.clear();
+			interruptActivePlayback(channelKey);
+		}
 		for (QueuedCue existing : queue) {
 			if (sameCue(existing, queuedCue)) {
 				return;
@@ -185,6 +203,17 @@ public final class SeasonStartVoiceSystem {
 			return;
 		}
 		queue.addLast(queuedCue);
+	}
+
+	private static void interruptActivePlayback(String channelKey) {
+		if (channelKey == null || channelKey.isBlank()) {
+			return;
+		}
+		ActiveCuePlayback active = ACTIVE_PLAYBACKS.remove(channelKey);
+		if (active == null || active.future == null || active.future.isDone()) {
+			return;
+		}
+		active.future.complete(null);
 	}
 
 	private static boolean shouldQueueCue(VoiceCue cue, ServerPlayer focusPlayer) {
@@ -262,7 +291,7 @@ public final class SeasonStartVoiceSystem {
 			}
 			entry.getValue().pollFirst();
 			CompletableFuture<Void> future = startPlayback(server, next);
-			ACTIVE_PLAYBACKS.put(entry.getKey(), new ActiveCuePlayback(next, future));
+			ACTIVE_PLAYBACKS.put(entry.getKey(), new ActiveCuePlayback(next, future, nowTick));
 		}
 
 		CHANNEL_QUEUES.entrySet().removeIf(entry -> entry.getValue().isEmpty());
@@ -473,11 +502,15 @@ public final class SeasonStartVoiceSystem {
 		if (recipient == null || cue == null || !hasChatText(cue)) {
 			return;
 		}
-		recipient.sendSystemMessage(Component.literal("[Сервер] " + cue.chatText));
+		recipient.sendSystemMessage(Component.literal("[Сервер] " + cue.resolvedChatText()));
 	}
 
 	private static boolean hasChatText(VoiceCue cue) {
-		return cue != null && cue.chatText != null && !cue.chatText.isBlank();
+		if (cue == null) {
+			return false;
+		}
+		String text = cue.resolvedChatText();
+		return text != null && !text.isBlank();
 	}
 
 	private static Path resolveAudioPath(String relativePath) {
@@ -568,6 +601,26 @@ public final class SeasonStartVoiceSystem {
 		resetSceneState();
 	}
 
+	private static boolean isRealtimeCue(VoiceCue cue) {
+		if (cue == null || cue.id == null) {
+			return false;
+		}
+		return cue.id.startsWith("guide_")
+				|| cue.id.startsWith("intro_target_")
+				|| cue.id.startsWith("intro_guide_");
+	}
+
+	private static boolean shouldInterruptImmediately(VoiceCue cue) {
+		if (cue == null || cue.id == null || cue.id.isBlank()) {
+			return false;
+		}
+		return cue.id.startsWith("guide_wrong_way_")
+				|| cue.id.startsWith("guide_passed_server_")
+				|| cue.id.startsWith("guide_drop_coin_")
+				|| cue.id.startsWith("guide_server_in_sight_")
+				|| cue.id.startsWith("intro_guide_wrong_way_");
+	}
+
 	private static Object resolveRawServerPlayer(de.maxhenkel.voicechat.api.ServerPlayer player) {
 		return player == null ? null : player.getPlayer();
 	}
@@ -575,7 +628,7 @@ public final class SeasonStartVoiceSystem {
 	private record QueuedCue(VoiceCue cue, UUID focusPlayerId, long executeTick, String channelKey) {
 	}
 
-	private record ActiveCuePlayback(QueuedCue queuedCue, CompletableFuture<Void> future) {
+	private record ActiveCuePlayback(QueuedCue queuedCue, CompletableFuture<Void> future, long startedTick) {
 	}
 
 	private static final class PcmClip {
