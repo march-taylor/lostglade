@@ -5,6 +5,7 @@ import com.google.gson.GsonBuilder;
 import com.lostglade.Lg2;
 import com.lostglade.block.ModBlocks;
 import com.lostglade.block.ServerBlock;
+import com.lostglade.config.SeasonStartConfig;
 import com.lostglade.item.ModItems;
 import com.mojang.brigadier.context.CommandContext;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
@@ -88,6 +89,7 @@ public final class SeasonStartSystem {
 	private static final long GUIDANCE_CORRECTION_COOLDOWN_TICKS = 8L;
 	private static final long GUIDANCE_FORWARD_COOLDOWN_TICKS = 16L;
 	private static final long GUIDANCE_STALL_COOLDOWN_TICKS = 24L;
+	private static final long GUIDANCE_RECOVER_REACTION_WINDOW_TICKS = 28L;
 	private static final double INTRO_ACTIVITY_MOVE_SQR = 0.04D * 0.04D;
 	private static final double INTRO_SPIN_TRIGGER_SCORE = 200.0D;
 	private static final double INTRO_PICK_REACH = 5.0D;
@@ -98,12 +100,14 @@ public final class SeasonStartSystem {
 	private static final double GUIDANCE_MEDIUM_ANGLE = 26.0D;
 	private static final double GUIDANCE_HARD_ANGLE = 62.0D;
 	private static final double GUIDANCE_TURN_AROUND_ANGLE = 140.0D;
-	private static final double GUIDANCE_CLOSE_APPROACH_DISTANCE = 2.7D;
-	private static final double GUIDANCE_DROP_DISTANCE = 1.9D;
-	private static final double GUIDANCE_SERVER_SIGHT_DISTANCE = 3.1D;
+	private static final double GUIDANCE_CLOSE_APPROACH_DISTANCE = 3.0D;
+	private static final double GUIDANCE_QUIET_DISTANCE = 2.05D;
+	private static final double GUIDANCE_DROP_DISTANCE = 0.85D;
+	private static final double GUIDANCE_SERVER_SIGHT_DISTANCE = 2.6D;
 	private static final double GUIDANCE_PROGRESS_AWAY = 0.16D;
 	private static final double GUIDANCE_PROGRESS_TOWARD = -0.14D;
 	private static final double GUIDANCE_STALL_DELTA = 0.05D;
+	private static final double GUIDANCE_RECOVER_WORSEN_THRESHOLD = 8.0D;
 	private static final String START_WORD_EN = "start";
 	private static final String START_WORD_RU = "старт";
 	private static final String[] WAITING_START_PROMPT_TRIGGERS = {
@@ -128,6 +132,11 @@ public final class SeasonStartSystem {
 			"intro_guide_wrong_way_01",
 			"intro_guide_wrong_way_02",
 			"intro_guide_wrong_way_03"
+	};
+	private static final String[] INTRO_GUIDE_ROUTE_START_TRIGGERS = {
+			"intro_guide_route_start_01",
+			"intro_guide_route_start_02",
+			"intro_guide_route_start_03"
 	};
 	private static final String[] GUIDE_TURN_LEFT_HARD_TRIGGERS = {
 			"guide_turn_left_hard_01",
@@ -159,6 +168,16 @@ public final class SeasonStartSystem {
 			"guide_turn_right_soft_02",
 			"guide_turn_right_soft_03"
 	};
+	private static final String[] GUIDE_TURN_LEFT_RECOVER_TRIGGERS = {
+			"guide_turn_left_recover_01",
+			"guide_turn_left_recover_02",
+			"guide_turn_left_recover_03"
+	};
+	private static final String[] GUIDE_TURN_RIGHT_RECOVER_TRIGGERS = {
+			"guide_turn_right_recover_01",
+			"guide_turn_right_recover_02",
+			"guide_turn_right_recover_03"
+	};
 	private static final String[] GUIDE_TURN_AROUND_LEFT_TRIGGERS = {
 			"guide_turn_around_left_01",
 			"guide_turn_around_left_02",
@@ -184,6 +203,11 @@ public final class SeasonStartSystem {
 			"guide_server_in_sight_01",
 			"guide_server_in_sight_02",
 			"guide_server_in_sight_03"
+	};
+	private static final String[] GUIDE_CLOSE_PRESENCE_TRIGGERS = {
+			"guide_close_presence_01",
+			"guide_close_presence_02",
+			"guide_close_presence_03"
 	};
 	private static final String[] GUIDE_FORWARD_FAR_TRIGGERS = {
 			"guide_forward_far_01",
@@ -708,6 +732,9 @@ public final class SeasonStartSystem {
 			return;
 		}
 		long nowTick = player.level().getGameTime();
+		if (nowTick < state.guidanceNarrationGateTick) {
+			return;
+		}
 		if (nowTick < state.nextGuidanceTick) {
 			return;
 		}
@@ -717,23 +744,41 @@ public final class SeasonStartSystem {
 		if (snapshot == null) {
 			return;
 		}
+		boolean lookingAtServerStructure = isLookingAtServerStructure(player);
+		if (lookingAtServerStructure && !snapshot.aligned) {
+			snapshot = snapshot.withAlignmentLock();
+		}
+		boolean quietZone = hasBitcoin(player) && snapshot.horizontalDistance <= GUIDANCE_QUIET_DISTANCE;
+		if (quietZone) {
+			if (!state.guidanceQuietZoneActive) {
+				SeasonStartVoiceSystem.clearPlayerChannel(player);
+				state.guidanceQuietZoneActive = true;
+				state.nextGuidanceVoiceTick = nowTick;
+				state.nextGuidanceEarliestTick = nowTick;
+				state.lastGuidanceStateKey = "";
+			}
+		} else {
+			state.guidanceQuietZoneActive = false;
+		}
 
 		if (!Double.isFinite(state.lastGuidanceDistance)) {
 			state.lastGuidanceDistance = snapshot.horizontalDistance;
 		}
 		double distanceDelta = snapshot.horizontalDistance - state.lastGuidanceDistance;
-		boolean seesServer = snapshot.horizontalDistance <= GUIDANCE_SERVER_SIGHT_DISTANCE && isLookingAtServerStructure(player);
-		GuidanceInstruction instruction = resolveGuidanceInstruction(snapshot, distanceDelta, hasBitcoin(player), seesServer, state);
+		boolean seesServer = snapshot.horizontalDistance <= GUIDANCE_SERVER_SIGHT_DISTANCE && lookingAtServerStructure;
+		GuidanceInstruction instruction = resolveGuidanceInstruction(snapshot, distanceDelta, hasBitcoin(player), seesServer, state, nowTick);
 		state.lastGuidanceDistance = snapshot.horizontalDistance;
 		if (instruction == null) {
 			state.wasGuidanceAligned = snapshot.aligned;
 			state.lastGuidanceDistanceBucket = snapshot.distanceBucket;
 			state.wasGuidanceClose = snapshot.horizontalDistance <= GUIDANCE_CLOSE_APPROACH_DISTANCE;
+			state.lastGuidanceAbsYaw = Math.abs(snapshot.deltaYaw);
 			return;
 		}
 
 		boolean changed = !instruction.stateKey.equals(state.lastGuidanceStateKey);
-		if (nowTick < state.nextGuidanceEarliestTick) {
+		boolean bypassNarrationLock = shouldBypassGuidanceNarrationLock(instruction);
+		if (!bypassNarrationLock && nowTick < state.nextGuidanceEarliestTick) {
 			state.wasGuidanceAligned = snapshot.aligned;
 			state.lastGuidanceDistanceBucket = snapshot.distanceBucket;
 			state.wasGuidanceClose = snapshot.horizontalDistance <= GUIDANCE_CLOSE_APPROACH_DISTANCE;
@@ -748,11 +793,14 @@ public final class SeasonStartSystem {
 		state.lastGuidanceDistanceBucket = snapshot.distanceBucket;
 		state.wasGuidanceAligned = snapshot.aligned;
 		state.wasGuidanceClose = snapshot.horizontalDistance <= GUIDANCE_CLOSE_APPROACH_DISTANCE;
+		state.lastGuidanceAbsYaw = Math.abs(snapshot.deltaYaw);
 		if ("guide_server_in_sight".equals(instruction.stateKey)) {
 			state.announcedServerSight = true;
 		}
-		state.nextGuidanceVoiceTick = nowTick + instruction.cooldownTicks;
-		state.nextGuidanceEarliestTick = nowTick + GUIDANCE_MIN_VOICE_GAP_TICKS;
+		applyGuidanceInstructionState(state, instruction, snapshot, nowTick);
+		long narrationLockTicks = resolveGuidanceNarrationLockTicks(instruction.triggers);
+		state.nextGuidanceVoiceTick = nowTick + Math.max(instruction.cooldownTicks, narrationLockTicks);
+		state.nextGuidanceEarliestTick = nowTick + narrationLockTicks;
 	}
 
 	private static void tickIntroOreGuidance(MinecraftServer server, ServerPlayer player, PlayerSceneState state, SlotDefinition slot) {
@@ -760,10 +808,24 @@ public final class SeasonStartSystem {
 			return;
 		}
 		long nowTick = player.level().getGameTime();
+		if (nowTick < state.guidanceNarrationGateTick) {
+			return;
+		}
 		if (nowTick < state.nextGuidanceTick) {
 			return;
 		}
 		state.nextGuidanceTick = nowTick + GUIDANCE_EVALUATE_TICKS;
+		if (!state.guidanceRouteStarted) {
+			if (nowTick < state.nextGuidanceEarliestTick || nowTick < state.nextGuidanceVoiceTick) {
+				return;
+			}
+			fireTriggerCycle(server, player, state, "intro_guide_route_start", INTRO_GUIDE_ROUTE_START_TRIGGERS);
+			state.guidanceRouteStarted = true;
+			long narrationLockTicks = resolveGuidanceNarrationLockTicks(INTRO_GUIDE_ROUTE_START_TRIGGERS);
+			state.nextGuidanceVoiceTick = nowTick + Math.max(GUIDANCE_FORWARD_COOLDOWN_TICKS, narrationLockTicks);
+			state.nextGuidanceEarliestTick = nowTick + narrationLockTicks;
+			return;
+		}
 
 		GuidanceSnapshot snapshot = resolveGuidanceSnapshot(player, centerOf(slot.orePos));
 		if (snapshot == null) {
@@ -774,16 +836,18 @@ public final class SeasonStartSystem {
 		}
 		double distanceDelta = snapshot.horizontalDistance - state.lastGuidanceDistance;
 		boolean lookingAtOre = isLookingAtIntroOre(player, slot);
-		GuidanceInstruction instruction = resolveIntroGuidanceInstruction(snapshot, distanceDelta, lookingAtOre, state);
+		GuidanceInstruction instruction = resolveIntroGuidanceInstruction(snapshot, distanceDelta, lookingAtOre, state, nowTick);
 		state.lastGuidanceDistance = snapshot.horizontalDistance;
 		if (instruction == null) {
 			state.wasGuidanceAligned = snapshot.aligned;
 			state.lastGuidanceDistanceBucket = snapshot.distanceBucket;
+			state.lastGuidanceAbsYaw = Math.abs(snapshot.deltaYaw);
 			return;
 		}
 
 		boolean changed = !instruction.stateKey.equals(state.lastGuidanceStateKey);
-		if (nowTick < state.nextGuidanceEarliestTick) {
+		boolean bypassNarrationLock = shouldBypassGuidanceNarrationLock(instruction);
+		if (!bypassNarrationLock && nowTick < state.nextGuidanceEarliestTick) {
 			state.wasGuidanceAligned = snapshot.aligned;
 			state.lastGuidanceDistanceBucket = snapshot.distanceBucket;
 			return;
@@ -796,8 +860,11 @@ public final class SeasonStartSystem {
 		state.lastGuidanceStateKey = instruction.stateKey;
 		state.lastGuidanceDistanceBucket = snapshot.distanceBucket;
 		state.wasGuidanceAligned = snapshot.aligned;
-		state.nextGuidanceVoiceTick = nowTick + instruction.cooldownTicks;
-		state.nextGuidanceEarliestTick = nowTick + GUIDANCE_MIN_VOICE_GAP_TICKS;
+		state.lastGuidanceAbsYaw = Math.abs(snapshot.deltaYaw);
+		applyGuidanceInstructionState(state, instruction, snapshot, nowTick);
+		long narrationLockTicks = resolveGuidanceNarrationLockTicks(instruction.triggers);
+		state.nextGuidanceVoiceTick = nowTick + Math.max(instruction.cooldownTicks, narrationLockTicks);
+		state.nextGuidanceEarliestTick = nowTick + narrationLockTicks;
 	}
 
 	private static void tickIsolatedPhaseReactions(MinecraftServer server, ServerPlayer player, PlayerSceneState state, SlotDefinition slot) {
@@ -869,7 +936,14 @@ public final class SeasonStartSystem {
 		if (player == null || serverAnchor == null) {
 			return null;
 		}
-		return resolveGuidanceSnapshot(player, new Vec3(serverAnchor.getX() + 0.5D, player.getY(), serverAnchor.getZ() + 0.5D));
+		ServerStructureBounds bounds = resolveServerStructureBounds();
+		if (bounds == null) {
+			return resolveGuidanceSnapshot(player, new Vec3(serverAnchor.getX() + 0.5D, player.getY(), serverAnchor.getZ() + 0.5D));
+		}
+		Vec3 playerPos = player.position();
+		double targetX = Mth.clamp(playerPos.x, bounds.minX, bounds.maxX);
+		double targetZ = Mth.clamp(playerPos.z, bounds.minZ, bounds.maxZ);
+		return resolveGuidanceSnapshot(player, new Vec3(targetX, player.getY(), targetZ));
 	}
 
 	private static GuidanceSnapshot resolveGuidanceSnapshot(ServerPlayer player, Vec3 target) {
@@ -893,52 +967,41 @@ public final class SeasonStartSystem {
 			double distanceDelta,
 			boolean hasBitcoin,
 			boolean seesServer,
-			PlayerSceneState state
+			PlayerSceneState state,
+			long nowTick
 	) {
 		if (snapshot == null || state == null) {
 			return null;
 		}
 		double absYaw = Math.abs(snapshot.deltaYaw);
-		boolean closeToServer = snapshot.horizontalDistance <= GUIDANCE_CLOSE_APPROACH_DISTANCE;
+		boolean quietZone = snapshot.horizontalDistance <= GUIDANCE_QUIET_DISTANCE;
 		boolean inDropZone = snapshot.horizontalDistance <= GUIDANCE_DROP_DISTANCE;
 
 		if (hasBitcoin && state.wasGuidanceClose && snapshot.horizontalDistance >= 3.1D && distanceDelta >= GUIDANCE_PROGRESS_AWAY) {
 			return new GuidanceInstruction("guide_passed_server", "guide_passed_server", GUIDE_PASSED_SERVER_TRIGGERS, GUIDANCE_CATEGORY_COOLDOWN_TICKS);
 		}
+		if (hasBitcoin && inDropZone && absYaw <= GUIDANCE_MICRO_ANGLE) {
+			return new GuidanceInstruction("guide_drop_coin", "guide_drop_coin", GUIDE_DROP_COIN_TRIGGERS, GUIDANCE_FORWARD_COOLDOWN_TICKS);
+		}
+		if (hasBitcoin && quietZone) {
+			if (!state.announcedServerSight && (snapshot.aligned || seesServer)) {
+				return new GuidanceInstruction("guide_server_in_sight", "guide_server_in_sight", GUIDE_SERVER_IN_SIGHT_TRIGGERS, GUIDANCE_FORWARD_COOLDOWN_TICKS);
+			}
+			if (state.wasGuidanceAligned && absYaw >= GUIDANCE_MICRO_ANGLE) {
+				return new GuidanceInstruction("guide_heading_lost", "guide_heading_lost", GUIDE_HEADING_LOST_TRIGGERS, GUIDANCE_CORRECTION_COOLDOWN_TICKS);
+			}
+			if (absYaw >= GUIDANCE_MEDIUM_ANGLE) {
+				return new GuidanceInstruction("guide_close_presence", "guide_close_presence", GUIDE_CLOSE_PRESENCE_TRIGGERS, GUIDANCE_STALL_COOLDOWN_TICKS);
+			}
+			return null;
+		}
 		if (hasBitcoin && seesServer && !state.announcedServerSight) {
 			return new GuidanceInstruction("guide_server_in_sight", "guide_server_in_sight", GUIDE_SERVER_IN_SIGHT_TRIGGERS, GUIDANCE_FORWARD_COOLDOWN_TICKS);
 		}
-		if (hasBitcoin && inDropZone) {
-			if (absYaw > GUIDANCE_MICRO_ANGLE) {
-				return snapshot.deltaYaw < 0.0D
-						? new GuidanceInstruction("guide_turn_left_soft", "guide_turn_left_soft", GUIDE_TURN_LEFT_SOFT_TRIGGERS, GUIDANCE_CORRECTION_COOLDOWN_TICKS)
-						: new GuidanceInstruction("guide_turn_right_soft", "guide_turn_right_soft", GUIDE_TURN_RIGHT_SOFT_TRIGGERS, GUIDANCE_CORRECTION_COOLDOWN_TICKS);
-			}
-			return new GuidanceInstruction("guide_drop_coin", "guide_drop_coin", GUIDE_DROP_COIN_TRIGGERS, GUIDANCE_FORWARD_COOLDOWN_TICKS);
-		}
 
-		if (absYaw >= GUIDANCE_TURN_AROUND_ANGLE) {
-			return snapshot.deltaYaw < 0.0D
-					? new GuidanceInstruction("guide_turn_around_left", "guide_turn_around_left", GUIDE_TURN_AROUND_LEFT_TRIGGERS, GUIDANCE_CATEGORY_COOLDOWN_TICKS)
-					: new GuidanceInstruction("guide_turn_around_right", "guide_turn_around_right", GUIDE_TURN_AROUND_RIGHT_TRIGGERS, GUIDANCE_CATEGORY_COOLDOWN_TICKS);
-		}
-		if (state.wasGuidanceAligned && absYaw >= GUIDANCE_MICRO_ANGLE) {
-			return new GuidanceInstruction("guide_heading_lost", "guide_heading_lost", GUIDE_HEADING_LOST_TRIGGERS, GUIDANCE_CORRECTION_COOLDOWN_TICKS);
-		}
-		if (absYaw >= GUIDANCE_HARD_ANGLE) {
-			return snapshot.deltaYaw < 0.0D
-					? new GuidanceInstruction("guide_turn_left_hard", "guide_turn_left_hard", GUIDE_TURN_LEFT_HARD_TRIGGERS, GUIDANCE_CATEGORY_COOLDOWN_TICKS)
-					: new GuidanceInstruction("guide_turn_right_hard", "guide_turn_right_hard", GUIDE_TURN_RIGHT_HARD_TRIGGERS, GUIDANCE_CATEGORY_COOLDOWN_TICKS);
-		}
-		if (absYaw >= GUIDANCE_MEDIUM_ANGLE) {
-			return snapshot.deltaYaw < 0.0D
-					? new GuidanceInstruction("guide_turn_left_medium", "guide_turn_left_medium", GUIDE_TURN_LEFT_MEDIUM_TRIGGERS, GUIDANCE_CORRECTION_COOLDOWN_TICKS)
-					: new GuidanceInstruction("guide_turn_right_medium", "guide_turn_right_medium", GUIDE_TURN_RIGHT_MEDIUM_TRIGGERS, GUIDANCE_CORRECTION_COOLDOWN_TICKS);
-		}
-		if (absYaw >= GUIDANCE_MICRO_ANGLE) {
-			return snapshot.deltaYaw < 0.0D
-					? new GuidanceInstruction("guide_turn_left_soft", "guide_turn_left_soft", GUIDE_TURN_LEFT_SOFT_TRIGGERS, GUIDANCE_CORRECTION_COOLDOWN_TICKS)
-					: new GuidanceInstruction("guide_turn_right_soft", "guide_turn_right_soft", GUIDE_TURN_RIGHT_SOFT_TRIGGERS, GUIDANCE_CORRECTION_COOLDOWN_TICKS);
+		GuidanceInstruction turnInstruction = resolveTurnInstruction(snapshot, absYaw, state, nowTick);
+		if (turnInstruction != null) {
+			return turnInstruction;
 		}
 		if (distanceDelta >= GUIDANCE_PROGRESS_AWAY) {
 			return new GuidanceInstruction("guide_wrong_way", "guide_wrong_way", GUIDE_WRONG_WAY_TRIGGERS, GUIDANCE_CATEGORY_COOLDOWN_TICKS);
@@ -959,9 +1022,6 @@ public final class SeasonStartSystem {
 				default -> new GuidanceInstruction("guide_forward_far", "guide_forward_far", GUIDE_FORWARD_FAR_TRIGGERS, GUIDANCE_FORWARD_COOLDOWN_TICKS);
 			};
 		}
-		if (closeToServer && hasBitcoin) {
-			return new GuidanceInstruction("guide_drop_coin", "guide_drop_coin", GUIDE_DROP_COIN_TRIGGERS, GUIDANCE_FORWARD_COOLDOWN_TICKS);
-		}
 		return null;
 	}
 
@@ -969,34 +1029,16 @@ public final class SeasonStartSystem {
 			GuidanceSnapshot snapshot,
 			double distanceDelta,
 			boolean lookingAtOre,
-			PlayerSceneState state
+			PlayerSceneState state,
+			long nowTick
 	) {
 		if (snapshot == null || state == null || lookingAtOre) {
 			return null;
 		}
 		double absYaw = Math.abs(snapshot.deltaYaw);
-		if (absYaw >= GUIDANCE_TURN_AROUND_ANGLE) {
-			return snapshot.deltaYaw < 0.0D
-					? new GuidanceInstruction("guide_turn_around_left", "guide_turn_around_left", GUIDE_TURN_AROUND_LEFT_TRIGGERS, GUIDANCE_CATEGORY_COOLDOWN_TICKS)
-					: new GuidanceInstruction("guide_turn_around_right", "guide_turn_around_right", GUIDE_TURN_AROUND_RIGHT_TRIGGERS, GUIDANCE_CATEGORY_COOLDOWN_TICKS);
-		}
-		if (state.wasGuidanceAligned && absYaw >= GUIDANCE_MICRO_ANGLE) {
-			return new GuidanceInstruction("guide_heading_lost", "guide_heading_lost", GUIDE_HEADING_LOST_TRIGGERS, GUIDANCE_CORRECTION_COOLDOWN_TICKS);
-		}
-		if (absYaw >= GUIDANCE_HARD_ANGLE) {
-			return snapshot.deltaYaw < 0.0D
-					? new GuidanceInstruction("guide_turn_left_hard", "guide_turn_left_hard", GUIDE_TURN_LEFT_HARD_TRIGGERS, GUIDANCE_CATEGORY_COOLDOWN_TICKS)
-					: new GuidanceInstruction("guide_turn_right_hard", "guide_turn_right_hard", GUIDE_TURN_RIGHT_HARD_TRIGGERS, GUIDANCE_CATEGORY_COOLDOWN_TICKS);
-		}
-		if (absYaw >= GUIDANCE_MEDIUM_ANGLE) {
-			return snapshot.deltaYaw < 0.0D
-					? new GuidanceInstruction("guide_turn_left_medium", "guide_turn_left_medium", GUIDE_TURN_LEFT_MEDIUM_TRIGGERS, GUIDANCE_CORRECTION_COOLDOWN_TICKS)
-					: new GuidanceInstruction("guide_turn_right_medium", "guide_turn_right_medium", GUIDE_TURN_RIGHT_MEDIUM_TRIGGERS, GUIDANCE_CORRECTION_COOLDOWN_TICKS);
-		}
-		if (absYaw >= GUIDANCE_MICRO_ANGLE) {
-			return snapshot.deltaYaw < 0.0D
-					? new GuidanceInstruction("guide_turn_left_soft", "guide_turn_left_soft", GUIDE_TURN_LEFT_SOFT_TRIGGERS, GUIDANCE_CORRECTION_COOLDOWN_TICKS)
-					: new GuidanceInstruction("guide_turn_right_soft", "guide_turn_right_soft", GUIDE_TURN_RIGHT_SOFT_TRIGGERS, GUIDANCE_CORRECTION_COOLDOWN_TICKS);
+		GuidanceInstruction turnInstruction = resolveTurnInstruction(snapshot, absYaw, state, nowTick);
+		if (turnInstruction != null) {
+			return turnInstruction;
 		}
 		if (distanceDelta >= GUIDANCE_PROGRESS_AWAY) {
 			return new GuidanceInstruction("intro_guide_wrong_way", "intro_guide_wrong_way", INTRO_GUIDE_WRONG_WAY_TRIGGERS, GUIDANCE_CATEGORY_COOLDOWN_TICKS);
@@ -1020,6 +1062,70 @@ public final class SeasonStartSystem {
 		return null;
 	}
 
+	private static GuidanceInstruction resolveTurnInstruction(
+			GuidanceSnapshot snapshot,
+			double absYaw,
+			PlayerSceneState state,
+			long nowTick
+	) {
+		if (snapshot == null || state == null) {
+			return null;
+		}
+		TurnHintDirection desiredDirection = snapshot.deltaYaw < 0.0D ? TurnHintDirection.LEFT : TurnHintDirection.RIGHT;
+		GuidanceInstruction recoverInstruction = resolveTurnRecoverInstruction(state, desiredDirection, absYaw, nowTick);
+		if (recoverInstruction != null) {
+			return recoverInstruction;
+		}
+		if (absYaw >= GUIDANCE_TURN_AROUND_ANGLE) {
+			return snapshot.deltaYaw < 0.0D
+					? new GuidanceInstruction("guide_turn_around_left", "guide_turn_around_left", GUIDE_TURN_AROUND_LEFT_TRIGGERS, GUIDANCE_CATEGORY_COOLDOWN_TICKS)
+					: new GuidanceInstruction("guide_turn_around_right", "guide_turn_around_right", GUIDE_TURN_AROUND_RIGHT_TRIGGERS, GUIDANCE_CATEGORY_COOLDOWN_TICKS);
+		}
+		if (state.wasGuidanceAligned && absYaw >= GUIDANCE_MICRO_ANGLE) {
+			return new GuidanceInstruction("guide_heading_lost", "guide_heading_lost", GUIDE_HEADING_LOST_TRIGGERS, GUIDANCE_CORRECTION_COOLDOWN_TICKS);
+		}
+		if (absYaw >= GUIDANCE_HARD_ANGLE) {
+			return snapshot.deltaYaw < 0.0D
+					? new GuidanceInstruction("guide_turn_left_hard", "guide_turn_left_hard", GUIDE_TURN_LEFT_HARD_TRIGGERS, GUIDANCE_CATEGORY_COOLDOWN_TICKS)
+					: new GuidanceInstruction("guide_turn_right_hard", "guide_turn_right_hard", GUIDE_TURN_RIGHT_HARD_TRIGGERS, GUIDANCE_CATEGORY_COOLDOWN_TICKS);
+		}
+		if (absYaw >= GUIDANCE_MEDIUM_ANGLE) {
+			return snapshot.deltaYaw < 0.0D
+					? new GuidanceInstruction("guide_turn_left_medium", "guide_turn_left_medium", GUIDE_TURN_LEFT_MEDIUM_TRIGGERS, GUIDANCE_CORRECTION_COOLDOWN_TICKS)
+					: new GuidanceInstruction("guide_turn_right_medium", "guide_turn_right_medium", GUIDE_TURN_RIGHT_MEDIUM_TRIGGERS, GUIDANCE_CORRECTION_COOLDOWN_TICKS);
+		}
+		if (absYaw >= GUIDANCE_MICRO_ANGLE) {
+			return snapshot.deltaYaw < 0.0D
+					? new GuidanceInstruction("guide_turn_left_soft", "guide_turn_left_soft", GUIDE_TURN_LEFT_SOFT_TRIGGERS, GUIDANCE_CORRECTION_COOLDOWN_TICKS)
+					: new GuidanceInstruction("guide_turn_right_soft", "guide_turn_right_soft", GUIDE_TURN_RIGHT_SOFT_TRIGGERS, GUIDANCE_CORRECTION_COOLDOWN_TICKS);
+		}
+		return null;
+	}
+
+	private static GuidanceInstruction resolveTurnRecoverInstruction(
+			PlayerSceneState state,
+			TurnHintDirection desiredDirection,
+			double absYaw,
+			long nowTick
+	) {
+		TurnHintDirection recoverContextDirection = state == null
+				? TurnHintDirection.NONE
+				: resolveRecoverContextDirection(state.lastGuidanceStateKey);
+		if (state == null
+				|| desiredDirection == TurnHintDirection.NONE
+				|| recoverContextDirection != desiredDirection
+				|| state.lastGuidanceTurnDirection != desiredDirection
+				|| state.lastGuidanceTurnRecoverUsed
+				|| !Double.isFinite(state.lastGuidanceTurnAbsYaw)
+				|| nowTick - state.lastGuidanceTurnTick > GUIDANCE_RECOVER_REACTION_WINDOW_TICKS
+				|| absYaw < state.lastGuidanceTurnAbsYaw + GUIDANCE_RECOVER_WORSEN_THRESHOLD) {
+			return null;
+		}
+		return desiredDirection == TurnHintDirection.LEFT
+				? new GuidanceInstruction("guide_turn_left_recover", "guide_turn_left_recover", GUIDE_TURN_LEFT_RECOVER_TRIGGERS, GUIDANCE_CORRECTION_COOLDOWN_TICKS)
+				: new GuidanceInstruction("guide_turn_right_recover", "guide_turn_right_recover", GUIDE_TURN_RIGHT_RECOVER_TRIGGERS, GUIDANCE_CORRECTION_COOLDOWN_TICKS);
+	}
+
 	private static int guidanceDistanceBucket(double distance) {
 		if (distance <= 2.6D) {
 			return 2;
@@ -1033,10 +1139,167 @@ public final class SeasonStartSystem {
 		return 10;
 	}
 
+	private static void applyGuidanceInstructionState(
+			PlayerSceneState state,
+			GuidanceInstruction instruction,
+			GuidanceSnapshot snapshot,
+			long nowTick
+	) {
+		if (state == null || instruction == null || snapshot == null) {
+			return;
+		}
+		double absYaw = Math.abs(snapshot.deltaYaw);
+		state.guidanceRouteStarted = true;
+		updateGuidanceTurnContext(state, instruction, absYaw, nowTick);
+		if ("guide_locked_on".equals(instruction.stateKey)) {
+			state.guidanceAlignedEver = true;
+			return;
+		}
+		if ("guide_heading_lost".equals(instruction.stateKey)
+				|| "guide_wrong_way".equals(instruction.stateKey)
+				|| "intro_guide_wrong_way".equals(instruction.stateKey)
+				|| "guide_passed_server".equals(instruction.stateKey)
+				|| "guide_close_presence".equals(instruction.stateKey)) {
+			state.guidanceMistakeCount++;
+			return;
+		}
+		if ("guide_turn_left_recover".equals(instruction.stateKey)) {
+			state.guidanceMistakeCount++;
+			return;
+		}
+		if ("guide_turn_right_recover".equals(instruction.stateKey)) {
+			state.guidanceMistakeCount++;
+			return;
+		}
+	}
+
+	private static TurnHintDirection resolveTurnDirectionFromStateKey(String stateKey) {
+		if (stateKey == null || stateKey.isBlank()) {
+			return TurnHintDirection.NONE;
+		}
+		if (stateKey.contains("_left")) {
+			return TurnHintDirection.LEFT;
+		}
+		if (stateKey.contains("_right")) {
+			return TurnHintDirection.RIGHT;
+		}
+		return TurnHintDirection.NONE;
+	}
+
+	private static TurnHintDirection resolveRecoverContextDirection(String stateKey) {
+		if (stateKey == null || stateKey.isBlank()) {
+			return TurnHintDirection.NONE;
+		}
+		return switch (stateKey) {
+			case "guide_turn_left_soft",
+					"guide_turn_left_medium",
+					"guide_turn_left_hard",
+					"guide_turn_around_left" -> TurnHintDirection.LEFT;
+			case "guide_turn_right_soft",
+					"guide_turn_right_medium",
+					"guide_turn_right_hard",
+					"guide_turn_around_right" -> TurnHintDirection.RIGHT;
+			default -> TurnHintDirection.NONE;
+		};
+	}
+
+	private static void updateGuidanceTurnContext(
+			PlayerSceneState state,
+			GuidanceInstruction instruction,
+			double absYaw,
+			long nowTick
+	) {
+		if (state == null || instruction == null) {
+			return;
+		}
+		if ("guide_turn_left_recover".equals(instruction.stateKey)) {
+			state.lastGuidanceTurnDirection = TurnHintDirection.LEFT;
+			state.lastGuidanceTurnAbsYaw = absYaw;
+			state.lastGuidanceTurnTick = nowTick;
+			state.lastGuidanceTurnRecoverUsed = true;
+			return;
+		}
+		if ("guide_turn_right_recover".equals(instruction.stateKey)) {
+			state.lastGuidanceTurnDirection = TurnHintDirection.RIGHT;
+			state.lastGuidanceTurnAbsYaw = absYaw;
+			state.lastGuidanceTurnTick = nowTick;
+			state.lastGuidanceTurnRecoverUsed = true;
+			return;
+		}
+		TurnHintDirection followUpDirection = resolveRecoverContextDirection(instruction.stateKey);
+		if (followUpDirection != TurnHintDirection.NONE) {
+			state.lastGuidanceTurnDirection = followUpDirection;
+			state.lastGuidanceTurnAbsYaw = absYaw;
+			state.lastGuidanceTurnTick = nowTick;
+			state.lastGuidanceTurnRecoverUsed = false;
+			return;
+		}
+		state.lastGuidanceTurnDirection = TurnHintDirection.NONE;
+		state.lastGuidanceTurnAbsYaw = Double.NaN;
+		state.lastGuidanceTurnTick = Long.MIN_VALUE;
+		state.lastGuidanceTurnRecoverUsed = false;
+	}
+
+	private static ServerStructureBounds resolveServerStructureBounds() {
+		if (serverAnchor == null) {
+			return null;
+		}
+		List<BlockPos> positions = ServerStructureBreakSystem.getStructurePositions(serverAnchor, Direction.Axis.Z);
+		if (positions.isEmpty()) {
+			return null;
+		}
+		double minX = Double.POSITIVE_INFINITY;
+		double maxX = Double.NEGATIVE_INFINITY;
+		double minZ = Double.POSITIVE_INFINITY;
+		double maxZ = Double.NEGATIVE_INFINITY;
+		for (BlockPos pos : positions) {
+			minX = Math.min(minX, pos.getX());
+			maxX = Math.max(maxX, pos.getX() + 1.0D);
+			minZ = Math.min(minZ, pos.getZ());
+			maxZ = Math.max(maxZ, pos.getZ() + 1.0D);
+		}
+		return new ServerStructureBounds(minX, maxX, minZ, maxZ);
+	}
+
+	private static long resolveTriggerSequenceDurationTicks(String trigger) {
+		if (trigger == null || trigger.isBlank()) {
+			return 0L;
+		}
+		long maxTicks = 0L;
+		for (SeasonStartConfig.VoiceCue cue : SeasonStartConfig.get().cues) {
+			if (cue == null || !trigger.equals(cue.trigger)) {
+				continue;
+			}
+			maxTicks = Math.max(maxTicks, (long) cue.delayTicks + cue.durationTicks);
+		}
+		return maxTicks;
+	}
+
+	private static long resolveGuidanceNarrationLockTicks(String[] triggers) {
+		if (triggers == null || triggers.length == 0) {
+			return GUIDANCE_MIN_VOICE_GAP_TICKS;
+		}
+		long maxTicks = GUIDANCE_MIN_VOICE_GAP_TICKS;
+		for (String trigger : triggers) {
+			maxTicks = Math.max(maxTicks, resolveTriggerSequenceDurationTicks(trigger));
+		}
+		return maxTicks;
+	}
+
+	private static boolean shouldBypassGuidanceNarrationLock(GuidanceInstruction instruction) {
+		if (instruction == null || instruction.stateKey == null || instruction.stateKey.isBlank()) {
+			return false;
+		}
+		return "guide_wrong_way".equals(instruction.stateKey)
+				|| "guide_passed_server".equals(instruction.stateKey)
+				|| "intro_guide_wrong_way".equals(instruction.stateKey);
+	}
+
 	private static void transitionPlayerToShared(MinecraftServer server, ServerPlayer player) {
 		if (server == null || player == null || serverAnchor == null) {
 			return;
 		}
+		SeasonStartVoiceSystem.clearPlayerChannel(player);
 		PlayerSceneState state = PLAYER_STATES.get(player.getUUID());
 		if (state == null || state.phase == PlayerPhase.SHARED) {
 			return;
@@ -1074,12 +1337,22 @@ public final class SeasonStartSystem {
 		state.nextGuidanceTick = 0L;
 		state.nextGuidanceVoiceTick = level.getGameTime() + 28L;
 		state.nextGuidanceEarliestTick = level.getGameTime() + 28L;
+		state.guidanceNarrationGateTick = level.getGameTime() + resolveTriggerSequenceDurationTicks("player_mined_intro_bitcoin");
 		state.lastGuidanceStateKey = "";
 		state.lastGuidanceDistance = Double.NaN;
+		state.lastGuidanceAbsYaw = Double.NaN;
 		state.lastGuidanceDistanceBucket = Integer.MIN_VALUE;
 		state.wasGuidanceAligned = false;
 		state.wasGuidanceClose = false;
+		state.guidanceRouteStarted = true;
+		state.guidanceAlignedEver = false;
+		state.guidanceMistakeCount = 0;
+		state.lastGuidanceTurnDirection = TurnHintDirection.NONE;
+		state.lastGuidanceTurnAbsYaw = Double.NaN;
+		state.lastGuidanceTurnTick = Long.MIN_VALUE;
+		state.lastGuidanceTurnRecoverUsed = false;
 		state.announcedServerSight = false;
+		state.guidanceQuietZoneActive = false;
 		state.guidanceCueCycles.clear();
 		state.spinScore = 0.0D;
 		state.introTargetLocked = false;
@@ -1218,6 +1491,12 @@ public final class SeasonStartSystem {
 
 	private static List<BlockPos> collectBarrierShellBlocks(BoxGeometry geometry) {
 		List<BlockPos> blocks = new ArrayList<>();
+		int floorBarrierY = geometry.floorY - 1;
+		for (int x = geometry.minX; x <= geometry.maxX; x++) {
+			for (int z = geometry.minZ; z <= geometry.maxZ; z++) {
+				blocks.add(new BlockPos(x, floorBarrierY, z));
+			}
+		}
 		for (int y = geometry.floorY + 1; y <= geometry.roofY; y++) {
 			for (int x = geometry.minX; x <= geometry.maxX; x++) {
 				for (int z = geometry.minZ; z <= geometry.maxZ; z++) {
@@ -1742,9 +2021,17 @@ public final class SeasonStartSystem {
 		state.nextGuidanceEarliestTick = 0L;
 		state.lastGuidanceStateKey = "";
 		state.lastGuidanceDistance = Double.NaN;
+		state.lastGuidanceAbsYaw = Double.NaN;
 		state.lastGuidanceDistanceBucket = Integer.MIN_VALUE;
 		state.wasGuidanceAligned = false;
 		state.wasGuidanceClose = false;
+		state.guidanceRouteStarted = false;
+		state.guidanceAlignedEver = false;
+		state.guidanceMistakeCount = 0;
+		state.lastGuidanceTurnDirection = TurnHintDirection.NONE;
+		state.lastGuidanceTurnAbsYaw = Double.NaN;
+		state.lastGuidanceTurnTick = Long.MIN_VALUE;
+		state.lastGuidanceTurnRecoverUsed = false;
 		state.announcedServerSight = false;
 		state.guidanceCueCycles.clear();
 		if (state.phase == PlayerPhase.WAITING_START && state.nextStartPromptTick <= 0L && player.level() != null) {
@@ -1759,8 +2046,10 @@ public final class SeasonStartSystem {
 		if (server == null || player == null || state == null || state.phase != PlayerPhase.WAITING_START) {
 			return;
 		}
+		long nowTick = player.level() == null ? 0L : player.level().getGameTime();
 		state.phase = PlayerPhase.ISOLATED;
 		state.nextStartPromptTick = Long.MAX_VALUE;
+		state.guidanceNarrationGateTick = nowTick + resolveTriggerSequenceDurationTicks("player_intro_assigned");
 		stateDirty = true;
 		primeObservationState(player, state);
 		SeasonStartVoiceSystem.fireTrigger(server, "player_waiting_start_confirmed", player);
@@ -1892,15 +2181,25 @@ public final class SeasonStartSystem {
 		private PlayerPhase phase = PlayerPhase.ISOLATED;
 		private boolean minedIntroBitcoin;
 		private boolean poweredServer;
+		private long guidanceNarrationGateTick = 0L;
 		private long nextGuidanceTick = 0L;
 		private long nextGuidanceVoiceTick = 0L;
 		private long nextGuidanceEarliestTick = 0L;
 		private String lastGuidanceStateKey = "";
 		private double lastGuidanceDistance = Double.NaN;
+		private double lastGuidanceAbsYaw = Double.NaN;
 		private int lastGuidanceDistanceBucket = Integer.MIN_VALUE;
 		private boolean wasGuidanceAligned = false;
 		private boolean wasGuidanceClose = false;
+		private boolean guidanceRouteStarted = false;
+		private boolean guidanceAlignedEver = false;
+		private int guidanceMistakeCount = 0;
 		private boolean announcedServerSight = false;
+		private boolean guidanceQuietZoneActive = false;
+		private TurnHintDirection lastGuidanceTurnDirection = TurnHintDirection.NONE;
+		private double lastGuidanceTurnAbsYaw = Double.NaN;
+		private long lastGuidanceTurnTick = Long.MIN_VALUE;
+		private boolean lastGuidanceTurnRecoverUsed = false;
 		private final Map<String, Integer> guidanceCueCycles = new LinkedHashMap<>();
 		private long lastActivityTick = 0L;
 		private long nextIdleReactionTick = 0L;
@@ -1930,9 +2229,21 @@ public final class SeasonStartSystem {
 	}
 
 	private record GuidanceSnapshot(double horizontalDistance, double deltaYaw, boolean aligned, int distanceBucket) {
+		private GuidanceSnapshot withAlignmentLock() {
+			return new GuidanceSnapshot(horizontalDistance, 0.0D, true, distanceBucket);
+		}
 	}
 
 	private record GuidanceInstruction(String stateKey, String groupKey, String[] triggers, long cooldownTicks) {
+	}
+
+	private record ServerStructureBounds(double minX, double maxX, double minZ, double maxZ) {
+	}
+
+	private enum TurnHintDirection {
+		NONE,
+		LEFT,
+		RIGHT
 	}
 
 	private static final class PersistedState {

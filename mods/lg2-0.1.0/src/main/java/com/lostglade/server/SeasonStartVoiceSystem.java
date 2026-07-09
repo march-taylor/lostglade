@@ -91,6 +91,13 @@ public final class SeasonStartVoiceSystem {
 		}
 	}
 
+	public static void clearPlayerChannel(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		clearChannel("player:" + player.getUUID());
+	}
+
 	public static void onMicrophonePacket(MicrophonePacketEvent event) {
 		if (event == null || !ServerVoicechatIntegration.isLoaded()) {
 			return;
@@ -214,6 +221,18 @@ public final class SeasonStartVoiceSystem {
 			return;
 		}
 		active.future.complete(null);
+	}
+
+	private static void clearChannel(String channelKey) {
+		if (channelKey == null || channelKey.isBlank()) {
+			return;
+		}
+		Deque<QueuedCue> queue = CHANNEL_QUEUES.get(channelKey);
+		if (queue != null) {
+			queue.clear();
+			CHANNEL_QUEUES.remove(channelKey);
+		}
+		interruptActivePlayback(channelKey);
 	}
 
 	private static boolean shouldQueueCue(VoiceCue cue, ServerPlayer focusPlayer) {
@@ -409,6 +428,7 @@ public final class SeasonStartVoiceSystem {
 				category,
 				recipientIds,
 				0,
+				System.nanoTime(),
 				future,
 				executor
 		);
@@ -426,6 +446,7 @@ public final class SeasonStartVoiceSystem {
 			String category,
 			List<UUID> recipientIds,
 			int frameIndex,
+			long playbackStartNanos,
 			CompletableFuture<Void> future,
 			ScheduledExecutorService executor
 	) {
@@ -439,6 +460,8 @@ public final class SeasonStartVoiceSystem {
 			return;
 		}
 
+		long targetNanos = playbackStartNanos + TimeUnit.MILLISECONDS.toNanos((long) frameIndex * AUDIO_FRAME_DURATION_MS);
+		long delayNanos = Math.max(0L, targetNanos - System.nanoTime());
 		executor.schedule(() -> {
 			if (future.isDone()) {
 				closeQuietly(encoder);
@@ -456,17 +479,14 @@ public final class SeasonStartVoiceSystem {
 						category
 				);
 				LocationalSoundPacketImpl wrappedPacket = new LocationalSoundPacketImpl(soundPacket);
-				server.execute(() -> {
-					if (future.isDone()) {
-						return;
-					}
+				if (!future.isDone()) {
 					for (UUID recipientId : recipientIds) {
 						VoicechatConnection receiverConnection = voicechatServerApi.getConnectionOf(recipientId);
 						if (receiverConnection != null) {
 							voicechatServerApi.sendLocationalSoundPacketTo(receiverConnection, wrappedPacket);
 						}
 					}
-				});
+				}
 				scheduleNarrationFrame(
 						server,
 						voicechatServerApi,
@@ -478,6 +498,7 @@ public final class SeasonStartVoiceSystem {
 						category,
 						recipientIds,
 						frameIndex + 1,
+						playbackStartNanos,
 						future,
 						executor
 				);
@@ -485,7 +506,7 @@ public final class SeasonStartVoiceSystem {
 				closeQuietly(encoder);
 				future.completeExceptionally(throwable);
 			}
-		}, frameIndex == 0 ? 0L : AUDIO_FRAME_DURATION_MS, TimeUnit.MILLISECONDS);
+		}, delayNanos, TimeUnit.NANOSECONDS);
 	}
 
 	private static CompletableFuture<Void> delayedFuture(int durationTicks) {
@@ -576,7 +597,7 @@ public final class SeasonStartVoiceSystem {
 			thread.setDaemon(true);
 			return thread;
 		};
-		return Executors.newSingleThreadScheduledExecutor(factory);
+		return Executors.newScheduledThreadPool(4, factory);
 	}
 
 	private static void closeQuietly(OpusEncoder encoder) {
@@ -616,8 +637,6 @@ public final class SeasonStartVoiceSystem {
 		}
 		return cue.id.startsWith("guide_wrong_way_")
 				|| cue.id.startsWith("guide_passed_server_")
-				|| cue.id.startsWith("guide_drop_coin_")
-				|| cue.id.startsWith("guide_server_in_sight_")
 				|| cue.id.startsWith("intro_guide_wrong_way_");
 	}
 

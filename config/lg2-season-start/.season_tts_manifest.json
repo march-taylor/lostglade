@@ -24,7 +24,7 @@
     },
     "phase1_mined_here": {
       "fingerprint": "b3671fd5da6b04a8b8486d194502a20693db7c79d457ad215410c373b4db7f9c",
-      "text": "Вот он. Первый бит-коин.",
+      "text": "Вот он. Первый биткоин.",
       "outputPath": "config/lg2-season-start/voice/phase1_mined_here.wav",
       "durationTicks": 39,
       "generatorVersion": 4
@@ -37,17 +37,17 @@
       "generatorVersion": 4
     },
     "phase1_intro_block": {
-      "fingerprint": "fd442ad848658381432d03763af4bf47b1ed71afe6335810bd37cf798ad9b03b",
-      "text": "Перед вами руда. Первый бит-коин. Кирка уже у вас.",
+      "fingerprint": "9364cc1ff1778b6a1c644d1399c692e5810ab12e3f2b8ea67a11442abba4ea86",
+      "text": "В нескольких шагах от вас стоит руда. Первый бит-коин. Кирка уже у вас.",
       "outputPath": "config/lg2-season-start/voice/phase1_intro_block.wav",
-      "durationTicks": 83,
+      "durationTicks": 108,
       "generatorVersion": 4
     },
     "phase1_intro_break": {
-      "fingerprint": "d6ace63769b7c5fea0a7b767c3a349b39c6cea0933636a9fc79a29461af089a1",
-      "text": "Сделайте два простых действия. Подойдите к руде и сломайте её.",
+      "fingerprint": "bcf2abbfd820866d800526c564ad66aff61eaf6fdbd5475f0ee09e0d730e5dc3",
+      "text": "Сейчас вам нужно дойти до этой руды и сломать её киркой.",
       "outputPath": "config/lg2-season-start/voice/phase1_intro_break.wav",
-      "durationTicks": 103,
+      "durationTicks": 86,
       "generatorVersion": 4
     },
     "phase1_mined_honest_work": {
@@ -380,10 +380,10 @@
       "generatorVersion": 4
     },
     "guide_turn_right_soft_03": {
-      "fingerprint": "29e03af3d943859ea30d40af5749f2c56474725c9b267f77f64ea031d4145e1a",
-      "text": "Нет, не в то право. В другое. Да, теперь хорошо.",
+      "fingerprint": "8b0f9a12a7345b1358d51493b613cdae79f446277d145c29fcce314f9ec241ce",
+      "text": "Ой, почти. Немного правее.",
       "outputPath": "config/lg2-season-start/voice/guide_turn_right_soft_03.wav",
-      "durationTicks": 91,
+      "durationTicks": 46,
       "generatorVersion": 4
     },
     "guide_turn_around_left_01": {
@@ -478,24 +478,24 @@
       "generatorVersion": 4
     },
     "guide_server_in_sight_01": {
-      "fingerprint": "76ab41b2c7b72759e924fac970f9d74f3305e0bc6a03eb83ecbb6c8da40711db",
-      "text": "Вот. Да, это я. Ядро Lost Glade. Железная ебаная коробка, если вам так проще. Теперь бросьте бит-коин.",
+      "fingerprint": "27a9e60c9b741df391a05d7c11be18b21a174f1ffb9c4ef365690f0707e0cceb",
+      "text": "Вот. Да, это я. Ядро Lost Glade. Железная ебаная коробка, если вам так проще.",
       "outputPath": "config/lg2-season-start/voice/guide_server_in_sight_01.wav",
-      "durationTicks": 182,
+      "durationTicks": 131,
       "generatorVersion": 4
     },
     "guide_server_in_sight_02": {
-      "fingerprint": "7c94e749f93512bc0f3e9023b2604a0ad6287c41efe6aeb7483da30697fc40f3",
-      "text": "Да, перед вами я. Восхищение можно отложить. Кью и бит-коин в сервер.",
+      "fingerprint": "56d2d2751c6ffc1d97058d7668ec1080aa2294af384b1de3f03339e9781c1e07",
+      "text": "Да, перед вами я. Восхищение можно отложить. Просто не теряйте меня из вида.",
       "outputPath": "config/lg2-season-start/voice/guide_server_in_sight_02.wav",
-      "durationTicks": 105,
+      "durationTicks": 113,
       "generatorVersion": 4
     },
     "guide_server_in_sight_03": {
-      "fingerprint": "cd6acdb07bfc59ed9ab2ea812e4454679d3f366fa52350754805f3dd1fbc7bb8",
-      "text": "Это сервер. Это я. И да, выглядеть как коробка было осознанным архитектурным решением. Бросайте бит-коин.",
+      "fingerprint": "7ea6197b6d0a6e9afb38da6972f8faebc87cc7c8cbca79ff0226080780846674",
+      "text": "Это сервер. Это я. И да, выглядеть как коробка было осознанным архитектурным решением.",
       "outputPath": "config/lg2-season-start/voice/guide_server_in_sight_03.wav",
-      "durationTicks": 158,
+      "durationTicks": 126,
       "generatorVersion": 4
     },
     "guide_forward_far_01": {
@@ -720,6 +720,90 @@
       "text": "Блять, это было уверенное движение совсем не к бит-коину.",
       "outputPath": "config/lg2-season-start/voice/intro_guide_wrong_way_03.wav",
       "durationTicks": 81,
+      "generatorVersion": 4
+    },
+    "guide_close_presence_01": {
+      "fingerprint": "6f7ae485c293ba9e0a5836de81caec491ff2c1f30373b00911eed49c19220dee",
+      "text": "Не отворачивайтесь. Я уже рядом.",
+      "outputPath": "config/lg2-season-start/voice/guide_close_presence_01.wav",
+      "durationTicks": 54,
+      "generatorVersion": 4
+    },
+    "guide_close_presence_02": {
+      "fingerprint": "15c024c14c78ed21b9aaf321bfcd879ce31c9e4e1990a84677b3269fff1d824a",
+      "text": "Я никуда не делся. Вы стоите почти вплотную.",
+      "outputPath": "config/lg2-season-start/voice/guide_close_presence_02.wav",
+      "durationTicks": 73,
+      "generatorVersion": 4
+    },
+    "guide_close_presence_03": {
+      "fingerprint": "ebf2c33add7ec2149cb5784ad6a0ea2414e1a6ec2389d23bf458117df02553ae",
+      "text": "Вот так и знал. Стоит подойти ко мне, и вы сразу отворачиваетесь.",
+      "outputPath": "config/lg2-season-start/voice/guide_close_presence_03.wav",
+      "durationTicks": 102,
+      "generatorVersion": 4
+    },
+    "intro_guide_route_start_01": {
+      "fingerprint": "35cf8bcdd3d94fa70dad02e8f6c63444b24faa0d0b7cab5fd85c4d12d9358c55",
+      "text": "Сейчас я выведу вас к первой руде. Сначала слушайте повороты, потом уже шаги.",
+      "outputPath": "config/lg2-season-start/voice/intro_guide_route_start_01.wav",
+      "durationTicks": 115,
+      "generatorVersion": 4
+    },
+    "intro_guide_route_start_02": {
+      "fingerprint": "cd6349b1d40e78978da138f9433556adeffee2291fcabd54160b3de98db35d0a",
+      "text": "Я скажу, как подойти к руде. Поворот, фиксация курса, потом движение. Постарайтесь не спорить с этой схемой.",
+      "outputPath": "config/lg2-season-start/voice/intro_guide_route_start_02.wav",
+      "durationTicks": 143,
+      "generatorVersion": 4
+    },
+    "intro_guide_route_start_03": {
+      "fingerprint": "273e95ebd3a1ce4d22353d8808992719337e465abe9a5024e0c70a0212d2dae1",
+      "text": "Сейчас будет очень простая навигация к руде. Я говорю, куда повернуться, а вы не устраиваете драму.",
+      "outputPath": "config/lg2-season-start/voice/intro_guide_route_start_03.wav",
+      "durationTicks": 135,
+      "generatorVersion": 4
+    },
+    "guide_turn_left_recover_01": {
+      "fingerprint": "ccc9ebe8b65ece0abfb78ec249d6060f7cf016ea426dfd993dd9e224eaea3208",
+      "text": "Нет, другое лево. Да, у вас и это получилось перепутать.",
+      "outputPath": "config/lg2-season-start/voice/guide_turn_left_recover_01.wav",
+      "durationTicks": 86,
+      "generatorVersion": 4
+    },
+    "guide_turn_left_recover_02": {
+      "fingerprint": "8a2763e266e28dc5d4a107fa1c51fa4cfdbc2e2f35cd438fb14f869a384c4924",
+      "text": "Лево было нормальное. Вы выбрали какое-то постороннее. Верните курс.",
+      "outputPath": "config/lg2-season-start/voice/guide_turn_left_recover_02.wav",
+      "durationTicks": 105,
+      "generatorVersion": 4
+    },
+    "guide_turn_left_recover_03": {
+      "fingerprint": "0ae06359df2acffa2b7a783f06e24446876b3b673f18698532824bdbfd6f52f2",
+      "text": "Я же сказал налево. Не это ваше экспериментальное налево. Нормальное.",
+      "outputPath": "config/lg2-season-start/voice/guide_turn_left_recover_03.wav",
+      "durationTicks": 94,
+      "generatorVersion": 4
+    },
+    "guide_turn_right_recover_01": {
+      "fingerprint": "35b5886c74ee9c927f4372f4a7e230cb88709266c0e78cbe21136561878d5e69",
+      "text": "Нет, другое право. Вот теперь то, которое мне и было нужно.",
+      "outputPath": "config/lg2-season-start/voice/guide_turn_right_recover_01.wav",
+      "durationTicks": 89,
+      "generatorVersion": 4
+    },
+    "guide_turn_right_recover_02": {
+      "fingerprint": "c4d362b4f0803bef91560168b4f5c53a94ca8221f5ee7685487768bbad93b37a",
+      "text": "Я просил направо. Не то направо, которое только что произошло. Правьте курс.",
+      "outputPath": "config/lg2-season-start/voice/guide_turn_right_recover_02.wav",
+      "durationTicks": 110,
+      "generatorVersion": 4
+    },
+    "guide_turn_right_recover_03": {
+      "fingerprint": "f7899e03c1033669ef121e6a76d091259b66fe4ad86c68d5d70dcb48287cc294",
+      "text": "Нет, не туда. Право было с другой стороны. Теперь уже туда.",
+      "outputPath": "config/lg2-season-start/voice/guide_turn_right_recover_03.wav",
+      "durationTicks": 91,
       "generatorVersion": 4
     }
   }
