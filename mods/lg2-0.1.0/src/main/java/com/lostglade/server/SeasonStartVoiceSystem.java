@@ -390,6 +390,22 @@ public final class SeasonStartVoiceSystem {
 			return delayedFuture(queuedCue.cue.durationTicks);
 		}
 
+		if (SeasonStartSystem.shouldUseFlatNarrationMix()) {
+			List<CompletableFuture<Void>> futures = new ArrayList<>();
+			for (UUID recipientId : voiceRecipientIds) {
+				ServerPlayer recipient = server.getPlayerList().getPlayer(recipientId);
+				if (recipient == null) {
+					continue;
+				}
+				Vec3 personalOrigin = new Vec3(recipient.getX(), recipient.getEyeY() - 0.35D, recipient.getZ());
+				futures.add(playClipToRecipients(server, voicechatApi, voicechatServerApi, clip, personalOrigin, List.of(recipientId)));
+			}
+			if (futures.isEmpty()) {
+				return delayedFuture(queuedCue.cue.durationTicks);
+			}
+			return CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new));
+		}
+
 		return playClipToRecipients(server, voicechatApi, voicechatServerApi, clip, origin, voiceRecipientIds);
 	}
 

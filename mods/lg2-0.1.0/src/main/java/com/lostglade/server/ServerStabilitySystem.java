@@ -236,7 +236,9 @@ public final class ServerStabilitySystem {
 		}
 
 		ServerBossEvent hud = PLAYER_HUDS.computeIfAbsent(player.getUUID(), id -> createHudEvent());
-		float progress = (float) getStability() / (float) getMaxStability();
+		float progress = SeasonStartSystem.shouldOverrideStabilityHud()
+				? SeasonStartSystem.getStartupHudProgress()
+				: (float) getStability() / (float) getMaxStability();
 		progress = Math.max(0.0F, Math.min(1.0F, progress));
 
 		hud.setName(getHudTitle(player, hasPack));
@@ -361,6 +363,13 @@ public final class ServerStabilitySystem {
 		return style.withColor(PACK_SYMBOL_COLOR).withBold(false).withItalic(false);
 	}
 
+	public static void emitFeedParticles(ServerLevel level, double x, double y, double z, int count) {
+		if (level == null) {
+			return;
+		}
+		level.sendParticles(FEED_PARTICLE, x + 0.1D, y + 1.0D, z + 0.1D, Math.max(1, count), 0.1D, 0.0D, 0.1D, 0.0D);
+	}
+
 	public static int getStability() {
 		return stability;
 	}
@@ -388,6 +397,9 @@ public final class ServerStabilitySystem {
 	}
 
 	private static void tickStabilityDecay(MinecraftServer server) {
+		if (server == null || SeasonStartSystem.shouldSuspendStabilitySystem()) {
+			return;
+		}
 		long intervalTicks = Math.max(1L, (long) getEffectiveDecayIntervalSeconds(server) * 20L);
 		int maxStability = getMaxStability();
 		long tickNow = server.overworld().getGameTime();
@@ -409,6 +421,9 @@ public final class ServerStabilitySystem {
 	}
 
 	private static void tickBitcoinOfferings() {
+		if (SeasonStartSystem.shouldSuspendStabilitySystem()) {
+			return;
+		}
 		for (ItemEntity itemEntity : TRACKED_BITCOIN_ITEMS) {
 			if (itemEntity.isRemoved() || !itemEntity.isAlive()) {
 				TRACKED_BITCOIN_ITEMS.remove(itemEntity);
@@ -499,7 +514,7 @@ public final class ServerStabilitySystem {
 		double y = itemEntity.getY();
 		double z = itemEntity.getZ();
 		long tickNow = level.getGameTime();
-		level.sendParticles(FEED_PARTICLE, x + 0.1D, y + 1.0D, z + 0.1D, 10, 0.1D, 0.0D, 0.1D, 0.0D);
+		emitFeedParticles(level, x, y, z, 10);
 
 		float pitch = getFeedSoundPitch();
 		if (pitch <= 0.01F) {

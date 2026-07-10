@@ -30,25 +30,30 @@ import net.minecraft.network.protocol.game.ClientboundSoundEntityPacket;
 import net.minecraft.network.protocol.game.ClientboundSoundPacket;
 import net.minecraft.network.protocol.game.ClientboundStopSoundPacket;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerBossEvent;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.permissions.Permissions;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.Mth;
+import net.minecraft.world.BossEvent;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.Relative;
+import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.Difficulty;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.storage.LevelResource;
 import net.minecraft.world.level.storage.LevelData;
 import net.minecraft.world.level.GameType;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
@@ -270,9 +275,20 @@ public final class SeasonStartSystem {
 			"guide_passed_server_02",
 			"guide_passed_server_03"
 	};
+	private static final int SHARED_ACTIVE_ORES_PER_PLAYER = 2;
+	private static final int SHARED_LAUNCH_BITCOINS_PER_ASSIGNED_PLAYER = 45;
+	private static final int SHARED_ORE_MIN_Y_OFFSET = 1;
+	private static final int SHARED_ORE_MAX_Y_OFFSET = 4;
+	private static final double SHARED_ORE_SERVER_BUFFER = 4.0D;
+	private static final double SHARED_FEED_RADIUS = 0.35D;
+	private static final double SHARED_FEED_PLAYER_MATCH_DISTANCE = 8.0D;
+	private static final long SHARED_IDLE_REMINDER_TICKS = 20L * 45L;
+	private static final long SHARED_FINISH_DELAY_TICKS = 20L * 2L;
+	private static final int[] SHARED_LAUNCH_MILESTONES = {50, 90, 100};
 
 	private static final Map<UUID, PlayerSceneState> PLAYER_STATES = new LinkedHashMap<>();
 	private static final List<BlockPos> SHELL_DISSOLVE_ORDER = new ArrayList<>();
+	private static final Set<BlockPos> SHARED_BITCOIN_POSITIONS = new LinkedHashSet<>();
 	private static boolean stateLoaded = false;
 	private static boolean stateDirty = false;
 	private static boolean bootstrapComplete = false;
@@ -282,6 +298,14 @@ public final class SeasonStartSystem {
 	private static boolean scenePrepared = false;
 	private static int dissolveCursor = 0;
 	private static long nextSharedReminderTick = Long.MIN_VALUE;
+	private static long lastSharedLaunchProgressTick = Long.MIN_VALUE;
+	private static long pendingSharedFinishTick = Long.MIN_VALUE;
+	private static int sharedLaunchCollectedBitcoins = 0;
+	private static int sharedLaunchRequiredBitcoins = 0;
+	private static int sharedLaunchMilestoneCursor = 0;
+	private static boolean sharedLaunchIntroTriggered = false;
+	private static ServerBossEvent sharedLaunchBossBar = null;
+	private static Difficulty difficultyBeforeSeasonStart = null;
 	private static BlockPos serverAnchor = null;
 
 	private SeasonStartSystem() {
@@ -297,12 +321,22 @@ public final class SeasonStartSystem {
 		scenePrepared = false;
 		dissolveCursor = 0;
 		nextSharedReminderTick = Long.MIN_VALUE;
+		lastSharedLaunchProgressTick = Long.MIN_VALUE;
+		pendingSharedFinishTick = Long.MIN_VALUE;
+		sharedLaunchCollectedBitcoins = 0;
+		sharedLaunchRequiredBitcoins = 0;
+		sharedLaunchMilestoneCursor = 0;
+		sharedLaunchIntroTriggered = false;
+		sharedLaunchBossBar = null;
+		difficultyBeforeSeasonStart = null;
 		serverAnchor = null;
 		PLAYER_STATES.clear();
 		SHELL_DISSOLVE_ORDER.clear();
+		SHARED_BITCOIN_POSITIONS.clear();
 
 		ServerLifecycleEvents.SERVER_STARTED.register(SeasonStartSystem::onServerStarted);
 		ServerLifecycleEvents.SERVER_STOPPING.register(SeasonStartSystem::onServerStopping);
+		ServerTickEvents.START_SERVER_TICK.register(SeasonStartSystem::preTickServer);
 		ServerTickEvents.END_SERVER_TICK.register(SeasonStartSystem::tickServer);
 		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) ->
 				server.execute(() -> onPlayerJoined(server, (ServerPlayer) handler.player)));
@@ -358,6 +392,25 @@ public final class SeasonStartSystem {
 				&& sender.level().dimension().equals(receiver.level().dimension());
 	}
 
+	public static boolean shouldOverrideStabilityHud() {
+		return active && !completed;
+	}
+
+	public static float getStartupHudProgress() {
+		if (sharedLaunchRequiredBitcoins <= 0) {
+			return 0.0F;
+		}
+		return Mth.clamp((float) sharedLaunchCollectedBitcoins / (float) sharedLaunchRequiredBitcoins, 0.0F, 1.0F);
+	}
+
+	public static boolean shouldSuspendStabilitySystem() {
+		return active && !completed;
+	}
+
+	public static boolean shouldUseFlatNarrationMix() {
+		return active && !completed;
+	}
+
 	public static boolean shouldSuppressOutgoingPacket(ServerPlayer receiver, Packet<?> packet) {
 		if (receiver == null || packet == null || !isInSensoryIsolation(receiver)) {
 			return false;
@@ -395,7 +448,11 @@ public final class SeasonStartSystem {
 			}
 		}
 		if (matched != null && bestDistance <= 64.0D) {
-			transitionPlayerToShared(level.getServer(), matched);
+			transitionPlayerAfterFirstPayment(level.getServer(), matched);
+			return;
+		}
+		if (countSharedPlayers() > 0) {
+			incrementSharedLaunchProgress(level.getServer(), 1);
 		}
 	}
 
@@ -440,6 +497,7 @@ public final class SeasonStartSystem {
 	private static void onServerStarted(MinecraftServer server) {
 		loadState(server);
 		ensureBootstrap(server);
+		applyStartDifficultyPolicy(server);
 		if (completed && !active) {
 			removeSceneShellNow(server.overworld());
 		}
@@ -448,11 +506,28 @@ public final class SeasonStartSystem {
 			for (ServerPlayer player : server.getPlayerList().getPlayers()) {
 				assignOrRestorePlayer(server, player, false);
 			}
+			if (countSharedPlayers() > 0) {
+				if (nextSharedReminderTick == Long.MIN_VALUE && server.overworld() != null) {
+					nextSharedReminderTick = server.overworld().getGameTime() + SHARED_IDLE_REMINDER_TICKS;
+				}
+				refreshSharedLaunchBossBar(server);
+			}
 		}
 	}
 
 	private static void onServerStopping(MinecraftServer server) {
 		saveState(server);
+	}
+
+	private static void preTickServer(MinecraftServer server) {
+		if (server == null || !active) {
+			return;
+		}
+		ServerLevel overworld = server.overworld();
+		if (overworld == null || serverAnchor == null) {
+			return;
+		}
+		tickStartupOfferings(server, overworld);
 	}
 
 	private static void tickServer(MinecraftServer server) {
@@ -470,7 +545,7 @@ public final class SeasonStartSystem {
 					}
 					tickPlayerState(server, overworld, player, state);
 				}
-				tickSharedReminders(server);
+				tickSharedLaunch(server);
 			}
 		}
 		if (shellDissolving) {
@@ -500,6 +575,13 @@ public final class SeasonStartSystem {
 		if (state.phase == PlayerPhase.WAITING_START) {
 			player.displayClientMessage(Component.literal("Сначала напишите в чат start или старт."), true);
 			return false;
+		}
+		if (SHARED_BITCOIN_POSITIONS.contains(pos)) {
+			if (state.phase != PlayerPhase.SHARED) {
+				player.displayClientMessage(Component.literal("Эта руда пока не для вашей фазы."), true);
+				return false;
+			}
+			return true;
 		}
 		SlotDefinition slot = resolveSlotDefinition(computeBarrierGeometry(resolveServerAnchor(level)), state.slotIndex);
 		if (slot != null && slot.orePos.equals(pos) && !state.minedIntroBitcoin) {
@@ -559,6 +641,9 @@ public final class SeasonStartSystem {
 								+ ", completed=" + completed
 								+ ", dissolving=" + shellDissolving
 								+ ", players=" + PLAYER_STATES.size()
+								+ ", shared=" + countSharedPlayers()
+								+ ", launch=" + sharedLaunchCollectedBitcoins + "/" + Math.max(0, sharedLaunchRequiredBitcoins)
+								+ ", ores=" + SHARED_BITCOIN_POSITIONS.size()
 								+ ", anchor=" + anchorText
 				),
 				false
@@ -590,15 +675,51 @@ public final class SeasonStartSystem {
 		}
 	}
 
+	private static void applyStartDifficultyPolicy(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+		if (active && !completed) {
+			enforcePeacefulDifficulty(server);
+			return;
+		}
+		restoreSeasonStartDifficulty(server);
+	}
+
+	private static void enforcePeacefulDifficulty(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+		if (difficultyBeforeSeasonStart == null && server.overworld() != null) {
+			difficultyBeforeSeasonStart = server.overworld().getDifficulty();
+			stateDirty = true;
+		}
+		if (server.overworld() != null && server.overworld().getDifficulty() != Difficulty.PEACEFUL) {
+			server.setDifficulty(Difficulty.PEACEFUL, true);
+		}
+	}
+
+	private static void restoreSeasonStartDifficulty(MinecraftServer server) {
+		if (server == null || difficultyBeforeSeasonStart == null) {
+			return;
+		}
+		if (server.overworld() != null && server.overworld().getDifficulty() != difficultyBeforeSeasonStart) {
+			server.setDifficulty(difficultyBeforeSeasonStart, true);
+		}
+		difficultyBeforeSeasonStart = null;
+		stateDirty = true;
+	}
+
 	private static void rebuildActiveScene(MinecraftServer server) {
 		ServerLevel overworld = server == null ? null : server.overworld();
 		if (overworld == null) {
 			return;
 		}
 		ensureSceneBuilt(overworld);
+		clearSharedBitcoins(overworld, true);
 		for (Map.Entry<UUID, PlayerSceneState> entry : PLAYER_STATES.entrySet()) {
 			PlayerSceneState state = entry.getValue();
-			if (state == null || state.minedIntroBitcoin || state.phase == PlayerPhase.WAITING_START) {
+			if (state == null || state.phase == PlayerPhase.WAITING_START || state.phase == PlayerPhase.SHARED || state.phase == PlayerPhase.RESTORING) {
 				continue;
 			}
 			SlotDefinition slot = resolveSlotDefinition(computeBarrierGeometry(resolveServerAnchor(overworld)), state.slotIndex);
@@ -606,6 +727,7 @@ public final class SeasonStartSystem {
 				placeIntroOre(overworld, slot);
 			}
 		}
+		ensureSharedBitcoinPopulation(overworld);
 	}
 
 	private static void startSeasonStart(MinecraftServer server, boolean automatic) {
@@ -623,9 +745,21 @@ public final class SeasonStartSystem {
 		scenePrepared = false;
 		dissolveCursor = 0;
 		nextSharedReminderTick = Long.MIN_VALUE;
+		lastSharedLaunchProgressTick = Long.MIN_VALUE;
+		pendingSharedFinishTick = Long.MIN_VALUE;
+		sharedLaunchCollectedBitcoins = 0;
+		sharedLaunchRequiredBitcoins = 0;
+		sharedLaunchMilestoneCursor = 0;
+		sharedLaunchIntroTriggered = false;
+		clearSharedLaunchBossBar();
+		if (difficultyBeforeSeasonStart == null && overworld != null) {
+			difficultyBeforeSeasonStart = overworld.getDifficulty();
+		}
 		PLAYER_STATES.clear();
 		SHELL_DISSOLVE_ORDER.clear();
+		SHARED_BITCOIN_POSITIONS.clear();
 		SeasonStartVoiceSystem.resetSceneState();
+		enforcePeacefulDifficulty(server);
 		ensureSceneBuilt(overworld);
 		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
 			assignOrRestorePlayer(server, player, true);
@@ -643,8 +777,12 @@ public final class SeasonStartSystem {
 		scenePrepared = false;
 		dissolveCursor = 0;
 		nextSharedReminderTick = Long.MIN_VALUE;
+		lastSharedLaunchProgressTick = Long.MIN_VALUE;
+		pendingSharedFinishTick = Long.MIN_VALUE;
+		clearSharedLaunchBossBar();
 		ServerLevel overworld = server.overworld();
 		if (overworld != null) {
+			clearSharedBitcoins(overworld, true);
 			SHELL_DISSOLVE_ORDER.clear();
 			SHELL_DISSOLVE_ORDER.addAll(collectSceneShellBlocks(resolveServerAnchor(overworld)));
 			for (ServerPlayer player : server.getPlayerList().getPlayers()) {
@@ -652,6 +790,7 @@ public final class SeasonStartSystem {
 			}
 			SeasonStartVoiceSystem.fireTrigger(server, "season_finished", null);
 		}
+		restoreSeasonStartDifficulty(server);
 		stateDirty = true;
 	}
 
@@ -683,6 +822,8 @@ public final class SeasonStartSystem {
 			ensureWaitingStartPlayerState(player, state, slot);
 		} else if (state.phase == PlayerPhase.ISOLATED || state.phase == PlayerPhase.GUIDED_TO_SERVER) {
 			ensureIntroPlayerState(player, state, slot);
+		} else if (state.phase == PlayerPhase.RESTORING) {
+			ensureRestoringPlayerState(player, state);
 		} else {
 			applyStateForPhase(player, state);
 		}
@@ -721,6 +862,12 @@ public final class SeasonStartSystem {
 		if (state.phase == PlayerPhase.GUIDED_TO_SERVER) {
 			ensureGuidedPlayerState(player, state, slot);
 			tickGuidance(server, player, state);
+			return;
+		}
+
+		if (state.phase == PlayerPhase.RESTORING) {
+			ensureRestoringPlayerState(player, state);
+			tickRestoringPhase(server, player, state);
 			return;
 		}
 
@@ -1379,31 +1526,45 @@ public final class SeasonStartSystem {
 				|| "intro_guide_wrong_way".equals(instruction.stateKey);
 	}
 
-	private static void transitionPlayerToShared(MinecraftServer server, ServerPlayer player) {
+	private static long resolveCueEndTickById(String cueId) {
+		if (cueId == null || cueId.isBlank()) {
+			return 0L;
+		}
+		for (SeasonStartConfig.VoiceCue cue : SeasonStartConfig.get().cues) {
+			if (cue != null && cueId.equals(cue.id)) {
+				return (long) cue.delayTicks + cue.durationTicks;
+			}
+		}
+		return 0L;
+	}
+
+	private static void transitionPlayerAfterFirstPayment(MinecraftServer server, ServerPlayer player) {
 		if (server == null || player == null || serverAnchor == null) {
 			return;
 		}
 		SeasonStartVoiceSystem.clearPlayerChannel(player);
 		PlayerSceneState state = PLAYER_STATES.get(player.getUUID());
-		if (state == null || state.phase == PlayerPhase.SHARED) {
+		if (state == null || state.phase == PlayerPhase.SHARED || state.phase == PlayerPhase.RESTORING) {
 			return;
 		}
-		state.phase = PlayerPhase.SHARED;
+		long nowTick = player.level() == null ? 0L : player.level().getGameTime();
+		state.phase = PlayerPhase.RESTORING;
 		state.poweredServer = true;
 		state.nextGuidanceTick = Long.MAX_VALUE;
 		state.nextGuidanceVoiceTick = Long.MAX_VALUE;
 		state.nextGuidanceEarliestTick = Long.MAX_VALUE;
 		state.lastGuidanceStateKey = "";
+		state.restoreVisionTick = nowTick + resolveCueEndTickById("phase3_restore_vision");
+		state.restoreBodyTick = nowTick + resolveCueEndTickById("phase3_restore_body");
+		state.activateSharedTick = nowTick + resolveTriggerSequenceDurationTicks("player_powered_server");
+		state.sharedVisionRestored = false;
+		state.sharedBodyRestored = false;
+		state.pendingSharedPeersLine = countSharedPlayers() > 0;
 		stateDirty = true;
 
-		applySharedPlayerState(player);
+		ensureRestoringPlayerState(player, state);
 		spawnLightOnlineParticles(server.overworld());
 		SeasonStartVoiceSystem.fireTrigger(server, "player_powered_server", player);
-		SeasonStartVoiceSystem.fireTrigger(server, "first_player_shared_phase", player);
-		seedSharedBitcoins(server.overworld());
-		if (nextSharedReminderTick == Long.MIN_VALUE && player.level() != null) {
-			nextSharedReminderTick = player.level().getGameTime() + get().sharedReminderIntervalTicks;
-		}
 	}
 
 	private static void handleIntroOreBroken(ServerLevel level, ServerPlayer player, BlockPos pos, PlayerSceneState state) {
@@ -1446,19 +1607,58 @@ public final class SeasonStartSystem {
 		SeasonStartVoiceSystem.fireTrigger(level.getServer(), "player_mined_intro_bitcoin", player);
 	}
 
-	private static void tickSharedReminders(MinecraftServer server) {
-		if (server == null || nextSharedReminderTick == Long.MIN_VALUE || server.overworld() == null) {
+	private static void tickRestoringPhase(MinecraftServer server, ServerPlayer player, PlayerSceneState state) {
+		if (server == null || player == null || state == null || player.level() == null) {
 			return;
 		}
-		if (countSharedPlayers() <= 0) {
+		long nowTick = player.level().getGameTime();
+		if (!state.sharedVisionRestored && nowTick >= state.restoreVisionTick) {
+			player.removeEffect(MobEffects.BLINDNESS);
+			state.sharedVisionRestored = true;
+			stateDirty = true;
+		}
+		if (!state.sharedBodyRestored && nowTick >= state.restoreBodyTick) {
+			ServerAbsoluteInvisibilitySystem.deactivate(player);
+			player.removeEffect(MobEffects.INVISIBILITY);
+			state.sharedBodyRestored = true;
+			stateDirty = true;
+		}
+		if (nowTick < state.activateSharedTick) {
 			return;
 		}
-		long nowTick = server.overworld().getGameTime();
-		if (nowTick < nextSharedReminderTick) {
+		state.phase = PlayerPhase.SHARED;
+		state.restoreVisionTick = Long.MAX_VALUE;
+		state.restoreBodyTick = Long.MAX_VALUE;
+		state.activateSharedTick = Long.MAX_VALUE;
+		stateDirty = true;
+		applySharedPlayerState(player);
+		if (state.pendingSharedPeersLine) {
+			SeasonStartVoiceSystem.fireTrigger(server, "player_powered_server_others_visible", player);
+			state.pendingSharedPeersLine = false;
+		}
+		onPlayerEnteredSharedPhase(server);
+	}
+
+	private static void onPlayerEnteredSharedPhase(MinecraftServer server) {
+		ServerLevel overworld = server == null ? null : server.overworld();
+		if (server == null || overworld == null) {
 			return;
 		}
-		SeasonStartVoiceSystem.fireTrigger(server, "shared_phase_reminder", null);
-		nextSharedReminderTick = nowTick + get().sharedReminderIntervalTicks;
+		if (sharedLaunchRequiredBitcoins <= 0) {
+			sharedLaunchRequiredBitcoins = Math.max(1, PLAYER_STATES.size()) * SHARED_LAUNCH_BITCOINS_PER_ASSIGNED_PLAYER;
+		}
+		if (!sharedLaunchIntroTriggered) {
+			sharedLaunchIntroTriggered = true;
+			SeasonStartVoiceSystem.fireTrigger(server, "first_player_shared_phase", null);
+		}
+		if (nextSharedReminderTick == Long.MIN_VALUE) {
+			long nowTick = overworld.getGameTime();
+			lastSharedLaunchProgressTick = nowTick;
+			nextSharedReminderTick = nowTick + SHARED_IDLE_REMINDER_TICKS;
+		}
+		ensureSharedBitcoinPopulation(overworld);
+		refreshSharedLaunchBossBar(server);
+		stateDirty = true;
 	}
 
 	private static int countSharedPlayers() {
@@ -1469,6 +1669,28 @@ public final class SeasonStartSystem {
 			}
 		}
 		return count;
+	}
+
+	private static void tickSharedLaunch(MinecraftServer server) {
+		ServerLevel overworld = server == null ? null : server.overworld();
+		if (server == null || overworld == null) {
+			return;
+		}
+		ensureSharedBitcoinPopulation(overworld);
+		refreshSharedLaunchBossBar(server);
+		if (countSharedPlayers() <= 0) {
+			return;
+		}
+		long nowTick = overworld.getGameTime();
+		if (pendingSharedFinishTick != Long.MIN_VALUE && nowTick >= pendingSharedFinishTick) {
+			pendingSharedFinishTick = Long.MIN_VALUE;
+			finishSeasonStart(server);
+			return;
+		}
+		if (nextSharedReminderTick != Long.MIN_VALUE && nowTick >= nextSharedReminderTick && sharedLaunchCollectedBitcoins < sharedLaunchRequiredBitcoins) {
+			SeasonStartVoiceSystem.fireTrigger(server, "shared_phase_reminder", null);
+			nextSharedReminderTick = nowTick + SHARED_IDLE_REMINDER_TICKS;
+		}
 	}
 
 	private static void tickShellDissolve(MinecraftServer server) {
@@ -1492,6 +1714,8 @@ public final class SeasonStartSystem {
 			SHELL_DISSOLVE_ORDER.clear();
 			dissolveCursor = 0;
 			PLAYER_STATES.clear();
+			SHARED_BITCOIN_POSITIONS.clear();
+			clearSharedLaunchBossBar();
 			stateDirty = true;
 		}
 	}
@@ -1645,26 +1869,306 @@ public final class SeasonStartSystem {
 		level.setBlock(slot.orePos, ModBlocks.BITCOIN_ORE.defaultBlockState(), 3);
 	}
 
-	private static void seedSharedBitcoins(ServerLevel level) {
+	private static void tickStartupOfferings(MinecraftServer server, ServerLevel level) {
+		if (server == null || level == null || serverAnchor == null) {
+			return;
+		}
+		boolean hasGuidedPlayers = false;
+		for (PlayerSceneState state : PLAYER_STATES.values()) {
+			if (state != null && state.phase == PlayerPhase.GUIDED_TO_SERVER) {
+				hasGuidedPlayers = true;
+				break;
+			}
+		}
+		if (!hasGuidedPlayers && countSharedPlayers() <= 0) {
+			return;
+		}
+
+		ServerStructureBounds bounds = resolveServerStructureBounds();
+		if (bounds == null) {
+			return;
+		}
+		AABB scanBox = new AABB(
+				bounds.minX - 1.5D,
+				serverAnchor.getY() - 1.5D,
+				bounds.minZ - 1.5D,
+				bounds.maxX + 1.5D,
+				serverAnchor.getY() + 4.5D,
+				bounds.maxZ + 1.5D
+		);
+		for (ItemEntity itemEntity : level.getEntitiesOfClass(ItemEntity.class, scanBox, entity ->
+				entity != null
+						&& entity.isAlive()
+						&& !entity.isRemoved()
+						&& !entity.getItem().isEmpty()
+						&& entity.getItem().is(ModItems.BITCOIN)
+		)) {
+			if (distanceToServerStructureSqr(itemEntity.position(), bounds) > SHARED_FEED_RADIUS * SHARED_FEED_RADIUS) {
+				continue;
+			}
+			ServerPlayer guidedPlayer = resolveNearestOfferingPlayer(level, itemEntity, PlayerPhase.GUIDED_TO_SERVER);
+			ServerPlayer sharedPlayer = resolveNearestOfferingPlayer(level, itemEntity, PlayerPhase.SHARED);
+			double guidedDistance = guidedPlayer == null ? Double.MAX_VALUE : guidedPlayer.distanceToSqr(itemEntity);
+			double sharedDistance = sharedPlayer == null ? Double.MAX_VALUE : sharedPlayer.distanceToSqr(itemEntity);
+			if (guidedPlayer != null && guidedDistance <= sharedDistance + 0.25D) {
+				consumeOffering(itemEntity, 1);
+				spawnLaunchFeedParticles(level, itemEntity.position());
+				transitionPlayerAfterFirstPayment(server, guidedPlayer);
+				continue;
+			}
+			if (sharedPlayer == null || countSharedPlayers() <= 0) {
+				continue;
+			}
+			int consumed = itemEntity.getItem().getCount();
+			if (consumed <= 0) {
+				continue;
+			}
+			consumeOffering(itemEntity, consumed);
+			spawnLaunchFeedParticles(level, itemEntity.position());
+			incrementSharedLaunchProgress(server, consumed);
+		}
+	}
+
+	private static ServerPlayer resolveNearestOfferingPlayer(ServerLevel level, ItemEntity itemEntity, PlayerPhase phase) {
+		if (level == null || itemEntity == null || phase == null) {
+			return null;
+		}
+		ServerPlayer matched = null;
+		double bestDistance = SHARED_FEED_PLAYER_MATCH_DISTANCE * SHARED_FEED_PLAYER_MATCH_DISTANCE;
+		for (ServerPlayer player : level.players()) {
+			PlayerSceneState state = PLAYER_STATES.get(player.getUUID());
+			if (state == null || state.phase != phase) {
+				continue;
+			}
+			double distance = player.distanceToSqr(itemEntity);
+			if (distance < bestDistance) {
+				bestDistance = distance;
+				matched = player;
+			}
+		}
+		return matched;
+	}
+
+	private static void consumeOffering(ItemEntity itemEntity, int amount) {
+		if (itemEntity == null || amount <= 0) {
+			return;
+		}
+		ItemStack stack = itemEntity.getItem();
+		if (stack.isEmpty() || !stack.is(ModItems.BITCOIN)) {
+			return;
+		}
+		if (amount >= stack.getCount()) {
+			itemEntity.discard();
+			return;
+		}
+		stack.shrink(amount);
+		itemEntity.setItem(stack);
+	}
+
+	private static void spawnLaunchFeedParticles(ServerLevel level, Vec3 position) {
+		if (level == null || position == null) {
+			return;
+		}
+		ServerStabilitySystem.emitFeedParticles(level, position.x, position.y, position.z, 10);
+	}
+
+	private static void incrementSharedLaunchProgress(MinecraftServer server, int bitcoins) {
+		if (server == null || bitcoins <= 0) {
+			return;
+		}
+		if (sharedLaunchRequiredBitcoins <= 0) {
+			sharedLaunchRequiredBitcoins = Math.max(1, PLAYER_STATES.size()) * SHARED_LAUNCH_BITCOINS_PER_ASSIGNED_PLAYER;
+		}
+		if (sharedLaunchCollectedBitcoins >= sharedLaunchRequiredBitcoins) {
+			return;
+		}
+		ServerLevel overworld = server.overworld();
+		long nowTick = overworld == null ? 0L : overworld.getGameTime();
+		sharedLaunchCollectedBitcoins = Math.min(sharedLaunchRequiredBitcoins, sharedLaunchCollectedBitcoins + bitcoins);
+		lastSharedLaunchProgressTick = nowTick;
+		nextSharedReminderTick = nowTick + SHARED_IDLE_REMINDER_TICKS;
+		while (sharedLaunchMilestoneCursor < SHARED_LAUNCH_MILESTONES.length
+				&& getSharedLaunchPercent() >= SHARED_LAUNCH_MILESTONES[sharedLaunchMilestoneCursor]) {
+			String trigger = resolveSharedLaunchMilestoneTrigger(SHARED_LAUNCH_MILESTONES[sharedLaunchMilestoneCursor]);
+			if (trigger != null) {
+				SeasonStartVoiceSystem.fireTrigger(server, trigger, null);
+			}
+			sharedLaunchMilestoneCursor++;
+		}
+		if (sharedLaunchCollectedBitcoins >= sharedLaunchRequiredBitcoins && pendingSharedFinishTick == Long.MIN_VALUE) {
+			pendingSharedFinishTick = nowTick + resolveTriggerSequenceDurationTicks("shared_launch_complete") + SHARED_FINISH_DELAY_TICKS;
+		}
+		refreshSharedLaunchBossBar(server);
+		stateDirty = true;
+	}
+
+	private static String resolveSharedLaunchMilestoneTrigger(int milestone) {
+		return switch (milestone) {
+			case 50 -> "shared_launch_halfway";
+			case 90 -> "shared_launch_ninety";
+			case 100 -> "shared_launch_complete";
+			default -> null;
+		};
+	}
+
+	private static int getSharedLaunchPercent() {
+		if (sharedLaunchRequiredBitcoins <= 0) {
+			return 0;
+		}
+		double percent = (double) sharedLaunchCollectedBitcoins * 100.0D / (double) sharedLaunchRequiredBitcoins;
+		return Mth.clamp((int) Math.floor(percent), 0, 100);
+	}
+
+	private static void refreshSharedLaunchBossBar(MinecraftServer server) {
+		clearSharedLaunchBossBar();
+	}
+
+	private static void clearSharedLaunchBossBar() {
+		if (sharedLaunchBossBar != null) {
+			sharedLaunchBossBar.removeAllPlayers();
+			sharedLaunchBossBar = null;
+		}
+	}
+
+	private static void ensureSharedBitcoinPopulation(ServerLevel level) {
 		if (level == null || serverAnchor == null) {
 			return;
 		}
-		BoxGeometry geometry = computeBarrierGeometry(serverAnchor);
-		List<BlockPos> orePositions = List.of(
-				serverAnchor.offset(-5, 0, 0),
-				serverAnchor.offset(5, 0, 0),
-				serverAnchor.offset(0, 0, -5),
-				serverAnchor.offset(0, 0, 5)
-		);
-		for (BlockPos origin : orePositions) {
-			BlockPos orePos = new BlockPos(origin.getX(), geometry.floorY + 1, origin.getZ());
-			if (!isInsideFootprint(geometry, orePos) || isServerStructureFootprint(orePos)) {
-				continue;
-			}
-			if (level.getBlockState(orePos).isAir()) {
-				level.setBlock(orePos, ModBlocks.DEEPSLATE_BITCOIN_ORE.defaultBlockState(), 3);
+		pruneSharedBitcoinPositions(level);
+		int targetCount = Math.max(0, countSharedPlayers() * SHARED_ACTIVE_ORES_PER_PLAYER);
+		if (targetCount <= 0) {
+			clearSharedBitcoins(level, true);
+			return;
+		}
+		while (SHARED_BITCOIN_POSITIONS.size() > targetCount) {
+			BlockPos pos = SHARED_BITCOIN_POSITIONS.iterator().next();
+			SHARED_BITCOIN_POSITIONS.remove(pos);
+			if (isSharedBitcoinBlock(level.getBlockState(pos))) {
+				level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
 			}
 		}
+		int attempts = 0;
+		while (SHARED_BITCOIN_POSITIONS.size() < targetCount && attempts++ < targetCount * 80) {
+			BlockPos candidate = pickSharedBitcoinSpawnPos(level);
+			if (candidate == null) {
+				break;
+			}
+			level.setBlock(
+					candidate,
+					(level.getRandom().nextBoolean() ? ModBlocks.BITCOIN_ORE : ModBlocks.DEEPSLATE_BITCOIN_ORE).defaultBlockState(),
+					3
+			);
+			SHARED_BITCOIN_POSITIONS.add(candidate.immutable());
+			Vec3 center = centerOf(candidate);
+			ServerStabilitySystem.emitFeedParticles(level, center.x, center.y - 0.4D, center.z, 8);
+		}
+	}
+
+	private static void pruneSharedBitcoinPositions(ServerLevel level) {
+		if (level == null) {
+			return;
+		}
+		SHARED_BITCOIN_POSITIONS.removeIf(pos -> pos == null || !isSharedBitcoinBlock(level.getBlockState(pos)));
+	}
+
+	private static BlockPos pickSharedBitcoinSpawnPos(ServerLevel level) {
+		if (level == null || serverAnchor == null) {
+			return null;
+		}
+		BoxGeometry geometry = computeBarrierGeometry(serverAnchor);
+		ServerStructureBounds bounds = resolveServerStructureBounds();
+		int minX = geometry.minX + 1;
+		int maxX = geometry.maxX - 1;
+		int minZ = geometry.minZ + 1;
+		int maxZ = geometry.maxZ - 1;
+		int minY = geometry.floorY + SHARED_ORE_MIN_Y_OFFSET;
+		int maxY = Math.min(geometry.roofY - 1, geometry.floorY + SHARED_ORE_MAX_Y_OFFSET);
+		if (maxX < minX || maxZ < minZ || maxY < minY) {
+			return null;
+		}
+		for (int attempt = 0; attempt < 96; attempt++) {
+			int x = Mth.nextInt(level.getRandom(), minX, maxX);
+			int y = Mth.nextInt(level.getRandom(), minY, maxY);
+			int z = Mth.nextInt(level.getRandom(), minZ, maxZ);
+			BlockPos candidate = new BlockPos(x, y, z);
+			if (!isValidSharedBitcoinSpawn(level, candidate, geometry, bounds)) {
+				continue;
+			}
+			return candidate;
+		}
+		return null;
+	}
+
+	private static boolean isValidSharedBitcoinSpawn(ServerLevel level, BlockPos pos, BoxGeometry geometry, ServerStructureBounds bounds) {
+		if (level == null || pos == null || geometry == null || !isInsideFootprint(geometry, pos)) {
+			return false;
+		}
+		if (SHARED_BITCOIN_POSITIONS.contains(pos) || !level.getBlockState(pos).isAir()) {
+			return false;
+		}
+		if (isServerStructureFootprint(pos) || isIntroReservedPosition(pos)) {
+			return false;
+		}
+		return bounds == null || distanceToServerStructureSqr(centerOf(pos), bounds) >= SHARED_ORE_SERVER_BUFFER * SHARED_ORE_SERVER_BUFFER;
+	}
+
+	private static boolean isIntroReservedPosition(BlockPos pos) {
+		if (pos == null || serverAnchor == null) {
+			return false;
+		}
+		BoxGeometry barrierGeometry = computeBarrierGeometry(serverAnchor);
+		for (PlayerSceneState state : PLAYER_STATES.values()) {
+			if (state == null) {
+				continue;
+			}
+			SlotDefinition slot = resolveSlotDefinition(barrierGeometry, state.slotIndex);
+			if (slot == null) {
+				continue;
+			}
+			if (slot.spawnFloorPos.equals(pos)
+					|| slot.spawnFloorPos.above().equals(pos)
+					|| slot.oreSupportPos.equals(pos)
+					|| slot.orePos.equals(pos)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static void clearSharedBitcoins(ServerLevel level, boolean removeBlocks) {
+		if (level == null || serverAnchor == null) {
+			SHARED_BITCOIN_POSITIONS.clear();
+			return;
+		}
+		BoxGeometry geometry = computeBarrierGeometry(serverAnchor);
+		for (int x = geometry.minX + 1; x <= geometry.maxX - 1; x++) {
+			for (int y = geometry.floorY + SHARED_ORE_MIN_Y_OFFSET; y <= Math.min(geometry.roofY - 1, geometry.floorY + SHARED_ORE_MAX_Y_OFFSET); y++) {
+				for (int z = geometry.minZ + 1; z <= geometry.maxZ - 1; z++) {
+					BlockPos pos = new BlockPos(x, y, z);
+					if (!isSharedBitcoinBlock(level.getBlockState(pos)) || isIntroReservedPosition(pos)) {
+						continue;
+					}
+					if (removeBlocks) {
+						level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
+					}
+				}
+			}
+		}
+		SHARED_BITCOIN_POSITIONS.clear();
+	}
+
+	private static boolean isSharedBitcoinBlock(net.minecraft.world.level.block.state.BlockState state) {
+		return state != null && (state.is(ModBlocks.BITCOIN_ORE) || state.is(ModBlocks.DEEPSLATE_BITCOIN_ORE));
+	}
+
+	private static double distanceToServerStructureSqr(Vec3 point, ServerStructureBounds bounds) {
+		if (point == null || bounds == null) {
+			return Double.MAX_VALUE;
+		}
+		double dx = axisDistance(point.x, bounds.minX, bounds.maxX);
+		double dy = axisDistance(point.y, serverAnchor.getY(), serverAnchor.getY() + ServerStructureBreakSystem.STRUCTURE_HEIGHT);
+		double dz = axisDistance(point.z, bounds.minZ, bounds.maxZ);
+		return dx * dx + dy * dy + dz * dz;
 	}
 
 	private static void clearSceneMobs(ServerLevel level) {
@@ -1749,6 +2253,28 @@ public final class SeasonStartSystem {
 		applySharedPlayerState(player);
 	}
 
+	private static void ensureRestoringPlayerState(ServerPlayer player, PlayerSceneState state) {
+		if (player == null || state == null) {
+			return;
+		}
+		player.setGameMode(GameType.SURVIVAL);
+		player.setSilent(true);
+		if (!state.sharedVisionRestored) {
+			player.addEffect(new MobEffectInstance(MobEffects.BLINDNESS, get().introBlindnessTicks, 0, false, false, true));
+		} else {
+			player.removeEffect(MobEffects.BLINDNESS);
+		}
+		if (!state.sharedBodyRestored) {
+			if (!player.hasEffect(MobEffects.INVISIBILITY)) {
+				player.addEffect(ServerAbsoluteInvisibilitySystem.createEffectInstance());
+			}
+			ServerAbsoluteInvisibilitySystem.activate(player);
+		} else {
+			ServerAbsoluteInvisibilitySystem.deactivate(player);
+			player.removeEffect(MobEffects.INVISIBILITY);
+		}
+	}
+
 	private static void applySharedPlayerState(ServerPlayer player) {
 		ServerAbsoluteInvisibilitySystem.deactivate(player);
 		player.removeEffect(MobEffects.BLINDNESS);
@@ -1773,6 +2299,10 @@ public final class SeasonStartSystem {
 		if (state == null || player == null) {
 			return;
 		}
+		if (state.phase == PlayerPhase.RESTORING) {
+			ensureRestoringPlayerState(player, state);
+			return;
+		}
 		if (state.phase == PlayerPhase.SHARED) {
 			applySharedPlayerState(player);
 			return;
@@ -1786,7 +2316,10 @@ public final class SeasonStartSystem {
 		PlayerSceneState state = player == null ? null : PLAYER_STATES.get(player.getUUID());
 		return active
 				&& state != null
-				&& (state.phase == PlayerPhase.WAITING_START || state.phase == PlayerPhase.ISOLATED || state.phase == PlayerPhase.GUIDED_TO_SERVER);
+				&& (state.phase == PlayerPhase.WAITING_START
+				|| state.phase == PlayerPhase.ISOLATED
+				|| state.phase == PlayerPhase.GUIDED_TO_SERVER
+				|| state.phase == PlayerPhase.RESTORING);
 	}
 
 	private static void ensureIntroTool(ServerPlayer player) {
@@ -1985,9 +2518,17 @@ public final class SeasonStartSystem {
 	private static void loadState(MinecraftServer server) {
 		Path path = getStatePath(server);
 		PLAYER_STATES.clear();
+		SHARED_BITCOIN_POSITIONS.clear();
+		clearSharedLaunchBossBar();
 		stateLoaded = true;
 		stateDirty = false;
 		scenePrepared = false;
+		lastSharedLaunchProgressTick = Long.MIN_VALUE;
+		pendingSharedFinishTick = Long.MIN_VALUE;
+		sharedLaunchCollectedBitcoins = 0;
+		sharedLaunchRequiredBitcoins = 0;
+		sharedLaunchMilestoneCursor = 0;
+		sharedLaunchIntroTriggered = false;
 		if (!Files.exists(path)) {
 			return;
 		}
@@ -2000,6 +2541,11 @@ public final class SeasonStartSystem {
 			active = state.active;
 			completed = state.completed;
 			serverAnchor = parseBlockPos(state.serverAnchor);
+			difficultyBeforeSeasonStart = parseDifficulty(state.difficultyBeforeSeasonStart);
+			sharedLaunchCollectedBitcoins = Math.max(0, state.sharedLaunchCollectedBitcoins);
+			sharedLaunchRequiredBitcoins = Math.max(0, state.sharedLaunchRequiredBitcoins);
+			sharedLaunchMilestoneCursor = Math.max(0, Math.min(SHARED_LAUNCH_MILESTONES.length, state.sharedLaunchMilestoneCursor));
+			sharedLaunchIntroTriggered = state.sharedLaunchIntroTriggered;
 			if (state.players != null) {
 				for (Map.Entry<String, PersistedPlayerState> entry : state.players.entrySet()) {
 					UUID playerId = parseUuid(entry.getKey());
@@ -2032,6 +2578,11 @@ public final class SeasonStartSystem {
 		state.active = active;
 		state.completed = completed;
 		state.serverAnchor = serializeBlockPos(serverAnchor);
+		state.difficultyBeforeSeasonStart = difficultyBeforeSeasonStart == null ? "" : difficultyBeforeSeasonStart.getKey();
+		state.sharedLaunchCollectedBitcoins = sharedLaunchCollectedBitcoins;
+		state.sharedLaunchRequiredBitcoins = sharedLaunchRequiredBitcoins;
+		state.sharedLaunchMilestoneCursor = sharedLaunchMilestoneCursor;
+		state.sharedLaunchIntroTriggered = sharedLaunchIntroTriggered;
 		state.players = new LinkedHashMap<>();
 		for (Map.Entry<UUID, PlayerSceneState> entry : PLAYER_STATES.entrySet()) {
 			PlayerSceneState runtime = entry.getValue();
@@ -2082,6 +2633,18 @@ public final class SeasonStartSystem {
 		} catch (IllegalArgumentException ignored) {
 			return null;
 		}
+	}
+
+	private static Difficulty parseDifficulty(String value) {
+		if (value == null || value.isBlank()) {
+			return null;
+		}
+		for (Difficulty difficulty : Difficulty.values()) {
+			if (difficulty.getKey().equalsIgnoreCase(value)) {
+				return difficulty;
+			}
+		}
+		return null;
 	}
 
 	private static ItemStack createIntroToolTemplate() {
@@ -2217,6 +2780,16 @@ public final class SeasonStartSystem {
 		return dx * dx + dz * dz;
 	}
 
+	private static double axisDistance(double value, double min, double max) {
+		if (value < min) {
+			return min - value;
+		}
+		if (value > max) {
+			return value - max;
+		}
+		return 0.0D;
+	}
+
 	private static Vec3 centerOf(BlockPos pos) {
 		return pos == null ? Vec3.ZERO : new Vec3(pos.getX() + 0.5D, pos.getY() + 0.5D, pos.getZ() + 0.5D);
 	}
@@ -2245,6 +2818,7 @@ public final class SeasonStartSystem {
 		WAITING_START("waiting_start"),
 		ISOLATED("isolated"),
 		GUIDED_TO_SERVER("guided"),
+		RESTORING("restoring"),
 		SHARED("shared"),
 		FREE("free");
 
@@ -2269,6 +2843,12 @@ public final class SeasonStartSystem {
 		private PlayerPhase phase = PlayerPhase.ISOLATED;
 		private boolean minedIntroBitcoin;
 		private boolean poweredServer;
+		private long restoreVisionTick = Long.MAX_VALUE;
+		private long restoreBodyTick = Long.MAX_VALUE;
+		private long activateSharedTick = Long.MAX_VALUE;
+		private boolean sharedVisionRestored = false;
+		private boolean sharedBodyRestored = false;
+		private boolean pendingSharedPeersLine = false;
 		private long guidanceNarrationGateTick = 0L;
 		private long nextGuidanceTick = 0L;
 		private long nextGuidanceVoiceTick = 0L;
@@ -2346,6 +2926,11 @@ public final class SeasonStartSystem {
 		private boolean active;
 		private boolean completed;
 		private String serverAnchor;
+		private String difficultyBeforeSeasonStart;
+		private int sharedLaunchCollectedBitcoins;
+		private int sharedLaunchRequiredBitcoins;
+		private int sharedLaunchMilestoneCursor;
+		private boolean sharedLaunchIntroTriggered;
 		private Map<String, PersistedPlayerState> players;
 	}
 

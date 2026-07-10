@@ -156,10 +156,10 @@
       "generatorVersion": 4
     },
     "shared_reminder": {
-      "fingerprint": "6256ede5a94f15958b13a8cc01ef28d3185831f9c1f3ce431658c07aa42d000f",
-      "text": "Бит-коины поддерживают стабильность. Несите их к серверу.",
+      "fingerprint": "811e2abba97718d47b9ff92088d52442c5eec7309e449abac77ec6b9e2381f1e",
+      "text": "Бит-коины в коробке. Ядро в центре. Дальше всё на удивление просто.",
       "outputPath": "config/lg2-season-start/voice/shared_reminder.wav",
-      "durationTicks": 95,
+      "durationTicks": 99,
       "generatorVersion": 4
     },
     "season_finish": {
@@ -832,6 +832,97 @@
       "text": "Опустите голову чуть ниже. Вы почти у цели.",
       "outputPath": "config/lg2-season-start/voice/intro_target_look_down_02.wav",
       "durationTicks": 70,
+      "generatorVersion": 4
+    },
+    "phase3_payment_accepted": {
+      "fingerprint": "48fdeb6a98f62f9be9c6de1d675af2bdc761ba239cb3eb5642bb77da8cc64c6b",
+      "text": "Принято.",
+      "outputPath": "config/lg2-season-start/voice/phase3_payment_accepted.wav",
+      "durationTicks": 22,
+      "generatorVersion": 4
+    },
+    "phase3_payment_power": {
+      "fingerprint": "b10f96ed471173175c759864273a781631cb4cfad4c3df0692b13233c73ce4b2",
+      "text": "Питание есть.",
+      "outputPath": "config/lg2-season-start/voice/phase3_payment_power.wav",
+      "durationTicks": 28,
+      "generatorVersion": 4
+    },
+    "phase3_payment_small": {
+      "fingerprint": "f4321e09cc10516d48949f6559aa1351ac0fe163b60d6a678a6aac3dd00c0932",
+      "text": "Немного. Но и вы пока не производите впечатление долгосрочного инвестора.",
+      "outputPath": "config/lg2-season-start/voice/phase3_payment_small.wav",
+      "durationTicks": 94,
+      "generatorVersion": 4
+    },
+    "phase3_restore_vision": {
+      "fingerprint": "af664b72aeacb9f6dcd11814a6a69dc002631641b4df714401abd06bc1a8215f",
+      "text": "Восстанавливаю зрение.",
+      "outputPath": "config/lg2-season-start/voice/phase3_restore_vision.wav",
+      "durationTicks": 36,
+      "generatorVersion": 4
+    },
+    "phase3_restore_body": {
+      "fingerprint": "4f07b466567a9c83f0ec116b4eb3cfa9cb9f5a3e10e079989aba75c796733e21",
+      "text": "Восстанавливаю тело.",
+      "outputPath": "config/lg2-season-start/voice/phase3_restore_body.wav",
+      "durationTicks": 36,
+      "generatorVersion": 4
+    },
+    "phase3_skip_responsibility": {
+      "fingerprint": "475d5d1aa4fa492290a5019dd6b1bd308ce9682e5bdabd353fe51a87a01fef5d",
+      "text": "Ответственность не найдена. Пропускаю.",
+      "outputPath": "config/lg2-season-start/voice/phase3_skip_responsibility.wav",
+      "durationTicks": 71,
+      "generatorVersion": 4
+    },
+    "phase3_other_investors": {
+      "fingerprint": "6b3e9ae0189d6407434ea2339d7e3d28cb672b64d89a584920774fd0b5f318f7",
+      "text": "Посмотрите вокруг. Возможно тут есть другие инвесторы.",
+      "outputPath": "config/lg2-season-start/voice/phase3_other_investors.wav",
+      "durationTicks": 81,
+      "generatorVersion": 4
+    },
+    "phase4_launch_intro_01": {
+      "fingerprint": "33f3e29c502602cc3865449165a8b67265f51921520f63c902ed444dbf6c66c8",
+      "text": "Хорошо. Первые платежи прошли. Система жива.",
+      "outputPath": "config/lg2-season-start/voice/phase4_launch_intro_01.wav",
+      "durationTicks": 70,
+      "generatorVersion": 4
+    },
+    "phase4_launch_intro_02": {
+      "fingerprint": "8d1f850ef9ac4fcd0aca81319980c9143df08d1d1c2c6808472f6df69828ebee",
+      "text": "Теперь нужно запустить Lost Glade полностью. В коробке есть бит-коины.",
+      "outputPath": "config/lg2-season-start/voice/phase4_launch_intro_02.wav",
+      "durationTicks": 99,
+      "generatorVersion": 4
+    },
+    "phase4_launch_intro_03": {
+      "fingerprint": "e9aa2c4c848bc4dfbfc108b950000e0d832acb6f64aeb1550b55999904c14241",
+      "text": "Добывайте их. Бросайте в ядро. Когда питание дойдёт до ста процентов, коробка исчезнет.",
+      "outputPath": "config/lg2-season-start/voice/phase4_launch_intro_03.wav",
+      "durationTicks": 135,
+      "generatorVersion": 4
+    },
+    "shared_launch_halfway": {
+      "fingerprint": "9efcc4395b3fd044fc0ae75ee890e69ef0086faf0e610dc6fe94bc9729860870",
+      "text": "Половина. Продолжайте.",
+      "outputPath": "config/lg2-season-start/voice/shared_launch_halfway.wav",
+      "durationTicks": 43,
+      "generatorVersion": 4
+    },
+    "shared_launch_ninety": {
+      "fingerprint": "feef10003097526d4c8ad77f0b1e391aca7e068f6e5ce5180539dc0d28fc8a5e",
+      "text": "Девяносто процентов. Последние бит-коины в ядро.",
+      "outputPath": "config/lg2-season-start/voice/shared_launch_ninety.wav",
+      "durationTicks": 78,
+      "generatorVersion": 4
+    },
+    "shared_launch_complete": {
+      "fingerprint": "e6a599a2e43385b148fcb1057cd7672e33d4fbfc92e81302dc99799f6111eb3d",
+      "text": "Сто процентов. Питание принято.",
+      "outputPath": "config/lg2-season-start/voice/shared_launch_complete.wav",
+      "durationTicks": 60,
       "generatorVersion": 4
     }
   }
