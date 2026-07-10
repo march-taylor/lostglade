@@ -7,7 +7,9 @@ import com.lostglade.block.ModBlocks;
 import com.lostglade.block.ServerBlock;
 import com.lostglade.config.SeasonStartConfig;
 import com.lostglade.item.ModItems;
+import com.lostglade.util.ItemDisplayHitboxHelper;
 import com.mojang.brigadier.context.CommandContext;
+import com.mojang.math.Transformation;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.entity.event.v1.ServerPlayerEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
@@ -29,6 +31,7 @@ import net.minecraft.network.protocol.game.ClientboundLevelParticlesPacket;
 import net.minecraft.network.protocol.game.ClientboundSoundEntityPacket;
 import net.minecraft.network.protocol.game.ClientboundSoundPacket;
 import net.minecraft.network.protocol.game.ClientboundStopSoundPacket;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerBossEvent;
 import net.minecraft.server.level.ServerLevel;
@@ -36,16 +39,21 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.permissions.Permissions;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
+import net.minecraft.util.Brightness;
 import net.minecraft.util.Mth;
 import net.minecraft.world.BossEvent;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
+import net.minecraft.world.entity.Display;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.Relative;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.Difficulty;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
@@ -70,6 +78,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+
+import org.joml.Quaternionf;
+import org.joml.Vector3f;
 
 import static com.lostglade.config.SeasonStartConfig.get;
 
@@ -285,6 +296,13 @@ public final class SeasonStartSystem {
 	private static final long SHARED_IDLE_REMINDER_TICKS = 20L * 45L;
 	private static final long SHARED_FINISH_DELAY_TICKS = 20L * 2L;
 	private static final int[] SHARED_LAUNCH_MILESTONES = {50, 90, 100};
+	private static final String STARTUP_WORLDGEN_DISPLAY_TAG = "lg2_season_start_display";
+	private static final int STARTUP_WORLDGEN_FRAME_COUNT = 35;
+	private static final float STARTUP_WORLDGEN_VIEW_RANGE = 96.0F;
+	private static final float STARTUP_WORLDGEN_MARGIN_BLOCKS = 8.0F;
+	private static final float STARTUP_WORLDGEN_THICKNESS_SCALE = 0.25F;
+	private static final double STARTUP_WORLDGEN_ROOF_OFFSET = 0.02D;
+	private static final Brightness STARTUP_WORLDGEN_BRIGHTNESS = Brightness.FULL_BRIGHT;
 
 	private static final Map<UUID, PlayerSceneState> PLAYER_STATES = new LinkedHashMap<>();
 	private static final List<BlockPos> SHELL_DISSOLVE_ORDER = new ArrayList<>();
@@ -304,6 +322,7 @@ public final class SeasonStartSystem {
 	private static int sharedLaunchRequiredBitcoins = 0;
 	private static int sharedLaunchMilestoneCursor = 0;
 	private static boolean sharedLaunchIntroTriggered = false;
+	private static int startupWorldgenFrameIndex = Integer.MIN_VALUE;
 	private static ServerBossEvent sharedLaunchBossBar = null;
 	private static Difficulty difficultyBeforeSeasonStart = null;
 	private static BlockPos serverAnchor = null;
@@ -327,6 +346,7 @@ public final class SeasonStartSystem {
 		sharedLaunchRequiredBitcoins = 0;
 		sharedLaunchMilestoneCursor = 0;
 		sharedLaunchIntroTriggered = false;
+		startupWorldgenFrameIndex = Integer.MIN_VALUE;
 		sharedLaunchBossBar = null;
 		difficultyBeforeSeasonStart = null;
 		serverAnchor = null;
@@ -500,6 +520,9 @@ public final class SeasonStartSystem {
 		applyStartDifficultyPolicy(server);
 		if (completed && !active) {
 			removeSceneShellNow(server.overworld());
+		}
+		if (!active && server.overworld() != null) {
+			clearStartupWorldgenDisplay(server.overworld());
 		}
 		if (active) {
 			rebuildActiveScene(server);
@@ -751,6 +774,7 @@ public final class SeasonStartSystem {
 		sharedLaunchRequiredBitcoins = 0;
 		sharedLaunchMilestoneCursor = 0;
 		sharedLaunchIntroTriggered = false;
+		startupWorldgenFrameIndex = Integer.MIN_VALUE;
 		clearSharedLaunchBossBar();
 		if (difficultyBeforeSeasonStart == null && overworld != null) {
 			difficultyBeforeSeasonStart = overworld.getDifficulty();
@@ -775,6 +799,7 @@ public final class SeasonStartSystem {
 		completed = true;
 		shellDissolving = true;
 		scenePrepared = false;
+		startupWorldgenFrameIndex = Integer.MIN_VALUE;
 		dissolveCursor = 0;
 		nextSharedReminderTick = Long.MIN_VALUE;
 		lastSharedLaunchProgressTick = Long.MIN_VALUE;
@@ -782,6 +807,7 @@ public final class SeasonStartSystem {
 		clearSharedLaunchBossBar();
 		ServerLevel overworld = server.overworld();
 		if (overworld != null) {
+			clearStartupWorldgenDisplay(overworld);
 			clearSharedBitcoins(overworld, true);
 			SHELL_DISSOLVE_ORDER.clear();
 			SHELL_DISSOLVE_ORDER.addAll(collectSceneShellBlocks(resolveServerAnchor(overworld)));
@@ -1676,6 +1702,7 @@ public final class SeasonStartSystem {
 		if (server == null || overworld == null) {
 			return;
 		}
+		ensureStartupWorldgenDisplay(overworld);
 		ensureSharedBitcoinPopulation(overworld);
 		refreshSharedLaunchBossBar(server);
 		if (countSharedPlayers() <= 0) {
@@ -1726,6 +1753,7 @@ public final class SeasonStartSystem {
 		}
 		preparePlatformFloor(level);
 		buildSceneShell(level);
+		ensureStartupWorldgenDisplay(level);
 		clearSceneMobs(level);
 		if (!isServerStructurePresent(level, serverAnchor)) {
 			ServerBlock.placeServerStructure(level, serverAnchor, Direction.NORTH);
@@ -1767,6 +1795,7 @@ public final class SeasonStartSystem {
 		if (level == null || serverAnchor == null) {
 			return;
 		}
+		clearStartupWorldgenDisplay(level);
 		for (BlockPos pos : collectSceneShellBlocks(serverAnchor)) {
 			if (level.getBlockState(pos).is(Blocks.BLACK_CONCRETE) || level.getBlockState(pos).is(Blocks.BARRIER)) {
 				level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
@@ -2017,6 +2046,122 @@ public final class SeasonStartSystem {
 		}
 		double percent = (double) sharedLaunchCollectedBitcoins * 100.0D / (double) sharedLaunchRequiredBitcoins;
 		return Mth.clamp((int) Math.floor(percent), 0, 100);
+	}
+
+	private static void ensureStartupWorldgenDisplay(ServerLevel level) {
+		if (level == null || serverAnchor == null || !active || completed) {
+			return;
+		}
+		BoxGeometry outerGeometry = computeOuterBoxGeometry(serverAnchor);
+		AABB displayBounds = startupWorldgenDisplayBounds(serverAnchor, outerGeometry);
+		Display.ItemDisplay display = resolveStartupWorldgenDisplay(level, displayBounds);
+		boolean created = display == null;
+		if (created) {
+			display = new Display.ItemDisplay(EntityType.ITEM_DISPLAY, level);
+			display.addTag(STARTUP_WORLDGEN_DISPLAY_TAG);
+		}
+		if (display == null) {
+			return;
+		}
+
+		float scale = Math.max(
+				16.0F,
+				Math.min(outerGeometry.maxX - outerGeometry.minX, outerGeometry.maxZ - outerGeometry.minZ) - STARTUP_WORLDGEN_MARGIN_BLOCKS
+		);
+		display.setPos(serverAnchor.getX() + 0.5D, outerGeometry.roofY - STARTUP_WORLDGEN_ROOF_OFFSET, serverAnchor.getZ() + 0.5D);
+		display.setYRot(0.0F);
+		display.setXRot(0.0F);
+		display.setYHeadRot(0.0F);
+		display.setYBodyRot(0.0F);
+		display.setItemTransform(ItemDisplayContext.FIXED);
+		display.setBillboardConstraints(Display.BillboardConstraints.FIXED);
+		display.setTransformation(new Transformation(
+				new Vector3f(0.0F, 0.0F, 0.0F),
+				new Quaternionf(),
+				new Vector3f(scale, STARTUP_WORLDGEN_THICKNESS_SCALE, scale),
+				new Quaternionf()
+		));
+		display.setBrightnessOverride(STARTUP_WORLDGEN_BRIGHTNESS);
+		display.setNoGravity(true);
+		display.setInvulnerable(true);
+		display.setSilent(true);
+		display.setShadowRadius(0.0F);
+		display.setShadowStrength(0.0F);
+		display.setViewRange(STARTUP_WORLDGEN_VIEW_RANGE);
+		ItemDisplayHitboxHelper.clear(display);
+
+		int desiredFrameIndex = resolveStartupWorldgenFrameIndex();
+		if (created || desiredFrameIndex != startupWorldgenFrameIndex) {
+			display.setItemStack(createStartupWorldgenFrameStack(desiredFrameIndex));
+			startupWorldgenFrameIndex = desiredFrameIndex;
+		}
+
+		if (created) {
+			level.addFreshEntity(display);
+		}
+	}
+
+	private static int resolveStartupWorldgenFrameIndex() {
+		int percent = getSharedLaunchPercent();
+		double normalized = percent / 100.0D;
+		return Mth.clamp((int) Math.round(normalized * (STARTUP_WORLDGEN_FRAME_COUNT - 1)), 0, STARTUP_WORLDGEN_FRAME_COUNT - 1);
+	}
+
+	private static ItemStack createStartupWorldgenFrameStack(int frameIndex) {
+		int clamped = Mth.clamp(frameIndex, 0, STARTUP_WORLDGEN_FRAME_COUNT - 1);
+		String suffix = clamped < 10 ? "0" + clamped : Integer.toString(clamped);
+		ItemStack stack = new ItemStack(Items.PAPER);
+		stack.set(DataComponents.ITEM_MODEL, Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "startup_worldgen_frame_" + suffix));
+		return stack;
+	}
+
+	private static AABB startupWorldgenDisplayBounds(BlockPos anchor, BoxGeometry outerGeometry) {
+		double centerX = anchor.getX() + 0.5D;
+		double centerY = outerGeometry.roofY - STARTUP_WORLDGEN_ROOF_OFFSET;
+		double centerZ = anchor.getZ() + 0.5D;
+		return new AABB(
+				centerX - 2.0D,
+				centerY - 2.0D,
+				centerZ - 2.0D,
+				centerX + 2.0D,
+				centerY + 2.0D,
+				centerZ + 2.0D
+		);
+	}
+
+	private static Display.ItemDisplay resolveStartupWorldgenDisplay(ServerLevel level, AABB box) {
+		if (level == null || box == null) {
+			return null;
+		}
+		List<Display.ItemDisplay> displays = level.getEntities(
+				EntityType.ITEM_DISPLAY,
+				box,
+				display -> display.getTags().contains(STARTUP_WORLDGEN_DISPLAY_TAG)
+		);
+		if (displays.isEmpty()) {
+			return null;
+		}
+		Display.ItemDisplay root = displays.get(0);
+		for (int index = 1; index < displays.size(); index++) {
+			displays.get(index).discard();
+		}
+		return root;
+	}
+
+	private static void clearStartupWorldgenDisplay(ServerLevel level) {
+		if (level == null || serverAnchor == null) {
+			startupWorldgenFrameIndex = Integer.MIN_VALUE;
+			return;
+		}
+		AABB box = startupWorldgenDisplayBounds(serverAnchor, computeOuterBoxGeometry(serverAnchor));
+		for (Display.ItemDisplay display : level.getEntities(
+				EntityType.ITEM_DISPLAY,
+				box,
+				candidate -> candidate.getTags().contains(STARTUP_WORLDGEN_DISPLAY_TAG)
+		)) {
+			display.discard();
+		}
+		startupWorldgenFrameIndex = Integer.MIN_VALUE;
 	}
 
 	private static void refreshSharedLaunchBossBar(MinecraftServer server) {
@@ -2483,17 +2628,17 @@ public final class SeasonStartSystem {
 	}
 
 	private static BoxGeometry computeOuterBoxGeometry(BlockPos anchor) {
-		int halfWidth = get().boxHalfWidth;
-		int halfDepth = get().boxHalfDepth;
+		int halfExtent = Math.max(get().boxHalfWidth, get().boxHalfDepth);
 		int barrierFloorY = anchor.getY() - 1;
 		int floorY = barrierFloorY - BARRIER_FLOOR_DEPTH;
+		int sideLength = halfExtent * 2 + 1;
 		return new BoxGeometry(
-				anchor.getX() - halfWidth,
-				anchor.getX() + halfWidth,
-				anchor.getZ() - halfDepth,
-				anchor.getZ() + halfDepth,
+				anchor.getX() - halfExtent,
+				anchor.getX() + halfExtent,
+				anchor.getZ() - halfExtent,
+				anchor.getZ() + halfExtent,
 				floorY,
-				barrierFloorY + get().boxHeight
+				floorY + sideLength - 1
 		);
 	}
 
@@ -2507,8 +2652,12 @@ public final class SeasonStartSystem {
 				anchor.getZ() - halfDepth,
 				anchor.getZ() + halfDepth,
 				floorY,
-				floorY + get().barrierHeight
+				floorY + resolveBarrierBoxHeight()
 		);
+	}
+
+	private static int resolveBarrierBoxHeight() {
+		return Math.max(get().barrierHeight, Math.max(get().barrierHalfWidth, get().barrierHalfDepth) * 2);
 	}
 
 	private static Path getStatePath(MinecraftServer server) {
@@ -2529,6 +2678,7 @@ public final class SeasonStartSystem {
 		sharedLaunchRequiredBitcoins = 0;
 		sharedLaunchMilestoneCursor = 0;
 		sharedLaunchIntroTriggered = false;
+		startupWorldgenFrameIndex = Integer.MIN_VALUE;
 		if (!Files.exists(path)) {
 			return;
 		}

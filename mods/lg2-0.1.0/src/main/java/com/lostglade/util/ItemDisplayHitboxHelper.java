@@ -14,6 +14,7 @@ public final class ItemDisplayHitboxHelper {
 	private static final String DRONE_DISPLAY_TAG = "lg2_drone_display";
 	private static final String MONITOR_DISPLAY_TAG = "lg2_monitor_display";
 	private static final String TROJAN_ROOSTER_DISPLAY_TAG = "lg2_trojan_rooster_display";
+	private static final String SEASON_START_DISPLAY_TAG = "lg2_season_start_display";
 
 	private ItemDisplayHitboxHelper() {
 	}
@@ -40,6 +41,7 @@ public final class ItemDisplayHitboxHelper {
 				|| entity.getTags().contains(MARK_AXE_DISPLAY_TAG)
 				|| entity.getTags().contains(DRONE_DISPLAY_TAG)
 				|| entity.getTags().contains(MONITOR_DISPLAY_TAG)
-				|| entity.getTags().contains(TROJAN_ROOSTER_DISPLAY_TAG);
+				|| entity.getTags().contains(TROJAN_ROOSTER_DISPLAY_TAG)
+				|| entity.getTags().contains(SEASON_START_DISPLAY_TAG);
 	}
 }
