@@ -85,7 +85,7 @@ public abstract class ServerGamePacketListenerCopperManGogglesMixin {
 			argsOnly = true
 	)
 	private ServerboundMovePlayerPacket lg2$lockLittleDictatorHorizontalMovement(ServerboundMovePlayerPacket packet) {
-		return ServerRaceSystem.sanitizeLittleDictatorUniqueMovementPacket(this.player, packet);
+		return ServerRaceSystem.sanitizeKilkaSalmonMovementPacket(this.player, ServerRaceSystem.sanitizeKilkaStockLandMovementPacket(this.player, ServerRaceSystem.sanitizeLittleDictatorUniqueMovementPacket(this.player, packet)));
 	}
 
 	@Inject(method = "handleMovePlayer", at = @At("TAIL"))

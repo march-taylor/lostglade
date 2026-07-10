@@ -212,7 +212,13 @@ public final class ServerAbsoluteInvisibilitySystem {
 	public static ClientboundSetEquipmentPacket maskArmorEquipmentForViewer(ServerPlayer receiver, ClientboundSetEquipmentPacket packet) {
 		ServerLevel viewerLevel = (ServerLevel) receiver.level();
 		Entity entity = viewerLevel.getEntity(packet.getEntity());
-		if (!(entity instanceof ServerPlayer hiddenPlayer) || !isActive(hiddenPlayer)) {
+		if (!(entity instanceof ServerPlayer hiddenPlayer)) {
+			return packet;
+		}
+
+		boolean absoluteInvisible = isActive(hiddenPlayer);
+		boolean kilkaSalmon = ServerRaceSystem.isKilkaSalmonForm(hiddenPlayer);
+		if (!absoluteInvisible && !kilkaSalmon) {
 			return packet;
 		}
 
@@ -220,8 +226,10 @@ public final class ServerAbsoluteInvisibilitySystem {
 		List<Pair<EquipmentSlot, ItemStack>> rewrittenSlots = null;
 		for (int i = 0; i < originalSlots.size(); i++) {
 			Pair<EquipmentSlot, ItemStack> slot = originalSlots.get(i);
-			if (!isArmorSlot(slot.getFirst())) {
-				continue;
+			if (!absoluteInvisible || !isArmorSlot(slot.getFirst())) {
+				if (!kilkaSalmon || !isKilkaSalmonHiddenEquipmentSlot(slot.getFirst())) {
+					continue;
+				}
 			}
 
 			if (rewrittenSlots == null) {
@@ -235,6 +243,12 @@ public final class ServerAbsoluteInvisibilitySystem {
 		}
 
 		return rewrittenSlots == null ? packet : new ClientboundSetEquipmentPacket(packet.getEntity(), rewrittenSlots);
+	}
+
+	private static boolean isKilkaSalmonHiddenEquipmentSlot(EquipmentSlot slot) {
+		return slot == EquipmentSlot.MAINHAND
+				|| slot == EquipmentSlot.OFFHAND
+				|| isArmorSlot(slot);
 	}
 
 	public static boolean shouldSuppressParticlePacketFor(ServerPlayer viewer, ParticleOptions particle, double x, double y, double z, int count) {

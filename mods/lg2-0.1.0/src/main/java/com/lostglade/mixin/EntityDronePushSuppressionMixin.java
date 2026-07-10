@@ -2,6 +2,7 @@ package com.lostglade.mixin;
 
 import com.lostglade.server.DroneSystem;
 import com.lostglade.server.SeasonStartSystem;
+import com.lostglade.server.ServerRaceSystem;
 import net.minecraft.world.entity.Entity;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -14,6 +15,7 @@ public abstract class EntityDronePushSuppressionMixin {
 	private void lg2$suppressDroneGroundPush(Entity other, CallbackInfo ci) {
 		Entity self = (Entity) (Object) this;
 		if (SeasonStartSystem.shouldBlockEntityPush(self, other)
+				|| ServerRaceSystem.handleKilkaSalmonVisualBodyPush(self, other)
 				|| DroneSystem.shouldSuppressDroneEntityPush(self, other)) {
 			ci.cancel();
 		}

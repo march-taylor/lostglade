@@ -31,12 +31,24 @@ public abstract class LivingEntityCartelDefenseMixin {
 			cir.setReturnValue(false);
 			return;
 		}
+		if (ServerRaceSystem.shouldCancelKilkaSalmonOwnerSuffocationDamage((LivingEntity) (Object) this, damageSource)) {
+			cir.setReturnValue(false);
+			return;
+		}
 		if (ServerRaceSystem.shouldCancelMilkMouseCombatDamage((LivingEntity) (Object) this, damageSource)) {
+			cir.setReturnValue(false);
+			return;
+		}
+		if (ServerRaceSystem.handleKilkaSalmonVisualDamage(level, (LivingEntity) (Object) this, damageSource, damage)) {
 			cir.setReturnValue(false);
 			return;
 		}
 		if (ServerRaceSystem.handleMilkAbsoluteAttack(level, (LivingEntity) (Object) this, damageSource, damage)) {
 			cir.setReturnValue(true);
+			return;
+		}
+		if (ServerRaceSystem.handleKilkaDefenseDamage(level, (LivingEntity) (Object) this, damageSource, damage)) {
+			cir.setReturnValue(false);
 			return;
 		}
 		if (ServerRaceSystem.handleGennadiyDefenseDamage(level, (LivingEntity) (Object) this, damageSource, damage)) {
@@ -57,6 +69,7 @@ public abstract class LivingEntityCartelDefenseMixin {
 		ServerRaceSystem.handleMarkRageMeleeDamage(level, (LivingEntity) (Object) this, damageSource, damage, cir.getReturnValueZ());
 		ServerRaceSystem.handleMilkStockCombatDamage(level, (LivingEntity) (Object) this, damageSource, damage, cir.getReturnValueZ());
 		ServerRaceSystem.handleLittleDictatorCombatDamage(level, (LivingEntity) (Object) this, damageSource, damage, cir.getReturnValueZ());
+		ServerRaceSystem.handleKilkaIncomingDamage(level, (LivingEntity) (Object) this, damageSource, damage, cir.getReturnValueZ());
 		ServerRaceSystem.handleMilkDefenseDodge(level, (LivingEntity) (Object) this, damageSource, damage, cir.getReturnValueZ());
 		if (cir.getReturnValueZ() && damage > 0.0F && (Object) this instanceof ServerPlayer player) {
 			ServerMilkPocketDimensionSystem.recordPlayerDamage(player);

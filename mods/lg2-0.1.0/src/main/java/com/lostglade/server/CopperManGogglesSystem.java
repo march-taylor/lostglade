@@ -451,6 +451,10 @@ public final class CopperManGogglesSystem {
 	}
 
 	public static Component getScreenOverlayTitle(ServerPlayer player) {
+		Component priorityTitle = ServerRaceSystem.getKilkaAttackFlashTitleOverride(player);
+		if (priorityTitle != null) {
+			return priorityTitle;
+		}
 		return shouldShowScreenOverlay(player) ? buildScreenOverlayTitle(player) : Component.empty();
 	}
 
@@ -1693,6 +1697,12 @@ public final class CopperManGogglesSystem {
 
 	private static void syncScreenOverlay(ServerPlayer player, boolean enabled) {
 		if (player == null || player.connection == null) {
+			return;
+		}
+		Component priorityTitle = ServerRaceSystem.getKilkaAttackFlashTitleOverride(player);
+		if (priorityTitle != null) {
+			player.connection.send(new ClientboundSetTitlesAnimationPacket(0, 16, 0));
+			player.connection.send(new ClientboundSetTitleTextPacket(priorityTitle));
 			return;
 		}
 		player.connection.send(new ClientboundSetTitlesAnimationPacket(0, 16, 0));

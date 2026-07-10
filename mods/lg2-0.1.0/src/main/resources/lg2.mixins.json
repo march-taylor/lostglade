@@ -87,6 +87,7 @@
 		"MinecraftServerRendererBotStatusMixin",
 		"MobTrojanRoosterLeashMixin",
 		"MobXpRewardAccessor",
+		"MobTrackedDataAccessor",
 		"MobDeathLootMixin",
 		"SheepRainbowWoolShearMixin",
 		"PlayerCocaineSprintMixin",
