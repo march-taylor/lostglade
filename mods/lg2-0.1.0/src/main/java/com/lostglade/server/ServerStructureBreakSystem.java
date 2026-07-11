@@ -134,6 +134,25 @@ public final class ServerStructureBreakSystem {
 		return INTERNAL_REMOVAL_POSITIONS.contains(new GuardedBlockPos(level.dimension(), pos.immutable()));
 	}
 
+	public static void clearStructureSilently(ServerLevel level, BlockPos anchor, Direction.Axis axis) {
+		if (level == null || anchor == null || axis == null) {
+			return;
+		}
+		List<BlockPos> positions = getStructurePositions(anchor, axis);
+		removeStructureDisplays(level, anchor, axis);
+		ServerStabilitySystem.onServerStructureRemoved(level, anchor);
+		markInternalRemoval(level, positions, true);
+		try {
+			for (BlockPos pos : positions) {
+				if (level.getBlockState(pos).is(ModBlocks.SERVER)) {
+					level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
+				}
+			}
+		} finally {
+			markInternalRemoval(level, positions, false);
+		}
+	}
+
 	public static void onStructureBlockRemoved(ServerLevel level, BlockPos removedPos) {
 		if (isInternalStructureRemoval(level, removedPos)) {
 			return;

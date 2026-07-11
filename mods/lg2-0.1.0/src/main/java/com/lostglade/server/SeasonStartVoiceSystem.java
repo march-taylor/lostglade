@@ -59,6 +59,7 @@ public final class SeasonStartVoiceSystem {
 	private static final Set<String> GLOBAL_COMPLETED_CUES = new HashSet<>();
 	private static final Map<UUID, Long> LIVE_VOICE_SEQUENCES = new HashMap<>();
 	private static final Map<Path, PcmClip> CLIP_CACHE = new ConcurrentHashMap<>();
+	private static long nextPlaybackId = 1L;
 
 	private static ScheduledExecutorService playbackExecutor = createPlaybackExecutor();
 
@@ -328,8 +329,11 @@ public final class SeasonStartVoiceSystem {
 					break;
 				}
 				entry.getValue().pollFirst();
-				CompletableFuture<Void> future = startPlayback(server, next);
-				ACTIVE_PLAYBACKS.put(entry.getKey(), new ActiveCuePlayback(next, future, nowTick));
+				long playbackId = nextPlaybackId++;
+				CompletableFuture<Void> future = new CompletableFuture<>();
+				ActiveCuePlayback playback = new ActiveCuePlayback(next, future, nowTick, playbackId);
+				ACTIVE_PLAYBACKS.put(entry.getKey(), playback);
+				startPlayback(server, playback);
 				break;
 			}
 		}
@@ -351,13 +355,19 @@ public final class SeasonStartVoiceSystem {
 		}
 	}
 
-	private static CompletableFuture<Void> startPlayback(MinecraftServer server, QueuedCue queuedCue) {
+	private static void startPlayback(MinecraftServer server, ActiveCuePlayback playback) {
+		if (playback == null || playback.future == null) {
+			return;
+		}
+		QueuedCue queuedCue = playback.queuedCue;
 		if (server == null || queuedCue == null || queuedCue.cue == null) {
-			return CompletableFuture.completedFuture(null);
+			playback.future.complete(null);
+			return;
 		}
 		List<ServerPlayer> recipients = resolveRecipients(server, queuedCue.cue, queuedCue.focusPlayerId);
 		if (recipients.isEmpty()) {
-			return delayedFuture(queuedCue.cue.durationTicks);
+			bridgePlaybackFuture(playback, delayedFuture(queuedCue.cue.durationTicks));
+			return;
 		}
 
 		ServerPlayer focusPlayer = queuedCue.focusPlayerId == null ? null : server.getPlayerList().getPlayer(queuedCue.focusPlayerId);
@@ -385,11 +395,14 @@ public final class SeasonStartVoiceSystem {
 
 		if (clip == null || voiceRecipientIds.isEmpty() || voicechatApi == null || voicechatServerApi == null) {
 			if (voiceRecipientIds.isEmpty() && !hasChatText(queuedCue.cue)) {
-				return CompletableFuture.completedFuture(null);
+				playback.future.complete(null);
+				return;
 			}
-			return delayedFuture(queuedCue.cue.durationTicks);
+			bridgePlaybackFuture(playback, delayedFuture(queuedCue.cue.durationTicks));
+			return;
 		}
 
+		CompletableFuture<Void> actualFuture;
 		if (SeasonStartSystem.shouldUseFlatNarrationMix()) {
 			List<CompletableFuture<Void>> futures = new ArrayList<>();
 			for (UUID recipientId : voiceRecipientIds) {
@@ -398,15 +411,35 @@ public final class SeasonStartVoiceSystem {
 					continue;
 				}
 				Vec3 personalOrigin = new Vec3(recipient.getX(), recipient.getEyeY() - 0.35D, recipient.getZ());
-				futures.add(playClipToRecipients(server, voicechatApi, voicechatServerApi, clip, personalOrigin, List.of(recipientId)));
+				futures.add(playClipToRecipients(
+						server,
+						voicechatApi,
+						voicechatServerApi,
+						clip,
+						personalOrigin,
+						List.of(recipientId),
+						queuedCue.channelKey,
+						playback.playbackId
+				));
 			}
 			if (futures.isEmpty()) {
-				return delayedFuture(queuedCue.cue.durationTicks);
+				bridgePlaybackFuture(playback, delayedFuture(queuedCue.cue.durationTicks));
+				return;
 			}
-			return CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new));
+			actualFuture = combineInterruptibleFutures(futures);
+		} else {
+			actualFuture = playClipToRecipients(
+					server,
+					voicechatApi,
+					voicechatServerApi,
+					clip,
+					origin,
+					voiceRecipientIds,
+					queuedCue.channelKey,
+					playback.playbackId
+			);
 		}
-
-		return playClipToRecipients(server, voicechatApi, voicechatServerApi, clip, origin, voiceRecipientIds);
+		bridgePlaybackFuture(playback, actualFuture);
 	}
 
 	private static List<ServerPlayer> resolveRecipients(MinecraftServer server, VoiceCue cue, UUID focusPlayerId) {
@@ -439,7 +472,9 @@ public final class SeasonStartVoiceSystem {
 			VoicechatServerApi voicechatServerApi,
 			PcmClip clip,
 			Vec3 origin,
-			List<UUID> recipientIds
+			List<UUID> recipientIds,
+			String channelKey,
+			long playbackId
 	) {
 		CompletableFuture<Void> future = new CompletableFuture<>();
 		ScheduledExecutorService executor = ensurePlaybackExecutor();
@@ -464,6 +499,8 @@ public final class SeasonStartVoiceSystem {
 				distance,
 				category,
 				recipientIds,
+				channelKey,
+				playbackId,
 				0,
 				System.nanoTime(),
 				future,
@@ -482,13 +519,16 @@ public final class SeasonStartVoiceSystem {
 			float distance,
 			String category,
 			List<UUID> recipientIds,
+			String channelKey,
+			long playbackId,
 			int frameIndex,
 			long playbackStartNanos,
 			CompletableFuture<Void> future,
 			ScheduledExecutorService executor
 	) {
-		if (future.isDone()) {
+		if (shouldAbortPlayback(channelKey, playbackId, future)) {
 			closeQuietly(encoder);
+			future.complete(null);
 			return;
 		}
 		if (frameIndex >= clip.frames.length) {
@@ -500,8 +540,9 @@ public final class SeasonStartVoiceSystem {
 		long targetNanos = playbackStartNanos + TimeUnit.MILLISECONDS.toNanos((long) frameIndex * AUDIO_FRAME_DURATION_MS);
 		long delayNanos = Math.max(0L, targetNanos - System.nanoTime());
 		executor.schedule(() -> {
-			if (future.isDone()) {
+			if (shouldAbortPlayback(channelKey, playbackId, future)) {
 				closeQuietly(encoder);
+				future.complete(null);
 				return;
 			}
 			try {
@@ -516,7 +557,7 @@ public final class SeasonStartVoiceSystem {
 						category
 				);
 				LocationalSoundPacketImpl wrappedPacket = new LocationalSoundPacketImpl(soundPacket);
-				if (!future.isDone()) {
+				if (!shouldAbortPlayback(channelKey, playbackId, future)) {
 					for (UUID recipientId : recipientIds) {
 						VoicechatConnection receiverConnection = voicechatServerApi.getConnectionOf(recipientId);
 						if (receiverConnection != null) {
@@ -534,6 +575,8 @@ public final class SeasonStartVoiceSystem {
 						distance,
 						category,
 						recipientIds,
+						channelKey,
+						playbackId,
 						frameIndex + 1,
 						playbackStartNanos,
 						future,
@@ -554,6 +597,57 @@ public final class SeasonStartVoiceSystem {
 				TimeUnit.MILLISECONDS
 		);
 		return future;
+	}
+
+	private static CompletableFuture<Void> combineInterruptibleFutures(List<CompletableFuture<Void>> futures) {
+		if (futures == null || futures.isEmpty()) {
+			return CompletableFuture.completedFuture(null);
+		}
+		CompletableFuture<Void> combined = new CompletableFuture<>();
+		CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new))
+				.whenComplete((ignored, throwable) -> {
+					if (throwable != null) {
+						combined.completeExceptionally(throwable);
+						return;
+					}
+					combined.complete(null);
+				});
+		combined.whenComplete((ignored, throwable) -> {
+			for (CompletableFuture<Void> future : futures) {
+				if (future != null && !future.isDone()) {
+					future.complete(null);
+				}
+			}
+		});
+		return combined;
+	}
+
+	private static void bridgePlaybackFuture(ActiveCuePlayback playback, CompletableFuture<Void> actualFuture) {
+		if (playback == null || playback.future == null) {
+			return;
+		}
+		if (actualFuture == null) {
+			playback.future.complete(null);
+			return;
+		}
+		actualFuture.whenComplete((ignored, throwable) -> {
+			if (throwable != null) {
+				playback.future.completeExceptionally(throwable);
+				return;
+			}
+			playback.future.complete(null);
+		});
+	}
+
+	private static boolean shouldAbortPlayback(String channelKey, long playbackId, CompletableFuture<Void> future) {
+		if (future != null && future.isDone()) {
+			return true;
+		}
+		if (channelKey == null || channelKey.isBlank()) {
+			return false;
+		}
+		ActiveCuePlayback active = ACTIVE_PLAYBACKS.get(channelKey);
+		return active == null || active.playbackId != playbackId;
 	}
 
 	private static void sendChatFallback(ServerPlayer recipient, VoiceCue cue) {
@@ -797,7 +891,7 @@ public final class SeasonStartVoiceSystem {
 	private record QueuedCue(VoiceCue cue, UUID focusPlayerId, long executeTick, String channelKey) {
 	}
 
-	private record ActiveCuePlayback(QueuedCue queuedCue, CompletableFuture<Void> future, long startedTick) {
+	private record ActiveCuePlayback(QueuedCue queuedCue, CompletableFuture<Void> future, long startedTick, long playbackId) {
 	}
 
 	private enum CueRole {
