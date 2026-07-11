@@ -7,6 +7,15 @@
       }
     ]
   },
+  "season_start_earthquake": {
+    "sounds": [
+      {
+        "name": "lg2:season_start_earthquake",
+        "preload": true,
+        "stream": true
+      }
+    ]
+  },
   "camera_print": {
     "sounds": [
       {

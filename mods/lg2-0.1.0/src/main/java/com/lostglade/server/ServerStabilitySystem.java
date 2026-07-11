@@ -81,6 +81,8 @@ public final class ServerStabilitySystem {
 	private static final Holder<SoundEvent>[] FEED_MUSIC_SEGMENTS = createFeedMusicSegments();
 	private static final long FEED_SOUND_BASE_DURATION_TICKS = 226L;
 	private static final float FEED_MUSIC_SOUND_VOLUME = 1.0F;
+	private static final float STARTUP_FEED_MUSIC_VOLUME = 1.42F;
+	private static final float STARTUP_FEED_MUSIC_PITCH = 0.86F;
 	private static final float FEED_XP_SOUND_VOLUME = 1.0F;
 	private static final SimpleParticleType FEED_PARTICLE = resolveFeedParticle();
 	private static final Gson STABILITY_STATE_GSON = new GsonBuilder().setPrettyPrinting().create();
@@ -106,14 +108,16 @@ public final class ServerStabilitySystem {
 		private final long startTick;
 		private final long endTick;
 		private final float pitch;
+		private final float volume;
 		private final long seed;
 		private final Set<UUID> listeners = new HashSet<>();
 
-		private ActiveFeedSoundSource(FeedSoundSourceKey key, long startTick, long endTick, float pitch, long seed) {
+		private ActiveFeedSoundSource(FeedSoundSourceKey key, long startTick, long endTick, float pitch, float volume, long seed) {
 			this.key = key;
 			this.startTick = startTick;
 			this.endTick = endTick;
 			this.pitch = pitch;
+			this.volume = volume;
 			this.seed = seed;
 		}
 	}
@@ -531,7 +535,7 @@ public final class ServerStabilitySystem {
 		long soundDurationTicks = getFeedSoundCooldownTicks(pitch);
 		if (canPlayPackMusic) {
 			nextFeedSoundAllowedTick = tickNow + soundDurationTicks;
-			startFeedSoundSource(level, serverPos, tickNow, tickNow + soundDurationTicks, pitch, level.getRandom().nextLong());
+			startFeedSoundSource(level, serverPos, tickNow, tickNow + soundDurationTicks, pitch, FEED_MUSIC_SOUND_VOLUME, level.getRandom().nextLong());
 		}
 
 		for (ServerPlayer player : level.players()) {
@@ -551,14 +555,26 @@ public final class ServerStabilitySystem {
 		}
 	}
 
-	private static void startFeedSoundSource(ServerLevel level, BlockPos serverPos, long startTick, long endTick, float pitch, long seed) {
+	public static long playFeedMusicForStartup(ServerLevel level, BlockPos serverPos) {
+		if (level == null || serverPos == null) {
+			return FEED_SOUND_BASE_DURATION_TICKS;
+		}
+		long tickNow = level.getGameTime();
+		float pitch = STARTUP_FEED_MUSIC_PITCH;
+		long soundDurationTicks = getFeedSoundCooldownTicks(pitch);
+		nextFeedSoundAllowedTick = tickNow + soundDurationTicks;
+		startFeedSoundSource(level, serverPos, tickNow, tickNow + soundDurationTicks, pitch, STARTUP_FEED_MUSIC_VOLUME, level.getRandom().nextLong());
+		return soundDurationTicks;
+	}
+
+	private static void startFeedSoundSource(ServerLevel level, BlockPos serverPos, long startTick, long endTick, float pitch, float volume, long seed) {
 		FeedSoundSourceKey key = new FeedSoundSourceKey(level.dimension(), serverPos.immutable());
 		ActiveFeedSoundSource previous = ACTIVE_FEED_SOUND_SOURCES.remove(key);
 		if (previous != null) {
 			stopFeedSoundForListeners(level.getServer(), previous);
 		}
 
-		ActiveFeedSoundSource source = new ActiveFeedSoundSource(key, startTick, endTick, pitch, seed);
+		ActiveFeedSoundSource source = new ActiveFeedSoundSource(key, startTick, endTick, pitch, volume, seed);
 		ACTIVE_FEED_SOUND_SOURCES.put(key, source);
 		syncFeedSoundSource(level, source);
 	}
@@ -607,7 +623,7 @@ public final class ServerStabilitySystem {
 				continue;
 			}
 
-			playFeedMusicSegmentForPlayer(player, x, y, z, segmentIndex, source.pitch, source.seed + segmentIndex);
+			playFeedMusicSegmentForPlayer(player, x, y, z, segmentIndex, source.pitch, source.volume, source.seed + segmentIndex);
 			source.listeners.add(playerId);
 		}
 
@@ -640,6 +656,7 @@ public final class ServerStabilitySystem {
 			double z,
 			int segmentIndex,
 			float pitch,
+			float volume,
 			long seed
 	) {
 		player.connection.send(new ClientboundSoundPacket(
@@ -648,7 +665,7 @@ public final class ServerStabilitySystem {
 				x,
 				y,
 				z,
-				FEED_MUSIC_SOUND_VOLUME,
+				volume,
 				pitch,
 				seed
 		));

@@ -163,10 +163,10 @@
       "generatorVersion": 4
     },
     "season_finish": {
-      "fingerprint": "85413bc0863c43d58dcd29cb480b80affb3a3d4e17b2391bc73e45297f68cdda",
-      "text": "Инициализация завершена. Мир прогружен.",
+      "fingerprint": "9f71a0dec6a0649848dcf26e716dd789413915d8f0c2437c07768e6746612665",
+      "text": "Запускаю Lost Glade.",
       "outputPath": "config/lg2-season-start/voice/season_finish.wav",
-      "durationTicks": 67,
+      "durationTicks": 41,
       "generatorVersion": 4
     },
     "phase1_wait_start_prompt_01": {

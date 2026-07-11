@@ -1679,9 +1679,10 @@
       "audience": "all_active",
       "channel": "global",
       "audioFile": "voice/season_finish.wav",
-      "scriptText": "Инициализация завершена. Мир прогружен.",
+      "scriptText": "Запускаю Lost Glade.",
+      "ttsText": "Запускаю Lost Glade.",
       "delayTicks": 0,
-      "durationTicks": 67,
+      "durationTicks": 41,
       "onceGlobal": true,
       "oncePerPlayer": false,
       "requires": []

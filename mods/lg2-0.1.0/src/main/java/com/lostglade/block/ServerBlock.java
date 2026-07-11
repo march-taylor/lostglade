@@ -41,6 +41,7 @@ import java.util.List;
 
 public class ServerBlock extends SimplePolymerBlock {
 	private static final SimpleParticleType STRUCTURE_PARTICLE = resolveStructureParticle();
+	private static final int STRUCTURE_PLACE_FLAGS = 2 | 16 | 32;
 
 	public ServerBlock(BlockBehaviour.Properties settings) {
 		super(settings, Blocks.COMMAND_BLOCK);
@@ -94,7 +95,7 @@ public class ServerBlock extends SimplePolymerBlock {
 			if (targetPos.equals(pos)) {
 				continue;
 			}
-			level.setBlock(targetPos, ModBlocks.SERVER.defaultBlockState(), 3);
+			level.setBlock(targetPos, ModBlocks.SERVER.defaultBlockState(), STRUCTURE_PLACE_FLAGS);
 		}
 
 		ServerStabilitySystem.onServerStructurePlaced(level, pos);

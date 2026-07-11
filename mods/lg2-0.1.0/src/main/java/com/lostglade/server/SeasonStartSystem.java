@@ -21,7 +21,9 @@ import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.Holder;
 import net.minecraft.core.component.DataComponents;
+import net.minecraft.core.particles.DustParticleOptions;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.ChatType;
@@ -37,6 +39,7 @@ import net.minecraft.server.level.ServerBossEvent;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.permissions.Permissions;
+import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.Brightness;
@@ -76,11 +79,16 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.EnumSet;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.UUID;
 
 import org.joml.Quaternionf;
@@ -306,7 +314,32 @@ public final class SeasonStartSystem {
 	private static final float STARTUP_WORLDGEN_MARGIN_BLOCKS = 8.0F;
 	private static final float STARTUP_WORLDGEN_THICKNESS_SCALE = 0.25F;
 	private static final double STARTUP_WORLDGEN_ROOF_OFFSET = 0.02D;
+	private static final int SCENE_BLOCK_SET_FLAGS = 2 | 16 | 32;
+	private static final int EXISTING_SERVER_SCAN_RADIUS = 192;
+	private static final int EXISTING_SERVER_SCAN_VERTICAL_MARGIN = 24;
 	private static final Brightness STARTUP_WORLDGEN_BRIGHTNESS = Brightness.FULL_BRIGHT;
+	private static final Identifier WORLD_REVEAL_EARTHQUAKE_SOUND_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "season_start_earthquake");
+	private static final Holder<SoundEvent> WORLD_REVEAL_EARTHQUAKE_SOUND = Holder.direct(SoundEvent.createVariableRangeEvent(WORLD_REVEAL_EARTHQUAKE_SOUND_ID));
+	private static final float WORLD_REVEAL_EARTHQUAKE_VOLUME = 7.5F;
+	private static final long WORLD_REVEAL_CRACKING_DURATION_TICKS = 20L * 30L;
+	private static final long WORLD_REVEAL_DARKNESS_ONSET_TICKS = 60L;
+	private static final long WORLD_REVEAL_CRACK_START_BUFFER_TICKS = 4L;
+	private static final long WORLD_REVEAL_DARKNESS_LEAD_OUT_TICKS = 20L * 4L;
+	private static final double WORLD_REVEAL_VISIBLE_TARGET_PROGRESS = 1.0D;
+	private static final int WORLD_REVEAL_VISIBLE_PROTECTION_RADIUS = 2;
+	private static final int WORLD_REVEAL_VISIBLE_PROTECTION_HEIGHT = 4;
+	private static final int WORLD_REVEAL_CRACK_PARTICLE_LOOKAHEAD_EPISODES = 5;
+	private static final double WORLD_REVEAL_CRACK_SAMPLE_STEP = 0.42D;
+	private static final double WORLD_REVEAL_PRIMARY_CRACK_DISPLACEMENT = 5.4D;
+	private static final double WORLD_REVEAL_BRANCH_CRACK_DISPLACEMENT = 3.1D;
+	private static final double WORLD_REVEAL_MAX_TERRAIN_GROWTH_RADIUS = 3.6D;
+	private static final long WORLD_REVEAL_POST_START_MORNING_TIME = 1000L;
+	private static final int WORLD_REVEAL_EPISODE_MAX_REVEAL_POSITIONS = 56;
+	private static final int WORLD_REVEAL_EPISODE_MAX_PARTICLE_POINTS = 18;
+	private static final int WORLD_REVEAL_RELOCATE_DEFERRED_BATCH = 36;
+	private static final int WORLD_REVEAL_SETTLE_DEFERRED_BATCH = 320;
+	private static final DustParticleOptions WORLD_REVEAL_CRACK_CORE_PARTICLE = new DustParticleOptions(0x09090C, 1.18F);
+	private static final DustParticleOptions WORLD_REVEAL_CRACK_EDGE_PARTICLE = new DustParticleOptions(0x2F3138, 0.78F);
 	private static final long WORLD_REVEAL_RELOCATE_MIN_TICKS = 20L;
 	private static final long WORLD_REVEAL_SETTLE_MIN_TICKS = 20L;
 	private static final double WORLD_REVEAL_HORIZONTAL_SPEED = 0.22D;
@@ -315,13 +348,84 @@ public final class SeasonStartSystem {
 	private static final double WORLD_REVEAL_READY_VERTICAL_DELTA = 0.72D;
 	private static final double WORLD_REVEAL_PREP_TARGET_OFFSET = 1.35D;
 	private static final double WORLD_REVEAL_FINAL_TARGET_OFFSET = 1.02D;
+	// Synced to the densest short-impact section of `Downloads/zemletryasenie-2.mp3` (7.1s-37.1s).
+	private static final WorldRevealBurst[] WORLD_REVEAL_CRACK_BURSTS = {
+			burst(7, 0.445F, 14, 0.545F),
+			burst(18, 0.495F, 15, 0.586F),
+			burst(26, 0.510F, 15, 0.598F),
+			burst(37, 0.545F, 16, 0.627F),
+			burst(44, 0.960F, 23, 0.968F),
+			burst(50, 0.598F, 17, 0.670F),
+			burst(56, 0.662F, 18, 0.723F),
+			burst(65, 0.586F, 17, 0.661F),
+			burst(74, 1.000F, 24, 1.000F),
+			burst(83, 0.964F, 23, 0.970F),
+			burst(91, 0.866F, 22, 0.890F),
+			burst(100, 0.500F, 15, 0.590F),
+			burst(108, 0.671F, 18, 0.730F),
+			burst(119, 0.892F, 22, 0.912F),
+			burst(129, 0.912F, 22, 0.928F),
+			burst(136, 0.610F, 17, 0.681F),
+			burst(144, 0.548F, 16, 0.630F),
+			burst(155, 1.000F, 24, 1.000F),
+			burst(164, 0.863F, 22, 0.888F),
+			burst(172, 0.528F, 16, 0.613F),
+			burst(180, 0.611F, 17, 0.681F),
+			burst(186, 0.647F, 18, 0.711F),
+			burst(195, 0.487F, 15, 0.579F),
+			burst(207, 0.628F, 17, 0.695F),
+			burst(214, 0.428F, 14, 0.531F),
+			burst(221, 0.625F, 17, 0.693F),
+			burst(241, 0.493F, 15, 0.584F),
+			burst(249, 0.663F, 18, 0.723F),
+			burst(256, 0.462F, 14, 0.559F),
+			burst(271, 0.667F, 18, 0.727F),
+			burst(279, 0.961F, 23, 0.968F),
+			burst(288, 0.640F, 18, 0.704F),
+			burst(298, 0.446F, 14, 0.546F),
+			burst(305, 0.605F, 17, 0.676F),
+			burst(315, 0.635F, 17, 0.701F),
+			burst(321, 0.754F, 20, 0.799F),
+			burst(333, 0.755F, 20, 0.799F),
+			burst(341, 0.601F, 17, 0.673F),
+			burst(352, 0.643F, 18, 0.707F),
+			burst(366, 0.603F, 17, 0.675F),
+			burst(390, 0.769F, 20, 0.811F),
+			burst(397, 0.524F, 15, 0.610F),
+			burst(403, 0.581F, 16, 0.656F),
+			burst(411, 0.795F, 20, 0.832F),
+			burst(424, 0.512F, 15, 0.600F),
+			burst(430, 0.748F, 19, 0.793F),
+			burst(438, 0.446F, 14, 0.546F),
+			burst(444, 0.626F, 17, 0.694F),
+			burst(451, 1.000F, 24, 1.000F),
+			burst(458, 0.815F, 21, 0.849F),
+			burst(473, 0.677F, 18, 0.735F),
+			burst(485, 0.610F, 17, 0.680F),
+			burst(496, 0.454F, 14, 0.552F),
+			burst(509, 0.621F, 17, 0.689F),
+			burst(521, 0.481F, 15, 0.574F),
+			burst(527, 0.624F, 17, 0.692F),
+			burst(537, 0.571F, 16, 0.648F),
+			burst(554, 0.454F, 14, 0.552F),
+			burst(560, 0.578F, 16, 0.654F),
+			burst(573, 0.579F, 16, 0.655F),
+			burst(586, 0.660F, 18, 0.721F),
+			burst(597, 0.618F, 17, 0.687F)
+	};
+	private static final float WORLD_REVEAL_TOTAL_BURST_WEIGHT = computeWorldRevealTotalBurstWeight();
 
 	private static final Map<UUID, PlayerSceneState> PLAYER_STATES = new LinkedHashMap<>();
 	private static final List<BlockPos> SHELL_DISSOLVE_ORDER = new ArrayList<>();
 	private static final List<TerrainPlacement> WORLD_REVEAL_TERRAIN = new ArrayList<>();
 	private static final List<BlockPos> WORLD_REVEAL_BARRIER_COLLISION = new ArrayList<>();
+	private static final List<WorldRevealEpisode> WORLD_REVEAL_EPISODES = new ArrayList<>();
 	private static final Map<Long, Integer> WORLD_REVEAL_SURFACE_Y = new LinkedHashMap<>();
+	private static final Map<Long, BlockState> WORLD_REVEAL_TARGET_STATES = new HashMap<>();
 	private static final Map<UUID, Vec3> WORLD_REVEAL_SAFE_TARGETS = new LinkedHashMap<>();
+	private static final Set<Long> WORLD_REVEAL_REQUIRED_POSITIONS = new LinkedHashSet<>();
+	private static final Set<Long> WORLD_REVEAL_DEFERRED_POSITIONS = new LinkedHashSet<>();
+	private static final Set<Long> WORLD_REVEAL_REVEALED_POSITIONS = new HashSet<>();
 	private static final Set<BlockPos> SHARED_BITCOIN_POSITIONS = new LinkedHashSet<>();
 	private static boolean stateLoaded = false;
 	private static boolean stateDirty = false;
@@ -337,11 +441,18 @@ public final class SeasonStartSystem {
 	private static long lastSharedLaunchProgressTick = Long.MIN_VALUE;
 	private static long pendingSharedFinishTick = Long.MIN_VALUE;
 	private static long worldRevealPhaseStartTick = Long.MIN_VALUE;
+	private static long worldRevealCrackStartTick = Long.MIN_VALUE;
+	private static long worldRevealMusicEndTick = Long.MIN_VALUE;
+	private static long worldRevealDarknessClearTick = Long.MIN_VALUE;
 	private static int sharedLaunchCollectedBitcoins = 0;
 	private static int sharedLaunchRequiredBitcoins = 0;
 	private static int sharedLaunchMilestoneCursor = 0;
 	private static boolean sharedLaunchIntroTriggered = false;
 	private static int startupWorldgenFrameIndex = Integer.MIN_VALUE;
+	private static int worldRevealVisibleEpisodeCursor = 0;
+	private static int worldRevealBurstCursor = 0;
+	private static float worldRevealBurstWeightProgress = 0.0F;
+	private static boolean worldRevealEarthquakeSoundStarted = false;
 	private static WorldRevealPhase worldRevealPhase = WorldRevealPhase.NONE;
 	private static ServerBossEvent sharedLaunchBossBar = null;
 	private static Difficulty difficultyBeforeSeasonStart = null;
@@ -365,11 +476,18 @@ public final class SeasonStartSystem {
 		lastSharedLaunchProgressTick = Long.MIN_VALUE;
 		pendingSharedFinishTick = Long.MIN_VALUE;
 		worldRevealPhaseStartTick = Long.MIN_VALUE;
+		worldRevealCrackStartTick = Long.MIN_VALUE;
+		worldRevealMusicEndTick = Long.MIN_VALUE;
+		worldRevealDarknessClearTick = Long.MIN_VALUE;
 		sharedLaunchCollectedBitcoins = 0;
 		sharedLaunchRequiredBitcoins = 0;
 		sharedLaunchMilestoneCursor = 0;
 		sharedLaunchIntroTriggered = false;
 		startupWorldgenFrameIndex = Integer.MIN_VALUE;
+		worldRevealVisibleEpisodeCursor = 0;
+		worldRevealBurstCursor = 0;
+		worldRevealBurstWeightProgress = 0.0F;
+		worldRevealEarthquakeSoundStarted = false;
 		worldRevealPhase = WorldRevealPhase.NONE;
 		sharedLaunchBossBar = null;
 		difficultyBeforeSeasonStart = null;
@@ -378,8 +496,13 @@ public final class SeasonStartSystem {
 		SHELL_DISSOLVE_ORDER.clear();
 		WORLD_REVEAL_TERRAIN.clear();
 		WORLD_REVEAL_BARRIER_COLLISION.clear();
+		WORLD_REVEAL_EPISODES.clear();
 		WORLD_REVEAL_SURFACE_Y.clear();
+		WORLD_REVEAL_TARGET_STATES.clear();
 		WORLD_REVEAL_SAFE_TARGETS.clear();
+		WORLD_REVEAL_REQUIRED_POSITIONS.clear();
+		WORLD_REVEAL_DEFERRED_POSITIONS.clear();
+		WORLD_REVEAL_REVEALED_POSITIONS.clear();
 		SHARED_BITCOIN_POSITIONS.clear();
 
 		ServerLifecycleEvents.SERVER_STARTED.register(SeasonStartSystem::onServerStarted);
@@ -620,6 +743,16 @@ public final class SeasonStartSystem {
 			assignOrRestorePlayer(server, player, true);
 		} else if (worldRevealActive) {
 			applyFreeState(player);
+			if (worldRevealPhase == WorldRevealPhase.BLACKOUT_FADE
+					|| worldRevealPhase == WorldRevealPhase.RELOCATE
+					|| worldRevealPhase == WorldRevealPhase.SETTLE) {
+				long remainingDarknessTicks = worldRevealDarknessClearTick == Long.MIN_VALUE || player.level() == null
+						? 0L
+						: worldRevealDarknessClearTick - player.level().getGameTime();
+				if (remainingDarknessTicks > 0L) {
+					applyWorldRevealDarkness(player, Math.max(80L, remainingDarknessTicks + 20L));
+				}
+			}
 		} else if (shellDissolving) {
 			applyFreeState(player);
 		}
@@ -743,6 +876,14 @@ public final class SeasonStartSystem {
 			stateDirty = true;
 		}
 		if (!isServerStructurePresent(overworld, anchor)) {
+			BlockPos existingAnchor = discoverExistingServerAnchor(overworld, anchor, bootstrapAnchor);
+			if (existingAnchor != null) {
+				anchor = existingAnchor.immutable();
+				serverAnchor = anchor;
+				stateDirty = true;
+			}
+		}
+		if (!isServerStructurePresent(overworld, anchor)) {
 			ServerBlock.placeServerStructure(overworld, anchor, Direction.NORTH);
 			stateDirty = true;
 		}
@@ -831,11 +972,18 @@ public final class SeasonStartSystem {
 		lastSharedLaunchProgressTick = Long.MIN_VALUE;
 		pendingSharedFinishTick = Long.MIN_VALUE;
 		worldRevealPhaseStartTick = Long.MIN_VALUE;
+		worldRevealCrackStartTick = Long.MIN_VALUE;
+		worldRevealMusicEndTick = Long.MIN_VALUE;
+		worldRevealDarknessClearTick = Long.MIN_VALUE;
 		sharedLaunchCollectedBitcoins = 0;
 		sharedLaunchRequiredBitcoins = 0;
 		sharedLaunchMilestoneCursor = 0;
 		sharedLaunchIntroTriggered = false;
 		startupWorldgenFrameIndex = Integer.MIN_VALUE;
+		worldRevealVisibleEpisodeCursor = 0;
+		worldRevealBurstCursor = 0;
+		worldRevealBurstWeightProgress = 0.0F;
+		worldRevealEarthquakeSoundStarted = false;
 		worldRevealPhase = WorldRevealPhase.NONE;
 		clearSharedLaunchBossBar();
 		if (difficultyBeforeSeasonStart == null && overworld != null) {
@@ -845,10 +993,16 @@ public final class SeasonStartSystem {
 		SHELL_DISSOLVE_ORDER.clear();
 		WORLD_REVEAL_TERRAIN.clear();
 		WORLD_REVEAL_BARRIER_COLLISION.clear();
+		WORLD_REVEAL_EPISODES.clear();
 		WORLD_REVEAL_SURFACE_Y.clear();
+		WORLD_REVEAL_TARGET_STATES.clear();
 		WORLD_REVEAL_SAFE_TARGETS.clear();
+		WORLD_REVEAL_REQUIRED_POSITIONS.clear();
+		WORLD_REVEAL_DEFERRED_POSITIONS.clear();
+		WORLD_REVEAL_REVEALED_POSITIONS.clear();
 		SHARED_BITCOIN_POSITIONS.clear();
 		SeasonStartVoiceSystem.resetSceneState();
+		stopWorldRevealEarthquakeSound(overworld);
 		enforcePeacefulDifficulty(server);
 		ensureSceneBuilt(overworld);
 		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
@@ -873,18 +1027,33 @@ public final class SeasonStartSystem {
 		lastSharedLaunchProgressTick = Long.MIN_VALUE;
 		pendingSharedFinishTick = Long.MIN_VALUE;
 		worldRevealPhaseStartTick = Long.MIN_VALUE;
-		worldRevealPhase = WorldRevealPhase.RELOCATE;
+		worldRevealCrackStartTick = Long.MIN_VALUE;
+		worldRevealMusicEndTick = Long.MIN_VALUE;
+		worldRevealDarknessClearTick = Long.MIN_VALUE;
+		worldRevealVisibleEpisodeCursor = 0;
+		worldRevealBurstCursor = 0;
+		worldRevealBurstWeightProgress = 0.0F;
+		worldRevealEarthquakeSoundStarted = false;
+		worldRevealPhase = WorldRevealPhase.CRACKING;
 		clearSharedLaunchBossBar();
 		ServerLevel overworld = server.overworld();
 		if (overworld != null) {
+			stopWorldRevealEarthquakeSound(overworld);
 			clearStartupWorldgenDisplay(overworld);
 			clearSharedBitcoins(overworld, true);
 			SHELL_DISSOLVE_ORDER.clear();
+			WORLD_REVEAL_EPISODES.clear();
+			WORLD_REVEAL_REQUIRED_POSITIONS.clear();
+			WORLD_REVEAL_DEFERRED_POSITIONS.clear();
+			WORLD_REVEAL_REVEALED_POSITIONS.clear();
 			WORLD_REVEAL_SAFE_TARGETS.clear();
 			for (ServerPlayer player : server.getPlayerList().getPlayers()) {
 				applyFreeState(player);
 			}
 			SeasonStartVoiceSystem.fireTrigger(server, "season_finished", null);
+			worldRevealCrackStartTick = overworld.getGameTime()
+					+ resolveTriggerSequenceDurationTicks("season_finished")
+					+ WORLD_REVEAL_CRACK_START_BUFFER_TICKS;
 		}
 		stateDirty = true;
 	}
@@ -1832,6 +2001,8 @@ public final class SeasonStartSystem {
 
 		long nowTick = overworld.getGameTime();
 		switch (worldRevealPhase) {
+			case CRACKING -> tickWorldRevealCracking(server, overworld, nowTick);
+			case BLACKOUT_FADE -> tickWorldRevealBlackoutFade(server, overworld, nowTick);
 			case RELOCATE -> tickWorldRevealRelocate(server, overworld, nowTick);
 			case SETTLE -> tickWorldRevealSettle(server, overworld, nowTick);
 			default -> forceCompleteWorldReveal(server);
@@ -1842,16 +2013,54 @@ public final class SeasonStartSystem {
 		if (level == null || serverAnchor == null) {
 			return;
 		}
-		if (WORLD_REVEAL_SURFACE_Y.isEmpty()) {
+		ensureWorldRevealSnapshotIndexes();
+		if (WORLD_REVEAL_SURFACE_Y.isEmpty() || WORLD_REVEAL_TARGET_STATES.isEmpty()) {
 			ensureSceneSnapshot(level);
 		}
-		if (WORLD_REVEAL_SAFE_TARGETS.isEmpty()) {
+		if (shouldRebuildWorldRevealPlan()) {
+			resetWorldRevealPlanState();
+		}
+		if (WORLD_REVEAL_EPISODES.isEmpty()) {
+			prepareWorldRevealGrowthPlan(level);
+		}
+		if (worldRevealPhase == WorldRevealPhase.RELOCATE || worldRevealPhase == WorldRevealPhase.SETTLE) {
 			refreshWorldRevealTargets(level);
 		}
 	}
 
+	private static void ensureWorldRevealSnapshotIndexes() {
+		if (serverAnchor == null || WORLD_REVEAL_TERRAIN.isEmpty()) {
+			return;
+		}
+		if (!WORLD_REVEAL_TARGET_STATES.isEmpty() && !WORLD_REVEAL_SURFACE_Y.isEmpty()) {
+			return;
+		}
+		rebuildWorldRevealSnapshotIndexesFromTerrain();
+	}
+
+	private static boolean shouldRebuildWorldRevealPlan() {
+		return !WORLD_REVEAL_EPISODES.isEmpty()
+				&& !WORLD_REVEAL_TARGET_STATES.isEmpty()
+				&& !WORLD_REVEAL_REQUIRED_POSITIONS.containsAll(WORLD_REVEAL_TARGET_STATES.keySet());
+	}
+
+	private static void resetWorldRevealPlanState() {
+		WORLD_REVEAL_EPISODES.clear();
+		WORLD_REVEAL_REQUIRED_POSITIONS.clear();
+		WORLD_REVEAL_DEFERRED_POSITIONS.clear();
+		WORLD_REVEAL_REVEALED_POSITIONS.clear();
+		worldRevealVisibleEpisodeCursor = 0;
+		worldRevealBurstCursor = 0;
+		worldRevealBurstWeightProgress = 0.0F;
+		stateDirty = true;
+	}
+
 	private static void ensureSceneSnapshot(ServerLevel level) {
-		if (level == null || serverAnchor == null || !WORLD_REVEAL_TERRAIN.isEmpty() || !WORLD_REVEAL_SURFACE_Y.isEmpty()) {
+		if (level == null || serverAnchor == null) {
+			return;
+		}
+		ensureWorldRevealSnapshotIndexes();
+		if (!WORLD_REVEAL_TERRAIN.isEmpty() && !WORLD_REVEAL_TARGET_STATES.isEmpty() && !WORLD_REVEAL_SURFACE_Y.isEmpty()) {
 			return;
 		}
 		if (isSceneShellAlreadyBuilt(level)) {
@@ -1890,6 +2099,7 @@ public final class SeasonStartSystem {
 		WORLD_REVEAL_TERRAIN.clear();
 		WORLD_REVEAL_BARRIER_COLLISION.clear();
 		WORLD_REVEAL_SURFACE_Y.clear();
+		WORLD_REVEAL_TARGET_STATES.clear();
 		WORLD_REVEAL_SAFE_TARGETS.clear();
 
 		ChunkGenerator generator = generatorFallback ? level.getChunkSource().getGenerator() : null;
@@ -1911,10 +2121,14 @@ public final class SeasonStartSystem {
 						continue;
 					}
 					BlockState state = generatorFallback ? column.getBlock(y) : level.getBlockState(pos);
+					if (shouldIgnoreSceneSnapshotState(pos, state, outerGeometry, barrierGeometry)) {
+						continue;
+					}
 					if (state == null || state.isAir()) {
 						continue;
 					}
 					WORLD_REVEAL_TERRAIN.add(new TerrainPlacement(pos.immutable(), state));
+					WORLD_REVEAL_TARGET_STATES.put(pos.asLong(), state);
 					topFilledY = y;
 					if (insideBarrier && isWorldRevealCollisionState(state)) {
 						WORLD_REVEAL_BARRIER_COLLISION.add(pos.immutable());
@@ -1933,11 +2147,1189 @@ public final class SeasonStartSystem {
 		}
 	}
 
+	private static void rebuildWorldRevealSnapshotIndexesFromTerrain() {
+		if (serverAnchor == null || WORLD_REVEAL_TERRAIN.isEmpty()) {
+			return;
+		}
+		BoxGeometry barrierGeometry = computeBarrierGeometry(serverAnchor);
+		WORLD_REVEAL_BARRIER_COLLISION.clear();
+		WORLD_REVEAL_SURFACE_Y.clear();
+		WORLD_REVEAL_TARGET_STATES.clear();
+		WORLD_REVEAL_SAFE_TARGETS.clear();
+		Map<Long, Integer> topSolidByColumn = new HashMap<>();
+		Map<Long, Integer> topFilledByColumn = new HashMap<>();
+		for (TerrainPlacement placement : WORLD_REVEAL_TERRAIN) {
+			if (placement == null || placement.pos() == null || placement.state() == null || placement.state().isAir()) {
+				continue;
+			}
+			BlockPos pos = placement.pos();
+			BlockState state = placement.state();
+			WORLD_REVEAL_TARGET_STATES.put(pos.asLong(), state);
+			boolean insideBarrier = pos.getX() >= barrierGeometry.minX + 1
+					&& pos.getX() <= barrierGeometry.maxX - 1
+					&& pos.getZ() >= barrierGeometry.minZ + 1
+					&& pos.getZ() <= barrierGeometry.maxZ - 1;
+			if (!insideBarrier) {
+				continue;
+			}
+			long columnKey = surfaceColumnKey(pos.getX(), pos.getZ());
+			topFilledByColumn.merge(columnKey, pos.getY(), Math::max);
+			if (isWorldRevealCollisionState(state)) {
+				WORLD_REVEAL_BARRIER_COLLISION.add(pos.immutable());
+				topSolidByColumn.merge(columnKey, pos.getY(), Math::max);
+			}
+		}
+		for (int x = barrierGeometry.minX + 1; x <= barrierGeometry.maxX - 1; x++) {
+			for (int z = barrierGeometry.minZ + 1; z <= barrierGeometry.maxZ - 1; z++) {
+				long columnKey = surfaceColumnKey(x, z);
+				int topSolidY = topSolidByColumn.getOrDefault(columnKey, Integer.MIN_VALUE);
+				int topFilledY = topFilledByColumn.getOrDefault(columnKey, Integer.MIN_VALUE);
+				int fallbackSurface = barrierGeometry.floorY;
+				int surfaceY = topSolidY != Integer.MIN_VALUE
+						? topSolidY
+						: (topFilledY != Integer.MIN_VALUE ? topFilledY : fallbackSurface);
+				WORLD_REVEAL_SURFACE_Y.put(columnKey, surfaceY);
+			}
+		}
+	}
+
+	private static boolean shouldIgnoreSceneSnapshotState(BlockPos pos, BlockState state, BoxGeometry outerGeometry, BoxGeometry barrierGeometry) {
+		if (pos == null || state == null) {
+			return false;
+		}
+		boolean blackShell = state.is(Blocks.BLACK_CONCRETE)
+				&& outerGeometry != null
+				&& (pos.getY() == outerGeometry.floorY
+						|| pos.getY() == outerGeometry.roofY
+						|| pos.getX() == outerGeometry.minX
+						|| pos.getX() == outerGeometry.maxX
+						|| pos.getZ() == outerGeometry.minZ
+						|| pos.getZ() == outerGeometry.maxZ);
+		if (blackShell) {
+			return true;
+		}
+		if (!state.is(Blocks.BARRIER) || barrierGeometry == null) {
+			return false;
+		}
+		boolean barrierFloor = pos.getY() <= barrierGeometry.floorY && pos.getY() >= barrierGeometry.floorY - (BARRIER_FLOOR_DEPTH - 1)
+				&& pos.getX() >= barrierGeometry.minX && pos.getX() <= barrierGeometry.maxX
+				&& pos.getZ() >= barrierGeometry.minZ && pos.getZ() <= barrierGeometry.maxZ;
+		boolean barrierWallOrRoof = pos.getY() >= barrierGeometry.floorY + 1 && pos.getY() <= barrierGeometry.roofY
+				&& ((pos.getX() == barrierGeometry.minX || pos.getX() == barrierGeometry.maxX
+				|| pos.getZ() == barrierGeometry.minZ || pos.getZ() == barrierGeometry.maxZ)
+				|| pos.getY() == barrierGeometry.roofY)
+				&& pos.getX() >= barrierGeometry.minX && pos.getX() <= barrierGeometry.maxX
+				&& pos.getZ() >= barrierGeometry.minZ && pos.getZ() <= barrierGeometry.maxZ;
+		return barrierFloor || barrierWallOrRoof;
+	}
+
 	private static boolean isWorldRevealCollisionState(BlockState state) {
 		return state != null && !state.isAir() && (state.blocksMotion() || !state.getFluidState().isEmpty());
 	}
 
+	private static void prepareWorldRevealGrowthPlan(ServerLevel level) {
+		if (level == null || serverAnchor == null || !WORLD_REVEAL_EPISODES.isEmpty()) {
+			return;
+		}
+		BoxGeometry outerGeometry = computeOuterBoxGeometry(resolveServerAnchor(level));
+		BoxGeometry barrierGeometry = computeBarrierGeometry(resolveServerAnchor(level));
+		Set<Long> shellCandidates = new LinkedHashSet<>();
+		for (BlockPos pos : collectBlackShellBlocks(outerGeometry)) {
+			if (!isServerStructureFootprint(pos)) {
+				shellCandidates.add(pos.asLong());
+			}
+		}
+		for (BlockPos pos : collectBarrierShellBlocks(barrierGeometry)) {
+			if (!isServerStructureFootprint(pos)) {
+				shellCandidates.add(pos.asLong());
+			}
+		}
+		if (shellCandidates.isEmpty() && WORLD_REVEAL_TARGET_STATES.isEmpty()) {
+			return;
+		}
+		WORLD_REVEAL_REQUIRED_POSITIONS.clear();
+		WORLD_REVEAL_DEFERRED_POSITIONS.clear();
+		for (long key : shellCandidates) {
+			BlockPos pos = BlockPos.of(key);
+			if (!isServerStructureFootprint(pos)) {
+				WORLD_REVEAL_REQUIRED_POSITIONS.add(key);
+			}
+		}
+		for (Map.Entry<Long, BlockState> targetEntry : WORLD_REVEAL_TARGET_STATES.entrySet()) {
+			BlockState targetState = targetEntry.getValue();
+			if (targetState == null || targetState.isAir()) {
+				continue;
+			}
+			BlockPos pos = BlockPos.of(targetEntry.getKey());
+			if (!isServerStructureFootprint(pos)) {
+				WORLD_REVEAL_REQUIRED_POSITIONS.add(targetEntry.getKey());
+			}
+		}
+
+		List<BlockPos> terrainAnchors = collectWorldRevealTerrainAnchors(randomForWorldReveal(level), 56);
+		if (terrainAnchors.isEmpty()) {
+			terrainAnchors.add(resolveServerAnchor(level));
+		}
+
+		Random random = randomForWorldReveal(level);
+		Map<Integer, LinkedHashSet<Long>> revealByRound = new TreeMap<>();
+		Map<Integer, List<Vec3>> particlesByRound = new TreeMap<>();
+		List<WorldRevealSeed> seeds = new ArrayList<>();
+		for (int face = 0; face < 6; face++) {
+			int primaryCrackCount = switch (face) {
+				case 4 -> 6;
+				case 5 -> 4;
+				default -> 4;
+			};
+			for (int primaryIndex = 0; primaryIndex < primaryCrackCount; primaryIndex++) {
+				BlockPos start = worldRevealShellPointForFace(outerGeometry, face, random);
+				BlockPos pivot = createWorldRevealFacePivot(outerGeometry, face, random);
+				for (int attempt = 0; attempt < 5 && start.distManhattan(pivot) < 6; attempt++) {
+					pivot = createWorldRevealFacePivot(outerGeometry, face, random);
+				}
+				BlockPos entry = createWorldRevealFaceEntry(outerGeometry, pivot, face, random);
+				BlockPos target = terrainAnchors.get(random.nextInt(terrainAnchors.size()));
+				int startRound = face * 8 + primaryIndex * 2 + random.nextInt(4);
+				WorldRevealFaceConstraint faceConstraint = new WorldRevealFaceConstraint(faceAxis(face), facePlaneCenterCoordinate(outerGeometry, face));
+				List<Vec3> mainPolyline = new ArrayList<>();
+				appendWorldRevealLightningSegment(
+						mainPolyline,
+						blockCenter(start),
+						blockCenter(pivot),
+						outerGeometry,
+						faceConstraint,
+						random,
+						5,
+						WORLD_REVEAL_PRIMARY_CRACK_DISPLACEMENT
+				);
+				appendWorldRevealLightningSegment(
+						mainPolyline,
+						mainPolyline.get(mainPolyline.size() - 1),
+						blockCenter(entry),
+						outerGeometry,
+						null,
+						random,
+						4,
+						WORLD_REVEAL_PRIMARY_CRACK_DISPLACEMENT * 0.52D
+				);
+				appendWorldRevealLightningSegment(
+						mainPolyline,
+						mainPolyline.get(mainPolyline.size() - 1),
+						blockCenter(target),
+						outerGeometry,
+						null,
+						random,
+						5,
+						WORLD_REVEAL_PRIMARY_CRACK_DISPLACEMENT * 0.70D
+				);
+				stampWorldRevealCrack(
+						revealByRound,
+						particlesByRound,
+						seeds,
+						mainPolyline,
+						startRound,
+						54 + random.nextInt(24),
+						(face == 4 ? 2.45D : 1.95D) + random.nextDouble() * 0.75D,
+						shellCandidates,
+						WORLD_REVEAL_TARGET_STATES
+				);
+
+				int branchCount = 2 + random.nextInt(3);
+				for (int branchIndex = 0; branchIndex < branchCount; branchIndex++) {
+					if (mainPolyline.size() < 4) {
+						break;
+					}
+					int minIndex = Math.max(1, mainPolyline.size() / 4);
+					int maxIndex = Math.max(minIndex + 1, (mainPolyline.size() * 4) / 5);
+					int branchSourceIndex = nextIntInclusive(random, minIndex, maxIndex);
+					Vec3 branchSource = mainPolyline.get(branchSourceIndex);
+					BlockPos branchTarget = terrainAnchors.get(random.nextInt(terrainAnchors.size()));
+					List<Vec3> branchPolyline = new ArrayList<>();
+					appendWorldRevealLightningSegment(
+							branchPolyline,
+							branchSource,
+							blockCenter(branchTarget),
+							outerGeometry,
+							null,
+							random,
+							4,
+							WORLD_REVEAL_BRANCH_CRACK_DISPLACEMENT
+					);
+					stampWorldRevealCrack(
+							revealByRound,
+							particlesByRound,
+							seeds,
+							branchPolyline,
+							startRound + 8 + random.nextInt(14),
+							24 + random.nextInt(18),
+							1.55D + random.nextDouble() * 0.45D,
+							shellCandidates,
+							WORLD_REVEAL_TARGET_STATES
+					);
+				}
+			}
+		}
+		backfillWorldRevealCoverage(revealByRound, particlesByRound, seeds, shellCandidates, WORLD_REVEAL_TARGET_STATES, WORLD_REVEAL_REQUIRED_POSITIONS, random);
+
+		WORLD_REVEAL_EPISODES.clear();
+		for (Map.Entry<Integer, LinkedHashSet<Long>> entry : revealByRound.entrySet()) {
+			LinkedHashSet<Long> roundPositions = entry.getValue();
+			List<Vec3> crackPoints = particlesByRound.get(entry.getKey());
+			if ((roundPositions == null || roundPositions.isEmpty()) && (crackPoints == null || crackPoints.isEmpty())) {
+				continue;
+			}
+			List<BlockPos> revealPositions = new ArrayList<>(roundPositions == null ? 0 : roundPositions.size());
+			if (roundPositions != null) {
+				for (long key : roundPositions) {
+					revealPositions.add(BlockPos.of(key));
+				}
+			}
+			List<Vec3> particlePoints = crackPoints == null ? List.of() : new ArrayList<>(crackPoints);
+			int chunkCount = Math.max(
+					1,
+					Math.max(
+							(int) Math.ceil(revealPositions.size() / (double) WORLD_REVEAL_EPISODE_MAX_REVEAL_POSITIONS),
+							(int) Math.ceil(particlePoints.size() / (double) WORLD_REVEAL_EPISODE_MAX_PARTICLE_POINTS)
+					)
+			);
+			for (int chunkIndex = 0; chunkIndex < chunkCount; chunkIndex++) {
+				int revealStart = (int) Math.floor(revealPositions.size() * (double) chunkIndex / chunkCount);
+				int revealEnd = (int) Math.floor(revealPositions.size() * (double) (chunkIndex + 1) / chunkCount);
+				int particleStart = (int) Math.floor(particlePoints.size() * (double) chunkIndex / chunkCount);
+				int particleEnd = (int) Math.floor(particlePoints.size() * (double) (chunkIndex + 1) / chunkCount);
+				List<BlockPos> revealChunk = revealStart >= revealEnd
+						? List.of()
+						: new ArrayList<>(revealPositions.subList(revealStart, revealEnd));
+				List<Vec3> particleChunk = particleStart >= particleEnd
+						? List.of()
+						: new ArrayList<>(particlePoints.subList(particleStart, particleEnd));
+				if (!revealChunk.isEmpty() || !particleChunk.isEmpty()) {
+					WORLD_REVEAL_EPISODES.add(new WorldRevealEpisode(revealChunk, particleChunk));
+				}
+			}
+		}
+	}
+
+	private static Random randomForWorldReveal(ServerLevel level) {
+		long seed = level == null || serverAnchor == null
+				? 0x6C6732777265616CL
+				: level.getSeed() ^ serverAnchor.asLong() ^ 0x6C6732777265616CL;
+		return new Random(seed);
+	}
+
+	private static List<BlockPos> collectWorldRevealTerrainAnchors(Random random, int limit) {
+		List<BlockPos> anchors = new ArrayList<>();
+		if (random == null || limit <= 0) {
+			return anchors;
+		}
+		List<BlockPos> surfaceCandidates = new ArrayList<>();
+		for (Map.Entry<Long, Integer> entry : WORLD_REVEAL_SURFACE_Y.entrySet()) {
+			BlockPos column = BlockPos.of(entry.getKey());
+			BlockPos anchor = resolveWorldRevealSurfaceAnchor(column.getX(), column.getZ(), entry.getValue());
+			if (anchor != null) {
+				surfaceCandidates.add(anchor);
+			}
+		}
+		if (surfaceCandidates.isEmpty()) {
+			return anchors;
+		}
+		int seen = 0;
+		for (BlockPos candidate : surfaceCandidates) {
+			if (candidate == null) {
+				continue;
+			}
+			seen++;
+			if (anchors.size() < limit) {
+				anchors.add(candidate.immutable());
+				continue;
+			}
+			int replacementIndex = random.nextInt(seen);
+			if (replacementIndex < limit) {
+				anchors.set(replacementIndex, candidate.immutable());
+			}
+		}
+		return anchors;
+	}
+
+	private static BlockPos resolveWorldRevealSurfaceAnchor(int x, int z, int surfaceY) {
+		if (serverAnchor == null) {
+			return null;
+		}
+		BoxGeometry outerGeometry = computeOuterBoxGeometry(serverAnchor);
+		int minY = outerGeometry.floorY;
+		int maxY = outerGeometry.roofY;
+		for (int y = maxY; y >= minY; y--) {
+			BlockPos pos = new BlockPos(x, y, z);
+			BlockState state = WORLD_REVEAL_TARGET_STATES.get(pos.asLong());
+			if (state == null || state.isAir() || isServerStructureFootprint(pos)) {
+				continue;
+			}
+			if (hasWorldRevealExposedFace(pos)) {
+				return pos.immutable();
+			}
+		}
+		for (int y = Mth.clamp(surfaceY, minY, maxY); y >= minY; y--) {
+			BlockPos pos = new BlockPos(x, y, z);
+			BlockState state = WORLD_REVEAL_TARGET_STATES.get(pos.asLong());
+			if (state != null && !state.isAir() && !isServerStructureFootprint(pos)) {
+				return pos.immutable();
+			}
+		}
+		return null;
+	}
+
+	private static boolean hasWorldRevealExposedFace(BlockPos pos) {
+		if (pos == null) {
+			return false;
+		}
+		for (Direction direction : Direction.values()) {
+			BlockPos adjacent = pos.relative(direction);
+			BlockState adjacentState = WORLD_REVEAL_TARGET_STATES.get(adjacent.asLong());
+			if (adjacentState == null || adjacentState.isAir()) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static void stampWorldRevealCrack(
+			Map<Integer, LinkedHashSet<Long>> revealByRound,
+			Map<Integer, List<Vec3>> particlesByRound,
+			List<WorldRevealSeed> seeds,
+			List<Vec3> polyline,
+			int startRound,
+			int roundSpan,
+			double baseFillRadius,
+			Set<Long> shellCandidates,
+			Map<Long, BlockState> terrainTargets
+	) {
+		if (revealByRound == null
+				|| particlesByRound == null
+				|| seeds == null
+				|| polyline == null
+				|| polyline.size() < 2
+				|| shellCandidates == null
+				|| terrainTargets == null) {
+			return;
+		}
+		List<Vec3> samples = sampleWorldRevealPolyline(polyline, WORLD_REVEAL_CRACK_SAMPLE_STEP);
+		if (samples.isEmpty()) {
+			return;
+		}
+		for (int sampleIndex = 0; sampleIndex < samples.size(); sampleIndex++) {
+			Vec3 sample = samples.get(sampleIndex);
+			double progress = samples.size() <= 1 ? 1.0D : (double) sampleIndex / (double) (samples.size() - 1);
+			int round = startRound + (int) Math.floor(progress * roundSpan);
+			particlesByRound.computeIfAbsent(round, ignored -> new ArrayList<>()).add(sample);
+			BlockPos linePos = BlockPos.containing(sample);
+			addWorldRevealRevealCell(revealByRound, round, linePos, shellCandidates, terrainTargets);
+			double crackRadius = progress < 0.05D
+					? 0.0D
+					: Math.min(2.15D, 0.42D + baseFillRadius * 0.34D + progress * 0.88D);
+			double fillRadius = progress < 0.08D
+					? 0.0D
+					: Math.min(
+							WORLD_REVEAL_MAX_TERRAIN_GROWTH_RADIUS,
+							baseFillRadius * (0.45D + progress * 1.15D)
+					);
+			seeds.add(new WorldRevealSeed(sample, round, crackRadius, fillRadius));
+			if (crackRadius > 0.01D || fillRadius > 0.01D) {
+				growWorldRevealCellsAroundSample(revealByRound, particlesByRound, round, sample, crackRadius, fillRadius, shellCandidates, terrainTargets);
+			}
+		}
+	}
+
+	private static void addWorldRevealRevealCell(
+			Map<Integer, LinkedHashSet<Long>> revealByRound,
+			int round,
+			BlockPos pos,
+			Set<Long> shellCandidates,
+			Map<Long, BlockState> terrainTargets
+	) {
+		if (revealByRound == null || pos == null || shellCandidates == null || terrainTargets == null || isServerStructureFootprint(pos)) {
+			return;
+		}
+		long key = pos.asLong();
+		BlockState targetState = terrainTargets.get(key);
+		if (!shellCandidates.contains(key) && (targetState == null || targetState.isAir())) {
+			return;
+		}
+		revealByRound.computeIfAbsent(round, ignored -> new LinkedHashSet<>()).add(key);
+	}
+
+	private static void growWorldRevealCellsAroundSample(
+			Map<Integer, LinkedHashSet<Long>> revealByRound,
+			Map<Integer, List<Vec3>> particlesByRound,
+			int round,
+			Vec3 sample,
+			double crackRadius,
+			double fillRadius,
+			Set<Long> shellCandidates,
+			Map<Long, BlockState> terrainTargets
+	) {
+		if (revealByRound == null
+				|| particlesByRound == null
+				|| sample == null
+				|| terrainTargets == null
+				|| (crackRadius <= 0.0D && fillRadius <= 0.0D)) {
+			return;
+		}
+		BlockPos origin = BlockPos.containing(sample);
+		double maxRadius = Math.max(crackRadius, fillRadius);
+		int radiusBlocks = Mth.ceil(maxRadius + 0.35D);
+		for (int dx = -radiusBlocks; dx <= radiusBlocks; dx++) {
+			for (int dy = -radiusBlocks; dy <= radiusBlocks; dy++) {
+				for (int dz = -radiusBlocks; dz <= radiusBlocks; dz++) {
+					BlockPos candidate = origin.offset(dx, dy, dz);
+					if (isServerStructureFootprint(candidate)) {
+						continue;
+					}
+					long key = candidate.asLong();
+					boolean shellCandidate = shellCandidates != null && shellCandidates.contains(key);
+					BlockState targetState = terrainTargets.get(key);
+					boolean terrainCandidate = targetState != null && !targetState.isAir();
+					if (!shellCandidate && !terrainCandidate) {
+						continue;
+					}
+					Vec3 candidateCenter = blockCenter(candidate);
+					double distance = candidateCenter.distanceTo(sample);
+					if (shellCandidate && crackRadius > 0.0D && distance <= crackRadius + 0.26D) {
+						int delay = (int) Math.floor(distance * 1.55D + Math.abs(dy) * 0.18D);
+						addWorldRevealRevealCell(revealByRound, round + delay, candidate, shellCandidates, terrainTargets);
+						if (((dx + dz) & 1) == 0) {
+							particlesByRound.computeIfAbsent(round + delay, ignored -> new ArrayList<>()).add(candidateCenter);
+						}
+					}
+					if (terrainCandidate && fillRadius > 0.0D && distance <= fillRadius + 0.42D) {
+						int delay = (int) Math.floor(distance * 2.05D + Math.max(0, dy) * 0.25D);
+						addWorldRevealRevealCell(revealByRound, round + delay, candidate, shellCandidates, terrainTargets);
+						if (((dx + dy + dz) & 1) == 0 && distance <= fillRadius * 0.72D) {
+							particlesByRound.computeIfAbsent(round + delay, ignored -> new ArrayList<>()).add(candidateCenter);
+						}
+					}
+				}
+			}
+		}
+	}
+
+	private static void backfillWorldRevealCoverage(
+			Map<Integer, LinkedHashSet<Long>> revealByRound,
+			Map<Integer, List<Vec3>> particlesByRound,
+			List<WorldRevealSeed> seeds,
+			Set<Long> shellCandidates,
+			Map<Long, BlockState> terrainTargets,
+			Set<Long> requiredPositions,
+			Random random
+	) {
+		if (revealByRound == null
+				|| particlesByRound == null
+				|| terrainTargets == null
+				|| requiredPositions == null
+				|| requiredPositions.isEmpty()) {
+			return;
+		}
+		if (seeds == null || seeds.isEmpty()) {
+			BlockPos anchor = serverAnchor == null ? BlockPos.ZERO : serverAnchor;
+			seeds = new ArrayList<>(List.of(new WorldRevealSeed(blockCenter(anchor), 0, 0.9D, 1.2D)));
+		}
+		Set<Long> scheduled = new HashSet<>();
+		for (LinkedHashSet<Long> positions : revealByRound.values()) {
+			if (positions != null) {
+				scheduled.addAll(positions);
+			}
+		}
+		for (long key : requiredPositions) {
+			if (scheduled.contains(key)) {
+				continue;
+			}
+			BlockPos pos = BlockPos.of(key);
+			if (isServerStructureFootprint(pos)) {
+				continue;
+			}
+			BlockState targetState = terrainTargets.get(key);
+			boolean terrain = targetState != null && !targetState.isAir();
+			WorldRevealSeed seed = findNearestWorldRevealSeed(seeds, pos, terrain);
+			if (seed == null) {
+				continue;
+			}
+			Vec3 center = blockCenter(pos);
+			double distance = center.distanceTo(seed.point());
+			double influenceRadius = terrain
+					? Math.max(0.68D, seed.terrainRadius())
+					: Math.max(0.38D, seed.crackRadius());
+			double uncovered = Math.max(0.0D, distance - influenceRadius);
+			int jitter = random == null ? 0 : random.nextInt(terrain ? 4 : 3);
+			int delay = terrain
+					? (int) Math.floor(uncovered * 3.65D + Math.max(0.0D, center.y - seed.point().y) * 0.35D)
+					: (int) Math.floor(uncovered * 2.75D + Math.abs(center.y - seed.point().y) * 0.12D);
+			int round = seed.round() + jitter + delay;
+			addWorldRevealRevealCell(revealByRound, round, pos, shellCandidates, terrainTargets);
+			scheduled.add(key);
+			if (((pos.getX() * 31 + pos.getY() * 17 + pos.getZ() * 13) & (terrain ? 1 : 3)) == 0) {
+				particlesByRound.computeIfAbsent(round, ignored -> new ArrayList<>()).add(center);
+			}
+		}
+	}
+
+	private static WorldRevealSeed findNearestWorldRevealSeed(List<WorldRevealSeed> seeds, BlockPos pos, boolean terrain) {
+		if (seeds == null || seeds.isEmpty() || pos == null) {
+			return null;
+		}
+		Vec3 center = blockCenter(pos);
+		WorldRevealSeed best = null;
+		double bestScore = Double.MAX_VALUE;
+		for (WorldRevealSeed seed : seeds) {
+			if (seed == null) {
+				continue;
+			}
+			double effectiveRadius = terrain ? Math.max(0.68D, seed.terrainRadius()) : Math.max(0.38D, seed.crackRadius());
+			double score = Math.max(0.0D, center.distanceTo(seed.point()) - effectiveRadius) + seed.round() * 0.038D;
+			if (score < bestScore) {
+				bestScore = score;
+				best = seed;
+			}
+		}
+		return best;
+	}
+
+	private static List<Vec3> sampleWorldRevealPolyline(List<Vec3> polyline, double stepSize) {
+		List<Vec3> samples = new ArrayList<>();
+		if (polyline == null || polyline.isEmpty()) {
+			return samples;
+		}
+		samples.add(polyline.get(0));
+		for (int index = 1; index < polyline.size(); index++) {
+			Vec3 from = polyline.get(index - 1);
+			Vec3 to = polyline.get(index);
+			Vec3 delta = to.subtract(from);
+			double length = delta.length();
+			if (length <= 1.0E-6D) {
+				continue;
+			}
+			int steps = Math.max(1, (int) Math.ceil(length / Math.max(0.1D, stepSize)));
+			for (int step = 1; step <= steps; step++) {
+				double progress = (double) step / (double) steps;
+				samples.add(from.add(delta.scale(progress)));
+			}
+		}
+		return samples;
+	}
+
+	private static void appendWorldRevealLightningSegment(
+			List<Vec3> polyline,
+			Vec3 start,
+			Vec3 end,
+			BoxGeometry geometry,
+			WorldRevealFaceConstraint faceConstraint,
+			Random random,
+			int depth,
+			double displacement
+	) {
+		if (polyline == null || start == null || end == null || geometry == null || random == null) {
+			return;
+		}
+		List<Vec3> segment = new ArrayList<>();
+		segment.add(clampWorldRevealPoint(start, geometry, faceConstraint));
+		subdivideWorldRevealLightning(
+				segment,
+				clampWorldRevealPoint(start, geometry, faceConstraint),
+				clampWorldRevealPoint(end, geometry, faceConstraint),
+				geometry,
+				faceConstraint,
+				random,
+				depth,
+				displacement
+		);
+		if (polyline.isEmpty()) {
+			polyline.addAll(segment);
+			return;
+		}
+		for (int index = 1; index < segment.size(); index++) {
+			Vec3 point = segment.get(index);
+			if (polyline.get(polyline.size() - 1).distanceToSqr(point) > 1.0E-6D) {
+				polyline.add(point);
+			}
+		}
+	}
+
+	private static void subdivideWorldRevealLightning(
+			List<Vec3> out,
+			Vec3 start,
+			Vec3 end,
+			BoxGeometry geometry,
+			WorldRevealFaceConstraint faceConstraint,
+			Random random,
+			int depth,
+			double displacement
+	) {
+		if (out == null || start == null || end == null || geometry == null || random == null) {
+			return;
+		}
+		if (depth <= 0 || start.distanceTo(end) <= 1.15D) {
+			out.add(clampWorldRevealPoint(end, geometry, faceConstraint));
+			return;
+		}
+		Vec3 midpoint = start.add(end).scale(0.5D);
+		Vec3 offsetDirection = faceConstraint == null
+				? randomPerpendicularDirection(end.subtract(start), random)
+				: randomFaceOffsetDirection(end.subtract(start), faceConstraint.axis(), random);
+		double offsetScale = displacement * (0.6D + random.nextDouble() * 0.75D);
+		Vec3 offsetMidpoint = midpoint.add(offsetDirection.scale(offsetScale));
+		Vec3 clampedMidpoint = clampWorldRevealPoint(offsetMidpoint, geometry, faceConstraint);
+		subdivideWorldRevealLightning(out, start, clampedMidpoint, geometry, faceConstraint, random, depth - 1, displacement * 0.56D);
+		subdivideWorldRevealLightning(out, clampedMidpoint, end, geometry, faceConstraint, random, depth - 1, displacement * 0.56D);
+	}
+
+	private static Vec3 randomPerpendicularDirection(Vec3 segment, Random random) {
+		Vec3 direction = normalizeOrFallback(segment, new Vec3(1.0D, 0.0D, 0.0D));
+		Vec3 randomSeed = normalizeOrFallback(
+				new Vec3(random.nextDouble() - 0.5D, random.nextDouble() - 0.5D, random.nextDouble() - 0.5D),
+				new Vec3(0.0D, 1.0D, 0.0D)
+		);
+		Vec3 perpendicularA = direction.cross(randomSeed);
+		if (perpendicularA.lengthSqr() <= 1.0E-6D) {
+			perpendicularA = direction.cross(Math.abs(direction.y) < 0.9D ? new Vec3(0.0D, 1.0D, 0.0D) : new Vec3(1.0D, 0.0D, 0.0D));
+		}
+		perpendicularA = normalizeOrFallback(perpendicularA, new Vec3(0.0D, 1.0D, 0.0D));
+		Vec3 perpendicularB = normalizeOrFallback(direction.cross(perpendicularA), new Vec3(0.0D, 0.0D, 1.0D));
+		double angle = random.nextDouble() * (Math.PI * 2.0D);
+		return normalizeOrFallback(
+				perpendicularA.scale(Math.cos(angle)).add(perpendicularB.scale(Math.sin(angle))),
+				perpendicularA
+		);
+	}
+
+	private static Vec3 randomFaceOffsetDirection(Vec3 segment, Direction.Axis axis, Random random) {
+		Vec3 planar = switch (axis) {
+			case X -> new Vec3(0.0D, segment.y, segment.z);
+			case Y -> new Vec3(segment.x, 0.0D, segment.z);
+			case Z -> new Vec3(segment.x, segment.y, 0.0D);
+		};
+		Vec3 tangent = normalizeOrFallback(planar, fallbackPlanarDirection(axis));
+		Vec3 perpendicular = switch (axis) {
+			case X -> new Vec3(0.0D, -tangent.z, tangent.y);
+			case Y -> new Vec3(-tangent.z, 0.0D, tangent.x);
+			case Z -> new Vec3(-tangent.y, tangent.x, 0.0D);
+		};
+		perpendicular = normalizeOrFallback(perpendicular, fallbackPlanarPerpendicular(axis));
+		double along = (random.nextDouble() - 0.5D) * 0.45D;
+		double across = random.nextBoolean() ? 1.0D : -1.0D;
+		return normalizeOrFallback(perpendicular.scale(across).add(tangent.scale(along)), perpendicular);
+	}
+
+	private static Vec3 fallbackPlanarDirection(Direction.Axis axis) {
+		return switch (axis) {
+			case X -> new Vec3(0.0D, 1.0D, 0.0D);
+			case Y -> new Vec3(1.0D, 0.0D, 0.0D);
+			case Z -> new Vec3(1.0D, 0.0D, 0.0D);
+		};
+	}
+
+	private static Vec3 fallbackPlanarPerpendicular(Direction.Axis axis) {
+		return switch (axis) {
+			case X -> new Vec3(0.0D, 0.0D, 1.0D);
+			case Y -> new Vec3(0.0D, 0.0D, 1.0D);
+			case Z -> new Vec3(0.0D, 1.0D, 0.0D);
+		};
+	}
+
+	private static Vec3 normalizeOrFallback(Vec3 vector, Vec3 fallback) {
+		if (vector != null && vector.lengthSqr() > 1.0E-6D) {
+			return vector.normalize();
+		}
+		return fallback == null || fallback.lengthSqr() <= 1.0E-6D ? Vec3.ZERO : fallback.normalize();
+	}
+
+	private static Vec3 clampWorldRevealPoint(Vec3 point, BoxGeometry geometry, WorldRevealFaceConstraint faceConstraint) {
+		if (point == null || geometry == null) {
+			return Vec3.ZERO;
+		}
+		double minX = geometry.minX + 0.15D;
+		double maxX = geometry.maxX + 0.85D;
+		double minY = geometry.floorY + 0.15D;
+		double maxY = geometry.roofY + 0.85D;
+		double minZ = geometry.minZ + 0.15D;
+		double maxZ = geometry.maxZ + 0.85D;
+		double x = Mth.clamp(point.x, minX, maxX);
+		double y = Mth.clamp(point.y, minY, maxY);
+		double z = Mth.clamp(point.z, minZ, maxZ);
+		if (faceConstraint != null) {
+			switch (faceConstraint.axis()) {
+				case X -> x = faceConstraint.value();
+				case Y -> y = faceConstraint.value();
+				case Z -> z = faceConstraint.value();
+			}
+		}
+		return new Vec3(x, y, z);
+	}
+
+	private static BlockPos clampToGeometry(BlockPos pos, BoxGeometry geometry) {
+		if (pos == null || geometry == null) {
+			return BlockPos.ZERO;
+		}
+		return new BlockPos(
+				Mth.clamp(pos.getX(), geometry.minX, geometry.maxX),
+				Mth.clamp(pos.getY(), geometry.floorY, geometry.roofY),
+				Mth.clamp(pos.getZ(), geometry.minZ, geometry.maxZ)
+		);
+	}
+
+	private static BlockPos createWorldRevealFacePivot(BoxGeometry geometry, int face, Random random) {
+		if (geometry == null || random == null) {
+			return BlockPos.ZERO;
+		}
+		int centerX = (geometry.minX + geometry.maxX) / 2;
+		int centerY = (geometry.floorY + geometry.roofY) / 2;
+		int centerZ = (geometry.minZ + geometry.maxZ) / 2;
+		int spreadX = Math.max(3, (geometry.maxX - geometry.minX) / 3);
+		int spreadY = Math.max(3, (geometry.roofY - geometry.floorY) / 3);
+		int spreadZ = Math.max(3, (geometry.maxZ - geometry.minZ) / 3);
+		return switch (face) {
+			case 0 -> new BlockPos(
+					geometry.minX,
+					nextIntInclusive(random, centerY - spreadY, centerY + spreadY),
+					nextIntInclusive(random, centerZ - spreadZ, centerZ + spreadZ)
+			);
+			case 1 -> new BlockPos(
+					geometry.maxX,
+					nextIntInclusive(random, centerY - spreadY, centerY + spreadY),
+					nextIntInclusive(random, centerZ - spreadZ, centerZ + spreadZ)
+			);
+			case 2 -> new BlockPos(
+					nextIntInclusive(random, centerX - spreadX, centerX + spreadX),
+					nextIntInclusive(random, centerY - spreadY, centerY + spreadY),
+					geometry.minZ
+			);
+			case 3 -> new BlockPos(
+					nextIntInclusive(random, centerX - spreadX, centerX + spreadX),
+					nextIntInclusive(random, centerY - spreadY, centerY + spreadY),
+					geometry.maxZ
+			);
+			case 4 -> new BlockPos(
+					nextIntInclusive(random, centerX - spreadX, centerX + spreadX),
+					geometry.floorY,
+					nextIntInclusive(random, centerZ - spreadZ, centerZ + spreadZ)
+			);
+			default -> new BlockPos(
+					nextIntInclusive(random, centerX - spreadX, centerX + spreadX),
+					geometry.roofY,
+					nextIntInclusive(random, centerZ - spreadZ, centerZ + spreadZ)
+			);
+		};
+	}
+
+	private static BlockPos createWorldRevealFaceEntry(BoxGeometry geometry, BlockPos pivot, int face, Random random) {
+		if (geometry == null || pivot == null) {
+			return BlockPos.ZERO;
+		}
+		Direction inward = switch (face) {
+			case 0 -> Direction.EAST;
+			case 1 -> Direction.WEST;
+			case 2 -> Direction.SOUTH;
+			case 3 -> Direction.NORTH;
+			case 4 -> Direction.UP;
+			default -> Direction.DOWN;
+		};
+		int depth = face >= 4 ? 4 + (random == null ? 0 : random.nextInt(4)) : 5 + (random == null ? 0 : random.nextInt(6));
+		BlockPos current = pivot;
+		for (int step = 0; step < depth; step++) {
+			current = clampToGeometry(current.relative(inward), geometry);
+		}
+		return current;
+	}
+
+	private static Direction.Axis faceAxis(int face) {
+		return switch (face) {
+			case 0, 1 -> Direction.Axis.X;
+			case 2, 3 -> Direction.Axis.Z;
+			default -> Direction.Axis.Y;
+		};
+	}
+
+	private static double facePlaneCenterCoordinate(BoxGeometry geometry, int face) {
+		return switch (face) {
+			case 0 -> geometry.minX + 0.5D;
+			case 1 -> geometry.maxX + 0.5D;
+			case 2 -> geometry.minZ + 0.5D;
+			case 3 -> geometry.maxZ + 0.5D;
+			case 4 -> geometry.floorY + 0.5D;
+			default -> geometry.roofY + 0.5D;
+		};
+	}
+
+	private static Vec3 blockCenter(BlockPos pos) {
+		return pos == null ? Vec3.ZERO : new Vec3(pos.getX() + 0.5D, pos.getY() + 0.5D, pos.getZ() + 0.5D);
+	}
+
+	private static int nextIntInclusive(Random random, int min, int max) {
+		if (random == null || max <= min) {
+			return min;
+		}
+		return min + random.nextInt(max - min + 1);
+	}
+
+	private static BlockPos worldRevealShellPointForFace(BoxGeometry geometry, int face, Random random) {
+		if (geometry == null || random == null) {
+			return BlockPos.ZERO;
+		}
+		int x = nextIntInclusive(random, geometry.minX, geometry.maxX);
+		int y = nextIntInclusive(random, geometry.floorY, geometry.roofY);
+		int z = nextIntInclusive(random, geometry.minZ, geometry.maxZ);
+		return switch (face) {
+			case 0 -> new BlockPos(geometry.minX, y, z);
+			case 1 -> new BlockPos(geometry.maxX, y, z);
+			case 2 -> new BlockPos(x, y, geometry.minZ);
+			case 3 -> new BlockPos(x, y, geometry.maxZ);
+			case 4 -> new BlockPos(x, geometry.floorY, z);
+			default -> new BlockPos(x, geometry.roofY, z);
+		};
+	}
+
+	private static void tickWorldRevealCracking(MinecraftServer server, ServerLevel level, long nowTick) {
+		if (server == null || level == null) {
+			return;
+		}
+		if (WORLD_REVEAL_EPISODES.isEmpty()) {
+			beginWorldRevealBlackoutFade(server, level, nowTick);
+			return;
+		}
+		if (worldRevealCrackStartTick == Long.MIN_VALUE) {
+			worldRevealCrackStartTick = nowTick;
+		}
+		if (nowTick < worldRevealCrackStartTick) {
+			return;
+		}
+		if (!worldRevealEarthquakeSoundStarted) {
+			startWorldRevealEarthquakeSound(level);
+			worldRevealEarthquakeSoundStarted = true;
+			stateDirty = true;
+		}
+		long elapsedTicks = nowTick - worldRevealCrackStartTick;
+		int visibleThreshold = resolveWorldRevealVisibleEpisodeThreshold();
+		while (worldRevealBurstCursor < WORLD_REVEAL_CRACK_BURSTS.length
+				&& elapsedTicks >= WORLD_REVEAL_CRACK_BURSTS[worldRevealBurstCursor].offsetTicks()) {
+			WorldRevealBurst burst = WORLD_REVEAL_CRACK_BURSTS[worldRevealBurstCursor];
+			int previousCursor = worldRevealVisibleEpisodeCursor;
+			worldRevealBurstWeightProgress += burst.growthWeight();
+			int targetCursor = resolveWorldRevealBurstTargetCursor(visibleThreshold, elapsedTicks, worldRevealBurstWeightProgress);
+			if (targetCursor <= worldRevealVisibleEpisodeCursor && worldRevealVisibleEpisodeCursor < visibleThreshold) {
+				targetCursor = worldRevealVisibleEpisodeCursor + 1;
+			}
+			while (worldRevealVisibleEpisodeCursor < targetCursor && worldRevealVisibleEpisodeCursor < visibleThreshold) {
+				revealWorldRevealEpisode(level, WORLD_REVEAL_EPISODES.get(worldRevealVisibleEpisodeCursor));
+				worldRevealVisibleEpisodeCursor++;
+			}
+			emitWorldRevealBurstParticles(level, previousCursor, worldRevealVisibleEpisodeCursor, burst.particleBudget(), burst.impactStrength());
+			worldRevealBurstCursor++;
+			stateDirty = true;
+		}
+		if (elapsedTicks < WORLD_REVEAL_CRACKING_DURATION_TICKS) {
+			return;
+		}
+		while (worldRevealVisibleEpisodeCursor < visibleThreshold) {
+			revealWorldRevealEpisode(level, WORLD_REVEAL_EPISODES.get(worldRevealVisibleEpisodeCursor));
+			worldRevealVisibleEpisodeCursor++;
+		}
+		if (worldRevealVisibleEpisodeCursor > 0) {
+			emitWorldRevealBurstParticles(level, Math.max(0, worldRevealVisibleEpisodeCursor - 2), worldRevealVisibleEpisodeCursor, 28, 1.0F);
+		}
+		if (elapsedTicks >= WORLD_REVEAL_CRACKING_DURATION_TICKS) {
+			beginWorldRevealBlackoutFade(server, level, nowTick);
+		}
+	}
+
+	private static int resolveWorldRevealVisibleEpisodeThreshold() {
+		if (WORLD_REVEAL_EPISODES.isEmpty()) {
+			return 0;
+		}
+		return Mth.clamp((int) Math.ceil(WORLD_REVEAL_EPISODES.size() * WORLD_REVEAL_VISIBLE_TARGET_PROGRESS), 1, WORLD_REVEAL_EPISODES.size());
+	}
+
+	private static int resolveWorldRevealBurstTargetCursor(int visibleThreshold, long elapsedTicks, float burstWeightProgress) {
+		if (visibleThreshold <= 0) {
+			return 0;
+		}
+		float timeRatio = WORLD_REVEAL_CRACKING_DURATION_TICKS <= 0L
+				? 1.0F
+				: Mth.clamp((float) elapsedTicks / (float) WORLD_REVEAL_CRACKING_DURATION_TICKS, 0.0F, 1.0F);
+		float ratio = WORLD_REVEAL_TOTAL_BURST_WEIGHT <= 0.0F
+				? timeRatio
+				: Mth.clamp(burstWeightProgress / WORLD_REVEAL_TOTAL_BURST_WEIGHT, 0.0F, 1.0F);
+		ratio = Mth.clamp(ratio * 0.28F + timeRatio * 0.72F, 0.0F, 1.0F);
+		return Mth.clamp((int) Math.round(visibleThreshold * ratio), 0, visibleThreshold);
+	}
+
+	private static void revealWorldRevealEpisode(ServerLevel level, WorldRevealEpisode episode) {
+		revealWorldRevealEpisode(level, episode, false);
+	}
+
+	private static void revealWorldRevealEpisode(ServerLevel level, WorldRevealEpisode episode, boolean ignoreProtection) {
+		if (level == null || episode == null || episode.revealPositions().isEmpty()) {
+			return;
+		}
+		for (BlockPos pos : episode.revealPositions()) {
+			if (!revealWorldRevealPosition(level, pos, ignoreProtection) && !ignoreProtection && pos != null) {
+				WORLD_REVEAL_DEFERRED_POSITIONS.add(pos.asLong());
+			}
+		}
+	}
+
+	private static boolean revealWorldRevealPosition(ServerLevel level, BlockPos pos, boolean ignoreProtection) {
+		if (level == null || pos == null || isServerStructureFootprint(pos)) {
+			return true;
+		}
+		long key = pos.asLong();
+		if (WORLD_REVEAL_REVEALED_POSITIONS.contains(key)) {
+			WORLD_REVEAL_DEFERRED_POSITIONS.remove(key);
+			return true;
+		}
+		if (!ignoreProtection && isProtectedDuringVisibleReveal(level, pos)) {
+			return false;
+		}
+		BlockState targetState = WORLD_REVEAL_TARGET_STATES.get(key);
+		BlockState currentState = level.getBlockState(pos);
+		boolean shellBlock = currentState.is(Blocks.BLACK_CONCRETE) || currentState.is(Blocks.BARRIER);
+		if (targetState == null && !shellBlock) {
+			WORLD_REVEAL_REVEALED_POSITIONS.add(key);
+			WORLD_REVEAL_DEFERRED_POSITIONS.remove(key);
+			return true;
+		}
+		if (shellBlock) {
+			level.sendParticles(ParticleTypes.SMOKE, pos.getX() + 0.5D, pos.getY() + 0.5D, pos.getZ() + 0.5D, 5, 0.22D, 0.22D, 0.22D, 0.01D);
+			level.sendParticles(ParticleTypes.CLOUD, pos.getX() + 0.5D, pos.getY() + 0.5D, pos.getZ() + 0.5D, 2, 0.18D, 0.18D, 0.18D, 0.0D);
+		}
+		if (targetState != null && !targetState.isAir()) {
+			setSceneBlockSilently(level, pos, targetState);
+			level.sendParticles(ParticleTypes.POOF, pos.getX() + 0.5D, pos.getY() + 0.5D, pos.getZ() + 0.5D, 2, 0.12D, 0.12D, 0.12D, 0.0D);
+		} else if (shellBlock) {
+			setSceneBlockSilently(level, pos, Blocks.AIR.defaultBlockState());
+		}
+		WORLD_REVEAL_REVEALED_POSITIONS.add(key);
+		WORLD_REVEAL_DEFERRED_POSITIONS.remove(key);
+		return true;
+	}
+
+	private static void revealWorldRevealEpisodeBatch(ServerLevel level, int maxEpisodes, boolean ignoreProtection) {
+		if (level == null || maxEpisodes <= 0) {
+			return;
+		}
+		int processed = 0;
+		while (worldRevealVisibleEpisodeCursor < WORLD_REVEAL_EPISODES.size() && processed < maxEpisodes) {
+			revealWorldRevealEpisode(level, WORLD_REVEAL_EPISODES.get(worldRevealVisibleEpisodeCursor), ignoreProtection);
+			worldRevealVisibleEpisodeCursor++;
+			processed++;
+		}
+	}
+
+	private static void revealWorldRevealDeferredBatch(ServerLevel level, int maxPositions, boolean ignoreProtection) {
+		if (level == null || maxPositions <= 0 || WORLD_REVEAL_DEFERRED_POSITIONS.isEmpty()) {
+			return;
+		}
+		List<Long> retry = new ArrayList<>();
+		Iterator<Long> iterator = WORLD_REVEAL_DEFERRED_POSITIONS.iterator();
+		int processed = 0;
+		while (iterator.hasNext() && processed < maxPositions) {
+			long key = iterator.next();
+			iterator.remove();
+			if (!revealWorldRevealPosition(level, BlockPos.of(key), ignoreProtection)) {
+				retry.add(key);
+			}
+			processed++;
+		}
+		WORLD_REVEAL_DEFERRED_POSITIONS.addAll(retry);
+	}
+
+	private static boolean isWorldRevealCoverageComplete() {
+		return worldRevealVisibleEpisodeCursor >= WORLD_REVEAL_EPISODES.size()
+				&& WORLD_REVEAL_DEFERRED_POSITIONS.isEmpty()
+				&& WORLD_REVEAL_REVEALED_POSITIONS.containsAll(WORLD_REVEAL_REQUIRED_POSITIONS);
+	}
+
+	private static void emitWorldRevealBurstParticles(
+			ServerLevel level,
+			int fromEpisode,
+			int toEpisode,
+			int particleBudget,
+			float impactStrength
+	) {
+		if (level == null || particleBudget <= 0 || WORLD_REVEAL_EPISODES.isEmpty()) {
+			return;
+		}
+		int sampleStart = Mth.clamp(Math.max(0, fromEpisode - 1), 0, WORLD_REVEAL_EPISODES.size() - 1);
+		int sampleEndExclusive = Mth.clamp(
+				Math.max(sampleStart + 1, toEpisode + WORLD_REVEAL_CRACK_PARTICLE_LOOKAHEAD_EPISODES),
+				sampleStart + 1,
+				WORLD_REVEAL_EPISODES.size()
+		);
+		int window = sampleEndExclusive - sampleStart;
+		for (int i = 0; i < particleBudget; i++) {
+			int episodeIndex = sampleStart + Math.floorMod(i * 5 + worldRevealBurstCursor * 3, window);
+			WorldRevealEpisode episode = WORLD_REVEAL_EPISODES.get(episodeIndex);
+			if (episode == null || episode.crackPoints().isEmpty()) {
+				continue;
+			}
+			List<Vec3> crackPoints = episode.crackPoints();
+			Vec3 particleSpot = crackPoints.get(Math.floorMod(i * 11 + episodeIndex * 7 + toEpisode * 13, crackPoints.size()));
+			level.sendParticles(WORLD_REVEAL_CRACK_CORE_PARTICLE, particleSpot.x, particleSpot.y, particleSpot.z, 1, 0.0D, 0.0D, 0.0D, 0.0D);
+			if ((i & 1) == 0 || impactStrength >= 0.8F) {
+				level.sendParticles(
+						WORLD_REVEAL_CRACK_EDGE_PARTICLE,
+						particleSpot.x,
+						particleSpot.y,
+						particleSpot.z,
+						1,
+						0.018D,
+						0.018D,
+						0.018D,
+						0.0D
+				);
+			}
+		}
+	}
+
+	private static void startWorldRevealEarthquakeSound(ServerLevel level) {
+		if (level == null || serverAnchor == null) {
+			return;
+		}
+		BoxGeometry outerGeometry = computeOuterBoxGeometry(resolveServerAnchor(level));
+		double x = serverAnchor.getX() + 0.5D;
+		double y = serverAnchor.getY() + 0.5D;
+		double z = serverAnchor.getZ() + 0.5D;
+		for (ServerPlayer player : level.players()) {
+			if (player == null || player.connection == null || !isInsideFootprint(outerGeometry, player.blockPosition())) {
+				continue;
+			}
+			player.connection.send(new ClientboundStopSoundPacket(WORLD_REVEAL_EARTHQUAKE_SOUND_ID, SoundSource.AMBIENT));
+			player.connection.send(
+					new ClientboundSoundPacket(
+							WORLD_REVEAL_EARTHQUAKE_SOUND,
+							SoundSource.AMBIENT,
+							x,
+							y,
+							z,
+							WORLD_REVEAL_EARTHQUAKE_VOLUME,
+							1.0F,
+							level.random.nextLong()
+					)
+			);
+		}
+	}
+
+	private static void stopWorldRevealEarthquakeSound(ServerLevel level) {
+		if (level == null) {
+			return;
+		}
+		for (ServerPlayer player : level.players()) {
+			if (player == null || player.connection == null) {
+				continue;
+			}
+			player.connection.send(new ClientboundStopSoundPacket(WORLD_REVEAL_EARTHQUAKE_SOUND_ID, SoundSource.AMBIENT));
+		}
+	}
+
+	private static boolean isProtectedDuringVisibleReveal(ServerLevel level, BlockPos pos) {
+		if (level == null || pos == null || serverAnchor == null) {
+			return false;
+		}
+		BoxGeometry outerGeometry = computeOuterBoxGeometry(resolveServerAnchor(level));
+		for (ServerPlayer player : level.players()) {
+			if (player == null || !isInsideFootprint(outerGeometry, player.blockPosition())) {
+				continue;
+			}
+			BlockPos playerPos = player.blockPosition();
+			if (Math.abs(pos.getX() - playerPos.getX()) <= WORLD_REVEAL_VISIBLE_PROTECTION_RADIUS
+					&& Math.abs(pos.getZ() - playerPos.getZ()) <= WORLD_REVEAL_VISIBLE_PROTECTION_RADIUS
+					&& pos.getY() >= playerPos.getY() - 1
+					&& pos.getY() <= playerPos.getY() + WORLD_REVEAL_VISIBLE_PROTECTION_HEIGHT) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static void beginWorldRevealBlackoutFade(MinecraftServer server, ServerLevel level, long nowTick) {
+		if (server == null || level == null || worldRevealPhase == WorldRevealPhase.BLACKOUT_FADE
+				|| worldRevealPhase == WorldRevealPhase.RELOCATE
+				|| worldRevealPhase == WorldRevealPhase.SETTLE) {
+			return;
+		}
+		stopWorldRevealEarthquakeSound(level);
+		worldRevealEarthquakeSoundStarted = false;
+		worldRevealPhase = WorldRevealPhase.BLACKOUT_FADE;
+		worldRevealPhaseStartTick = nowTick;
+		worldRevealMusicEndTick = Long.MIN_VALUE;
+		worldRevealDarknessClearTick = nowTick + 80L;
+		clearStartupWorldgenDisplay(level);
+		long initialDarknessTicks = 20L * 6L;
+		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			if (player != null && player.level() == level) {
+				applyWorldRevealDarkness(player, initialDarknessTicks);
+			}
+		}
+		stateDirty = true;
+	}
+
+	private static void tickWorldRevealBlackoutFade(MinecraftServer server, ServerLevel level, long nowTick) {
+		if (server == null || level == null) {
+			return;
+		}
+		if (worldRevealMusicEndTick == Long.MIN_VALUE) {
+			long musicDurationTicks = ServerStabilitySystem.playFeedMusicForStartup(level, resolveServerAnchor(level));
+			worldRevealMusicEndTick = nowTick + Math.max(1L, musicDurationTicks);
+		}
+		worldRevealPhase = WorldRevealPhase.RELOCATE;
+		worldRevealPhaseStartTick = nowTick;
+		refreshWorldRevealTargets(level);
+		stateDirty = true;
+	}
+
+	private static long resolveWorldRevealDarknessBlendInTicks() {
+		int blendInTicks = MobEffects.DARKNESS.value().getBlendInDurationTicks();
+		return Math.max(1L, blendInTicks > 0 ? blendInTicks : WORLD_REVEAL_DARKNESS_ONSET_TICKS);
+	}
+
+	private static void applyWorldRevealDarkness(ServerPlayer player) {
+		applyWorldRevealDarkness(player, 20L * 6L);
+	}
+
+	private static void applyWorldRevealDarkness(ServerPlayer player, long durationTicks) {
+		if (player == null) {
+			return;
+		}
+		int duration = (int) Math.max(80L, durationTicks);
+		player.addEffect(new MobEffectInstance(MobEffects.DARKNESS, duration, 0, false, false, true));
+	}
+
+	private static void tickWorldRevealDarknessRelease(ServerLevel level, long nowTick) {
+		if (level == null || worldRevealDarknessClearTick == Long.MIN_VALUE || nowTick < worldRevealDarknessClearTick) {
+			return;
+		}
+		for (ServerPlayer player : level.players()) {
+			if (player != null) {
+				player.removeEffect(MobEffects.DARKNESS);
+			}
+		}
+		worldRevealDarknessClearTick = Long.MIN_VALUE;
+	}
+
+	private static float computeWorldRevealTotalBurstWeight() {
+		float total = 0.0F;
+		for (WorldRevealBurst burst : WORLD_REVEAL_CRACK_BURSTS) {
+			if (burst != null) {
+				total += Math.max(0.0F, burst.growthWeight());
+			}
+		}
+		return total;
+	}
+
+	private static WorldRevealBurst burst(int offsetTicks, float growthWeight, int particleBudget, float impactStrength) {
+		return new WorldRevealBurst(offsetTicks, growthWeight, particleBudget, impactStrength);
+	}
+
 	private static void tickWorldRevealRelocate(MinecraftServer server, ServerLevel level, long nowTick) {
+		tickWorldRevealDarknessRelease(level, nowTick);
+		revealWorldRevealEpisodeBatch(level, 8, false);
+		revealWorldRevealDeferredBatch(level, WORLD_REVEAL_RELOCATE_DEFERRED_BATCH, false);
 		refreshWorldRevealTargets(level);
 		steerWorldRevealPlayers(server, level, true);
 		if (nowTick - worldRevealPhaseStartTick < WORLD_REVEAL_RELOCATE_MIN_TICKS) {
@@ -1950,21 +3342,29 @@ public final class SeasonStartSystem {
 	}
 
 	private static void beginWorldRevealSettlePhase(ServerLevel level, long nowTick) {
-		clearBarrierInteriorForWorldReveal(level, computeBarrierGeometry(resolveServerAnchor(level)));
-		materializeWorldRevealBarrierTerrain(level);
-		worldRevealBarriersPlaced = true;
+		revealWorldRevealDeferredBatch(level, WORLD_REVEAL_SETTLE_DEFERRED_BATCH, true);
+		worldRevealBarriersPlaced = false;
 		worldRevealPhase = WorldRevealPhase.SETTLE;
 		worldRevealPhaseStartTick = nowTick;
 		stateDirty = true;
 	}
 
 	private static void tickWorldRevealSettle(MinecraftServer server, ServerLevel level, long nowTick) {
+		tickWorldRevealDarknessRelease(level, nowTick);
+		revealWorldRevealEpisodeBatch(level, 96, true);
+		revealWorldRevealDeferredBatch(level, WORLD_REVEAL_SETTLE_DEFERRED_BATCH, true);
 		refreshWorldRevealTargets(level);
 		steerWorldRevealPlayers(server, level, false);
 		if (nowTick - worldRevealPhaseStartTick < WORLD_REVEAL_SETTLE_MIN_TICKS) {
 			return;
 		}
 		if (!areWorldRevealPlayersReady(server, level, false)) {
+			return;
+		}
+		if (worldRevealMusicEndTick != Long.MIN_VALUE && nowTick < worldRevealMusicEndTick) {
+			return;
+		}
+		if (!isWorldRevealCoverageComplete()) {
 			return;
 		}
 		completeWorldReveal(server, level);
@@ -2107,7 +3507,7 @@ public final class SeasonStartSystem {
 				for (int y = geometry.floorY - (BARRIER_FLOOR_DEPTH - 1); y <= geometry.roofY - 1; y++) {
 					BlockPos pos = new BlockPos(x, y, z);
 					if (level.getBlockState(pos).is(Blocks.BARRIER)) {
-						level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
+						setSceneBlockSilently(level, pos, Blocks.AIR.defaultBlockState());
 					}
 				}
 			}
@@ -2122,7 +3522,7 @@ public final class SeasonStartSystem {
 			if (pos == null || isServerStructureFootprint(pos) || level.getBlockState(pos).is(ModBlocks.SERVER)) {
 				continue;
 			}
-			level.setBlock(pos, Blocks.BARRIER.defaultBlockState(), 3);
+			setSceneBlockSilently(level, pos, Blocks.BARRIER.defaultBlockState());
 		}
 	}
 
@@ -2132,6 +3532,7 @@ public final class SeasonStartSystem {
 			return;
 		}
 		prepareWorldReveal(level);
+		materializeCompletedWorldRevealTerrain(level);
 		completeWorldReveal(server, level);
 	}
 
@@ -2139,7 +3540,8 @@ public final class SeasonStartSystem {
 		if (server == null || level == null) {
 			return;
 		}
-		restoreSceneTerrain(level);
+		clearStartupWorldgenDisplay(level);
+		restorePostStartMorning(level);
 		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
 			applyFreeState(player);
 			player.fallDistance = 0.0F;
@@ -2147,48 +3549,64 @@ public final class SeasonStartSystem {
 		worldRevealActive = false;
 		worldRevealBarriersPlaced = false;
 		worldRevealPhaseStartTick = Long.MIN_VALUE;
+		worldRevealCrackStartTick = Long.MIN_VALUE;
+		worldRevealMusicEndTick = Long.MIN_VALUE;
+		worldRevealDarknessClearTick = Long.MIN_VALUE;
+		worldRevealVisibleEpisodeCursor = 0;
+		worldRevealBurstCursor = 0;
+		worldRevealBurstWeightProgress = 0.0F;
+		worldRevealEarthquakeSoundStarted = false;
 		worldRevealPhase = WorldRevealPhase.NONE;
 		completed = true;
 		shellDissolving = false;
 		scenePrepared = false;
+		stopWorldRevealEarthquakeSound(level);
 		PLAYER_STATES.clear();
 		SHARED_BITCOIN_POSITIONS.clear();
 		WORLD_REVEAL_TERRAIN.clear();
 		WORLD_REVEAL_BARRIER_COLLISION.clear();
+		WORLD_REVEAL_EPISODES.clear();
 		WORLD_REVEAL_SURFACE_Y.clear();
+		WORLD_REVEAL_TARGET_STATES.clear();
 		WORLD_REVEAL_SAFE_TARGETS.clear();
+		WORLD_REVEAL_REQUIRED_POSITIONS.clear();
+		WORLD_REVEAL_DEFERRED_POSITIONS.clear();
+		WORLD_REVEAL_REVEALED_POSITIONS.clear();
 		clearSharedLaunchBossBar();
 		restoreSeasonStartDifficulty(server);
 		stateDirty = true;
 	}
 
-	private static void restoreSceneTerrain(ServerLevel level) {
+	private static void materializeCompletedWorldRevealTerrain(ServerLevel level) {
 		BlockPos anchor = resolveServerAnchor(level);
 		if (level == null || anchor == null) {
 			return;
 		}
 		clearStartupWorldgenDisplay(level);
-		BoxGeometry outerGeometry = computeOuterBoxGeometry(anchor);
-		for (int x = outerGeometry.minX; x <= outerGeometry.maxX; x++) {
-			for (int y = outerGeometry.floorY; y <= outerGeometry.roofY; y++) {
-				for (int z = outerGeometry.minZ; z <= outerGeometry.maxZ; z++) {
-					BlockPos pos = new BlockPos(x, y, z);
-					if (isServerStructureFootprint(pos)) {
-						continue;
-					}
-					if (!level.getBlockState(pos).isAir()) {
-						level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
-					}
-				}
-			}
-		}
+		removeSceneShellNow(level);
 		for (TerrainPlacement placement : WORLD_REVEAL_TERRAIN) {
 			if (placement == null || placement.pos() == null || placement.state() == null || isServerStructureFootprint(placement.pos())) {
 				continue;
 			}
-			level.setBlock(placement.pos(), placement.state(), 3);
+			setSceneBlockSilently(level, placement.pos(), placement.state());
 		}
 		scenePrepared = false;
+	}
+
+	private static void restorePostStartMorning(ServerLevel level) {
+		if (level == null) {
+			return;
+		}
+		long currentDayTime = Math.max(0L, level.getDayTime());
+		long dayBase = (currentDayTime / 24000L) * 24000L;
+		long morning = dayBase + WORLD_REVEAL_POST_START_MORNING_TIME;
+		if (currentDayTime >= morning) {
+			morning += 24000L;
+		}
+		level.setDayTime(morning);
+		level.setWeatherParameters(12000, 0, false, false);
+		level.setRainLevel(0.0F);
+		level.setThunderLevel(0.0F);
 	}
 
 	private static void ensureSceneBuilt(ServerLevel level) {
@@ -2211,14 +3629,14 @@ public final class SeasonStartSystem {
 		for (int x = geometry.minX; x <= geometry.maxX; x++) {
 			for (int z = geometry.minZ; z <= geometry.maxZ; z++) {
 				BlockPos floorPos = new BlockPos(x, geometry.floorY, z);
-				level.setBlock(floorPos, Blocks.BLACK_CONCRETE.defaultBlockState(), 3);
+				setSceneBlockSilently(level, floorPos, Blocks.BLACK_CONCRETE.defaultBlockState());
 				for (int y = geometry.floorY + 1; y <= geometry.roofY - 1; y++) {
 					BlockPos clearPos = new BlockPos(x, y, z);
 					if (isServerStructureFootprint(clearPos)) {
 						continue;
 					}
 					if (!level.getBlockState(clearPos).isAir()) {
-						level.setBlock(clearPos, Blocks.AIR.defaultBlockState(), 3);
+						setSceneBlockSilently(level, clearPos, Blocks.AIR.defaultBlockState());
 					}
 				}
 			}
@@ -2228,11 +3646,11 @@ public final class SeasonStartSystem {
 	private static void buildSceneShell(ServerLevel level) {
 		BoxGeometry outerGeometry = computeOuterBoxGeometry(resolveServerAnchor(level));
 		for (BlockPos pos : collectBlackShellBlocks(outerGeometry)) {
-			level.setBlock(pos, Blocks.BLACK_CONCRETE.defaultBlockState(), 3);
+			setSceneBlockSilently(level, pos, Blocks.BLACK_CONCRETE.defaultBlockState());
 		}
 		BoxGeometry barrierGeometry = computeBarrierGeometry(resolveServerAnchor(level));
 		for (BlockPos pos : collectBarrierShellBlocks(barrierGeometry)) {
-			level.setBlock(pos, Blocks.BARRIER.defaultBlockState(), 3);
+			setSceneBlockSilently(level, pos, Blocks.BARRIER.defaultBlockState());
 		}
 	}
 
@@ -2243,7 +3661,7 @@ public final class SeasonStartSystem {
 		clearStartupWorldgenDisplay(level);
 		for (BlockPos pos : collectSceneShellBlocks(serverAnchor)) {
 			if (level.getBlockState(pos).is(Blocks.BLACK_CONCRETE) || level.getBlockState(pos).is(Blocks.BARRIER)) {
-				level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
+				setSceneBlockSilently(level, pos, Blocks.AIR.defaultBlockState());
 			}
 		}
 		scenePrepared = false;
@@ -2882,6 +4300,7 @@ public final class SeasonStartSystem {
 		}
 		ServerAbsoluteInvisibilitySystem.deactivate(player);
 		player.removeEffect(MobEffects.BLINDNESS);
+		player.removeEffect(MobEffects.DARKNESS);
 		player.removeEffect(MobEffects.INVISIBILITY);
 		player.setSilent(false);
 		player.setGameMode(GameType.SURVIVAL);
@@ -3102,6 +4521,58 @@ public final class SeasonStartSystem {
 		return best;
 	}
 
+	private static BlockPos discoverExistingServerAnchor(ServerLevel level, BlockPos primaryAnchor, BlockPos bootstrapAnchor) {
+		if (level == null) {
+			return null;
+		}
+		BlockPos discovered = discoverLiveServerAnchor(level);
+		if (discovered != null) {
+			return discovered.immutable();
+		}
+		BlockPos around = primaryAnchor != null ? primaryAnchor : bootstrapAnchor;
+		discovered = discoverServerAnchorNearSurface(level, around, EXISTING_SERVER_SCAN_RADIUS);
+		if (discovered != null) {
+			return discovered.immutable();
+		}
+		if (bootstrapAnchor != null && (around == null || !bootstrapAnchor.equals(around))) {
+			discovered = discoverServerAnchorNearSurface(level, bootstrapAnchor, EXISTING_SERVER_SCAN_RADIUS);
+			if (discovered != null) {
+				return discovered.immutable();
+			}
+		}
+		return null;
+	}
+
+	private static BlockPos discoverServerAnchorNearSurface(ServerLevel level, BlockPos center, int radius) {
+		if (level == null || center == null || radius < 0) {
+			return null;
+		}
+		BlockPos best = null;
+		double bestDistance = Double.MAX_VALUE;
+		for (int dx = -radius; dx <= radius; dx++) {
+			for (int dz = -radius; dz <= radius; dz++) {
+				int x = center.getX() + dx;
+				int z = center.getZ() + dz;
+				int surfaceTop = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z);
+				int minY = Math.max(level.getMinY(), surfaceTop - EXISTING_SERVER_SCAN_VERTICAL_MARGIN);
+				int maxY = Math.min(level.getMaxY() - 1, surfaceTop + EXISTING_SERVER_SCAN_VERTICAL_MARGIN);
+				for (int y = maxY; y >= minY; y--) {
+					BlockPos pos = new BlockPos(x, y, z);
+					if (!level.getBlockState(pos).is(ModBlocks.SERVER)) {
+						continue;
+					}
+					double distance = pos.distSqr(center);
+					if (best == null || distance < bestDistance) {
+						best = pos.immutable();
+						bestDistance = distance;
+					}
+					break;
+				}
+			}
+		}
+		return best;
+	}
+
 	private static void setDefaultSpawn(ServerLevel level) {
 		BlockPos anchor = resolveServerAnchor(level);
 		if (level == null || anchor == null) {
@@ -3218,17 +4689,29 @@ public final class SeasonStartSystem {
 		lastSharedLaunchProgressTick = Long.MIN_VALUE;
 		pendingSharedFinishTick = Long.MIN_VALUE;
 		worldRevealPhaseStartTick = Long.MIN_VALUE;
+		worldRevealCrackStartTick = Long.MIN_VALUE;
+		worldRevealMusicEndTick = Long.MIN_VALUE;
+		worldRevealDarknessClearTick = Long.MIN_VALUE;
 		sharedLaunchCollectedBitcoins = 0;
 		sharedLaunchRequiredBitcoins = 0;
 		sharedLaunchMilestoneCursor = 0;
 		sharedLaunchIntroTriggered = false;
 		startupWorldgenFrameIndex = Integer.MIN_VALUE;
+		worldRevealVisibleEpisodeCursor = 0;
+		worldRevealBurstCursor = 0;
+		worldRevealBurstWeightProgress = 0.0F;
+		worldRevealEarthquakeSoundStarted = false;
 		worldRevealPhase = WorldRevealPhase.NONE;
 		SHELL_DISSOLVE_ORDER.clear();
 		WORLD_REVEAL_TERRAIN.clear();
 		WORLD_REVEAL_BARRIER_COLLISION.clear();
+		WORLD_REVEAL_EPISODES.clear();
 		WORLD_REVEAL_SURFACE_Y.clear();
+		WORLD_REVEAL_TARGET_STATES.clear();
 		WORLD_REVEAL_SAFE_TARGETS.clear();
+		WORLD_REVEAL_REQUIRED_POSITIONS.clear();
+		WORLD_REVEAL_DEFERRED_POSITIONS.clear();
+		WORLD_REVEAL_REVEALED_POSITIONS.clear();
 		if (!Files.exists(path)) {
 			return;
 		}
@@ -3546,6 +5029,13 @@ public final class SeasonStartSystem {
 		return pos == null ? Vec3.ZERO : new Vec3(pos.getX() + 0.5D, pos.getY() + 0.5D, pos.getZ() + 0.5D);
 	}
 
+	private static void setSceneBlockSilently(ServerLevel level, BlockPos pos, BlockState state) {
+		if (level == null || pos == null || state == null) {
+			return;
+		}
+		level.setBlock(pos, state, SCENE_BLOCK_SET_FLAGS);
+	}
+
 	private static boolean isLookingAtIntroOre(ServerPlayer player, SlotDefinition slot) {
 		if (player == null || slot == null) {
 			return false;
@@ -3664,6 +5154,18 @@ public final class SeasonStartSystem {
 	private record ServerStructureBounds(double minX, double maxX, double minZ, double maxZ) {
 	}
 
+	private record WorldRevealSeed(Vec3 point, int round, double crackRadius, double terrainRadius) {
+	}
+
+	private record WorldRevealEpisode(List<BlockPos> revealPositions, List<Vec3> crackPoints) {
+	}
+
+	private record WorldRevealFaceConstraint(Direction.Axis axis, double value) {
+	}
+
+	private record WorldRevealBurst(int offsetTicks, float growthWeight, int particleBudget, float impactStrength) {
+	}
+
 	private enum TurnHintDirection {
 		NONE,
 		LEFT,
@@ -3672,6 +5174,8 @@ public final class SeasonStartSystem {
 
 	private enum WorldRevealPhase {
 		NONE,
+		CRACKING,
+		BLACKOUT_FADE,
 		RELOCATE,
 		SETTLE
 	}
