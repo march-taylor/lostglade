@@ -130,6 +130,48 @@ public final class ServerStructureBreakSystem {
 		return parseAnchorTag(entity);
 	}
 
+	public static Display.ItemDisplay resolveSingleStructureDisplay(ServerLevel level, BlockPos anchor, Direction.Axis axis) {
+		if (level == null || anchor == null || axis == null) {
+			return null;
+		}
+		AABB searchBox = new AABB(anchor).inflate(8.0D, 6.0D, 8.0D);
+		double expectedX = anchor.getX() + 0.5D;
+		double expectedY = anchor.getY() + 1.5D;
+		double expectedZ = anchor.getZ() + 0.5D;
+		Display.ItemDisplay keeper = null;
+		List<Display.ItemDisplay> displays = level.getEntities(
+				EntityType.ITEM_DISPLAY,
+				searchBox,
+				display -> display.getTags().contains(DISPLAY_ROOT_TAG)
+		);
+		for (Display.ItemDisplay itemDisplay : displays) {
+			ItemDisplayHitboxHelper.clear(itemDisplay);
+			Optional<BlockPos> taggedAnchor = parseAnchorTag(itemDisplay);
+			Optional<Direction.Axis> taggedAxis = parseAxisTag(itemDisplay);
+			boolean exactMatch = taggedAnchor.isPresent()
+					&& taggedAxis.isPresent()
+					&& taggedAnchor.get().equals(anchor)
+					&& taggedAxis.get() == axis;
+			boolean sameColumn = taggedAnchor.isPresent()
+					&& taggedAnchor.get().getX() == anchor.getX()
+					&& taggedAnchor.get().getZ() == anchor.getZ();
+			boolean orphanedNearby = taggedAnchor.isEmpty()
+					&& itemDisplay.distanceToSqr(expectedX, expectedY, expectedZ) <= 16.0D;
+			if (exactMatch) {
+				if (keeper == null) {
+					keeper = itemDisplay;
+				} else {
+					itemDisplay.discard();
+				}
+				continue;
+			}
+			if (sameColumn || orphanedNearby) {
+				itemDisplay.discard();
+			}
+		}
+		return keeper;
+	}
+
 	public static boolean isInternalStructureRemoval(ServerLevel level, BlockPos pos) {
 		return INTERNAL_REMOVAL_POSITIONS.contains(new GuardedBlockPos(level.dimension(), pos.immutable()));
 	}
@@ -141,6 +183,7 @@ public final class ServerStructureBreakSystem {
 		List<BlockPos> positions = getStructurePositions(anchor, axis);
 		removeStructureDisplays(level, anchor, axis);
 		ServerStabilitySystem.onServerStructureRemoved(level, anchor);
+		SeasonStartSystem.onServerStructureRemoved(level, anchor);
 		markInternalRemoval(level, positions, true);
 		try {
 			for (BlockPos pos : positions) {
@@ -245,6 +288,7 @@ public final class ServerStructureBreakSystem {
 
 	private static void destroyStructureAndDropCenter(ServerLevel level, BlockPos anchor, List<BlockPos> positions) {
 		ServerStabilitySystem.onServerStructureRemoved(level, anchor);
+		SeasonStartSystem.onServerStructureRemoved(level, anchor);
 		markInternalRemoval(level, positions, true);
 		try {
 			for (BlockPos pos : positions) {

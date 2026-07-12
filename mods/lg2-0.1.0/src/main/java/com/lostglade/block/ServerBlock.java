@@ -1,6 +1,7 @@
 package com.lostglade.block;
 
 import com.lostglade.util.ItemDisplayHitboxHelper;
+import com.lostglade.server.SeasonStartSystem;
 import com.lostglade.server.ServerStructureBreakSystem;
 import com.lostglade.server.ServerStabilitySystem;
 import com.lostglade.server.ServerUpgradeUiSystem;
@@ -92,16 +93,22 @@ public class ServerBlock extends SimplePolymerBlock {
 		List<BlockPos> structurePositions = ServerStructureBreakSystem.getStructurePositions(pos, axis);
 
 		for (BlockPos targetPos : structurePositions) {
-			if (targetPos.equals(pos)) {
-				continue;
-			}
 			level.setBlock(targetPos, ModBlocks.SERVER.defaultBlockState(), STRUCTURE_PLACE_FLAGS);
 		}
 
 		ServerStabilitySystem.onServerStructurePlaced(level, pos);
+		SeasonStartSystem.onServerStructurePlaced(level, pos, axis);
 		spawnServerDisplay(level, pos, safeForward, axis);
 		level.playSound(null, pos, SoundEvents.UI_TOAST_CHALLENGE_COMPLETE, SoundSource.BLOCKS, 1.0F, 1.0F);
 		spawnStructureParticles(level, structurePositions);
+	}
+
+	public static void ensureServerStructureDisplay(ServerLevel level, BlockPos pos, Direction.Axis axis) {
+		if (level == null || pos == null || axis == null) {
+			return;
+		}
+		Direction forward = axis == Direction.Axis.X ? Direction.EAST : Direction.NORTH;
+		spawnServerDisplay(level, pos, forward, axis);
 	}
 
 	private InteractionResult openServerMenu(Level level, Player player) {
@@ -118,7 +125,12 @@ public class ServerBlock extends SimplePolymerBlock {
 	}
 
 	private static void spawnServerDisplay(ServerLevel level, BlockPos origin, Direction forward, Direction.Axis axis) {
-		Display.ItemDisplay display = EntityType.ITEM_DISPLAY.create(level, EntitySpawnReason.TRIGGERED);
+		Display.ItemDisplay display = ServerStructureBreakSystem.resolveSingleStructureDisplay(level, origin, axis);
+		boolean created = false;
+		if (display == null) {
+			display = EntityType.ITEM_DISPLAY.create(level, EntitySpawnReason.TRIGGERED);
+			created = true;
+		}
 		if (display == null) {
 			return;
 		}
@@ -127,10 +139,14 @@ public class ServerBlock extends SimplePolymerBlock {
 		display.setYRot(Mth.wrapDegrees(forward.toYRot()));
 		display.setXRot(0.0F);
 		display.getSlot(0).set(new ItemStack(ModBlocks.SERVER_ITEM));
-		ServerStructureBreakSystem.applyStructureDisplayTags(display, origin, axis);
+		if (created) {
+			ServerStructureBreakSystem.applyStructureDisplayTags(display, origin, axis);
+		}
 		applyFixedItemDisplayTransform(display, level);
 		ItemDisplayHitboxHelper.clear(display);
-		level.addFreshEntity(display);
+		if (created) {
+			level.addFreshEntity(display);
+		}
 	}
 
 	private static void spawnStructureParticles(ServerLevel level, List<BlockPos> structurePositions) {

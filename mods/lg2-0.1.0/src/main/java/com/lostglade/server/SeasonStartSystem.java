@@ -60,11 +60,13 @@ import net.minecraft.world.item.Items;
 import net.minecraft.world.Difficulty;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.NoiseColumn;
+import net.minecraft.world.level.block.FallingBlock;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.ChunkGenerator;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.levelgen.RandomState;
+import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.level.storage.LevelResource;
 import net.minecraft.world.level.storage.LevelData;
 import net.minecraft.world.level.GameType;
@@ -313,15 +315,17 @@ public final class SeasonStartSystem {
 	private static final float STARTUP_WORLDGEN_VIEW_RANGE = 96.0F;
 	private static final float STARTUP_WORLDGEN_MARGIN_BLOCKS = 8.0F;
 	private static final float STARTUP_WORLDGEN_THICKNESS_SCALE = 0.25F;
-	private static final double STARTUP_WORLDGEN_ROOF_OFFSET = 0.02D;
+	private static final double STARTUP_WORLDGEN_Y_OFFSET_FROM_OUTER_FLOOR = 1.25D;
 	private static final int SCENE_BLOCK_SET_FLAGS = 2 | 16 | 32;
-	private static final int EXISTING_SERVER_SCAN_RADIUS = 192;
+	private static final int EXISTING_SERVER_SCAN_RADIUS = 48;
 	private static final int EXISTING_SERVER_SCAN_VERTICAL_MARGIN = 24;
 	private static final Brightness STARTUP_WORLDGEN_BRIGHTNESS = Brightness.FULL_BRIGHT;
 	private static final Identifier WORLD_REVEAL_EARTHQUAKE_SOUND_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "season_start_earthquake");
 	private static final Holder<SoundEvent> WORLD_REVEAL_EARTHQUAKE_SOUND = Holder.direct(SoundEvent.createVariableRangeEvent(WORLD_REVEAL_EARTHQUAKE_SOUND_ID));
 	private static final float WORLD_REVEAL_EARTHQUAKE_VOLUME = 7.5F;
 	private static final long WORLD_REVEAL_CRACKING_DURATION_TICKS = 20L * 30L;
+	private static final long WORLD_REVEAL_BLACKOUT_DURATION_TICKS = 80L;
+	private static final long WORLD_REVEAL_BLACKOUT_REPOSITION_TICKS = 40L;
 	private static final long WORLD_REVEAL_DARKNESS_ONSET_TICKS = 60L;
 	private static final long WORLD_REVEAL_CRACK_START_BUFFER_TICKS = 4L;
 	private static final long WORLD_REVEAL_DARKNESS_LEAD_OUT_TICKS = 20L * 4L;
@@ -342,11 +346,6 @@ public final class SeasonStartSystem {
 	private static final DustParticleOptions WORLD_REVEAL_CRACK_EDGE_PARTICLE = new DustParticleOptions(0x2F3138, 0.78F);
 	private static final long WORLD_REVEAL_RELOCATE_MIN_TICKS = 20L;
 	private static final long WORLD_REVEAL_SETTLE_MIN_TICKS = 20L;
-	private static final double WORLD_REVEAL_HORIZONTAL_SPEED = 0.22D;
-	private static final double WORLD_REVEAL_VERTICAL_SPEED = 0.30D;
-	private static final double WORLD_REVEAL_READY_DISTANCE_SQR = 0.65D * 0.65D;
-	private static final double WORLD_REVEAL_READY_VERTICAL_DELTA = 0.72D;
-	private static final double WORLD_REVEAL_PREP_TARGET_OFFSET = 1.35D;
 	private static final double WORLD_REVEAL_FINAL_TARGET_OFFSET = 1.02D;
 	// Synced to the densest short-impact section of `Downloads/zemletryasenie-2.mp3` (7.1s-37.1s).
 	private static final WorldRevealBurst[] WORLD_REVEAL_CRACK_BURSTS = {
@@ -453,10 +452,12 @@ public final class SeasonStartSystem {
 	private static int worldRevealBurstCursor = 0;
 	private static float worldRevealBurstWeightProgress = 0.0F;
 	private static boolean worldRevealEarthquakeSoundStarted = false;
+	private static boolean worldRevealDarknessRepositioned = false;
 	private static WorldRevealPhase worldRevealPhase = WorldRevealPhase.NONE;
 	private static ServerBossEvent sharedLaunchBossBar = null;
 	private static Difficulty difficultyBeforeSeasonStart = null;
 	private static BlockPos serverAnchor = null;
+	private static Direction.Axis serverStructureAxis = Direction.Axis.Z;
 
 	private SeasonStartSystem() {
 	}
@@ -488,10 +489,12 @@ public final class SeasonStartSystem {
 		worldRevealBurstCursor = 0;
 		worldRevealBurstWeightProgress = 0.0F;
 		worldRevealEarthquakeSoundStarted = false;
+		worldRevealDarknessRepositioned = false;
 		worldRevealPhase = WorldRevealPhase.NONE;
 		sharedLaunchBossBar = null;
 		difficultyBeforeSeasonStart = null;
 		serverAnchor = null;
+		serverStructureAxis = Direction.Axis.Z;
 		PLAYER_STATES.clear();
 		SHELL_DISSOLVE_ORDER.clear();
 		WORLD_REVEAL_TERRAIN.clear();
@@ -692,6 +695,9 @@ public final class SeasonStartSystem {
 				refreshSharedLaunchBossBar(server);
 			}
 		}
+		if (serverAnchor != null && server.overworld() != null) {
+			ServerBlock.ensureServerStructureDisplay(server.overworld(), serverAnchor, serverStructureAxis);
+		}
 	}
 
 	private static void onServerStopping(MinecraftServer server) {
@@ -743,16 +749,6 @@ public final class SeasonStartSystem {
 			assignOrRestorePlayer(server, player, true);
 		} else if (worldRevealActive) {
 			applyFreeState(player);
-			if (worldRevealPhase == WorldRevealPhase.BLACKOUT_FADE
-					|| worldRevealPhase == WorldRevealPhase.RELOCATE
-					|| worldRevealPhase == WorldRevealPhase.SETTLE) {
-				long remainingDarknessTicks = worldRevealDarknessClearTick == Long.MIN_VALUE || player.level() == null
-						? 0L
-						: worldRevealDarknessClearTick - player.level().getGameTime();
-				if (remainingDarknessTicks > 0L) {
-					applyWorldRevealDarkness(player, Math.max(80L, remainingDarknessTicks + 20L));
-				}
-			}
 		} else if (shellDissolving) {
 			applyFreeState(player);
 		}
@@ -865,28 +861,32 @@ public final class SeasonStartSystem {
 		BlockPos bootstrapAnchor = resolveBootstrapAnchor(overworld);
 		if (anchor == null) {
 			anchor = bootstrapAnchor;
-			serverAnchor = anchor;
-			stateDirty = true;
+			rememberServerStructure(anchor, Direction.Axis.Z);
 		}
+		Direction.Axis anchorAxis = resolveKnownServerStructureAxis(overworld, anchor);
 		if (shouldRelocateBuriedBootstrapServer(anchor, bootstrapAnchor)
 				&& isServerStructurePresent(overworld, anchor)) {
-			ServerStructureBreakSystem.clearStructureSilently(overworld, anchor, Direction.Axis.Z);
+			ServerStructureBreakSystem.clearStructureSilently(overworld, anchor, anchorAxis == null ? Direction.Axis.Z : anchorAxis);
 			anchor = bootstrapAnchor;
-			serverAnchor = anchor.immutable();
-			stateDirty = true;
+			rememberServerStructure(anchor, Direction.Axis.Z);
+			anchorAxis = Direction.Axis.Z;
 		}
 		if (!isServerStructurePresent(overworld, anchor)) {
-			BlockPos existingAnchor = discoverExistingServerAnchor(overworld, anchor, bootstrapAnchor);
-			if (existingAnchor != null) {
-				anchor = existingAnchor.immutable();
-				serverAnchor = anchor;
-				stateDirty = true;
+			ResolvedServerStructure existingStructure = discoverExistingServerStructure(overworld, anchor, bootstrapAnchor);
+			if (existingStructure != null) {
+				anchor = existingStructure.anchor().immutable();
+				anchorAxis = existingStructure.axis();
+				rememberServerStructure(anchor, anchorAxis);
 			}
 		}
 		if (!isServerStructurePresent(overworld, anchor)) {
 			ServerBlock.placeServerStructure(overworld, anchor, Direction.NORTH);
-			stateDirty = true;
+			rememberServerStructure(anchor, Direction.Axis.Z);
+		} else if (anchorAxis != null) {
+			rememberServerStructure(anchor, anchorAxis);
 		}
+		reconcileStackedServerDuplicates(overworld);
+		ServerBlock.ensureServerStructureDisplay(overworld, anchor, anchorAxis == null ? serverStructureAxis : anchorAxis);
 		setDefaultSpawn(overworld);
 		if (!bootstrapComplete) {
 			bootstrapComplete = true;
@@ -984,6 +984,7 @@ public final class SeasonStartSystem {
 		worldRevealBurstCursor = 0;
 		worldRevealBurstWeightProgress = 0.0F;
 		worldRevealEarthquakeSoundStarted = false;
+		worldRevealDarknessRepositioned = false;
 		worldRevealPhase = WorldRevealPhase.NONE;
 		clearSharedLaunchBossBar();
 		if (difficultyBeforeSeasonStart == null && overworld != null) {
@@ -1034,6 +1035,7 @@ public final class SeasonStartSystem {
 		worldRevealBurstCursor = 0;
 		worldRevealBurstWeightProgress = 0.0F;
 		worldRevealEarthquakeSoundStarted = false;
+		worldRevealDarknessRepositioned = false;
 		worldRevealPhase = WorldRevealPhase.CRACKING;
 		clearSharedLaunchBossBar();
 		ServerLevel overworld = server.overworld();
@@ -1738,7 +1740,7 @@ public final class SeasonStartSystem {
 		if (serverAnchor == null) {
 			return null;
 		}
-		List<BlockPos> positions = ServerStructureBreakSystem.getStructurePositions(serverAnchor, Direction.Axis.Z);
+		List<BlockPos> positions = ServerStructureBreakSystem.getStructurePositions(serverAnchor, serverStructureAxis);
 		if (positions.isEmpty()) {
 			return null;
 		}
@@ -2990,7 +2992,7 @@ public final class SeasonStartSystem {
 			return;
 		}
 		if (WORLD_REVEAL_EPISODES.isEmpty()) {
-			beginWorldRevealBlackoutFade(server, level, nowTick);
+			finalizeWorldRevealCracking(server, level);
 			return;
 		}
 		if (worldRevealCrackStartTick == Long.MIN_VALUE) {
@@ -3005,6 +3007,7 @@ public final class SeasonStartSystem {
 			stateDirty = true;
 		}
 		long elapsedTicks = nowTick - worldRevealCrackStartTick;
+		maybeStartWorldRevealMusic(level, nowTick, elapsedTicks);
 		int visibleThreshold = resolveWorldRevealVisibleEpisodeThreshold();
 		while (worldRevealBurstCursor < WORLD_REVEAL_CRACK_BURSTS.length
 				&& elapsedTicks >= WORLD_REVEAL_CRACK_BURSTS[worldRevealBurstCursor].offsetTicks()) {
@@ -3034,8 +3037,30 @@ public final class SeasonStartSystem {
 			emitWorldRevealBurstParticles(level, Math.max(0, worldRevealVisibleEpisodeCursor - 2), worldRevealVisibleEpisodeCursor, 28, 1.0F);
 		}
 		if (elapsedTicks >= WORLD_REVEAL_CRACKING_DURATION_TICKS) {
-			beginWorldRevealBlackoutFade(server, level, nowTick);
+			finalizeWorldRevealCracking(server, level);
 		}
+	}
+
+	private static void maybeStartWorldRevealMusic(ServerLevel level, long nowTick, long elapsedTicks) {
+		if (level == null || worldRevealMusicEndTick != Long.MIN_VALUE) {
+			return;
+		}
+		long musicDurationTicks = ServerStabilitySystem.getStartupFeedMusicDurationTicks();
+		long startOffset = Math.max(0L, WORLD_REVEAL_CRACKING_DURATION_TICKS - musicDurationTicks);
+		if (elapsedTicks < startOffset) {
+			return;
+		}
+		long actualDurationTicks = ServerStabilitySystem.playFeedMusicForStartup(level, resolveServerAnchor(level));
+		worldRevealMusicEndTick = nowTick + Math.max(1L, actualDurationTicks);
+		stateDirty = true;
+	}
+
+	private static void finalizeWorldRevealCracking(MinecraftServer server, ServerLevel level) {
+		if (server == null || level == null) {
+			return;
+		}
+		materializeCompletedWorldRevealTerrain(level);
+		completeWorldReveal(server, level);
 	}
 
 	private static int resolveWorldRevealVisibleEpisodeThreshold() {
@@ -3255,10 +3280,11 @@ public final class SeasonStartSystem {
 		}
 		stopWorldRevealEarthquakeSound(level);
 		worldRevealEarthquakeSoundStarted = false;
+		worldRevealDarknessRepositioned = false;
 		worldRevealPhase = WorldRevealPhase.BLACKOUT_FADE;
 		worldRevealPhaseStartTick = nowTick;
 		worldRevealMusicEndTick = Long.MIN_VALUE;
-		worldRevealDarknessClearTick = nowTick + 80L;
+		worldRevealDarknessClearTick = nowTick + WORLD_REVEAL_BLACKOUT_DURATION_TICKS;
 		clearStartupWorldgenDisplay(level);
 		long initialDarknessTicks = 20L * 6L;
 		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
@@ -3273,14 +3299,19 @@ public final class SeasonStartSystem {
 		if (server == null || level == null) {
 			return;
 		}
-		if (worldRevealMusicEndTick == Long.MIN_VALUE) {
-			long musicDurationTicks = ServerStabilitySystem.playFeedMusicForStartup(level, resolveServerAnchor(level));
-			worldRevealMusicEndTick = nowTick + Math.max(1L, musicDurationTicks);
-		}
-		worldRevealPhase = WorldRevealPhase.RELOCATE;
-		worldRevealPhaseStartTick = nowTick;
+		tickWorldRevealDarknessRelease(level, nowTick);
+		revealWorldRevealEpisodeBatch(level, 18, false);
+		revealWorldRevealDeferredBatch(level, WORLD_REVEAL_RELOCATE_DEFERRED_BATCH, false);
 		refreshWorldRevealTargets(level);
-		stateDirty = true;
+		if (!worldRevealDarknessRepositioned && nowTick - worldRevealPhaseStartTick >= WORLD_REVEAL_BLACKOUT_REPOSITION_TICKS) {
+			teleportWorldRevealPlayersToSafeTargets(server, level);
+			worldRevealDarknessRepositioned = true;
+			stateDirty = true;
+		}
+		if (worldRevealDarknessClearTick != Long.MIN_VALUE) {
+			return;
+		}
+		beginWorldRevealSettlePhase(level, nowTick);
 	}
 
 	private static long resolveWorldRevealDarknessBlendInTicks() {
@@ -3327,21 +3358,17 @@ public final class SeasonStartSystem {
 	}
 
 	private static void tickWorldRevealRelocate(MinecraftServer server, ServerLevel level, long nowTick) {
-		tickWorldRevealDarknessRelease(level, nowTick);
-		revealWorldRevealEpisodeBatch(level, 8, false);
-		revealWorldRevealDeferredBatch(level, WORLD_REVEAL_RELOCATE_DEFERRED_BATCH, false);
-		refreshWorldRevealTargets(level);
-		steerWorldRevealPlayers(server, level, true);
-		if (nowTick - worldRevealPhaseStartTick < WORLD_REVEAL_RELOCATE_MIN_TICKS) {
-			return;
-		}
-		if (!areWorldRevealPlayersReady(server, level, true)) {
-			return;
-		}
 		beginWorldRevealSettlePhase(level, nowTick);
 	}
 
 	private static void beginWorldRevealSettlePhase(ServerLevel level, long nowTick) {
+		if (level == null) {
+			return;
+		}
+		if (worldRevealMusicEndTick == Long.MIN_VALUE) {
+			long musicDurationTicks = ServerStabilitySystem.playFeedMusicForStartup(level, resolveServerAnchor(level));
+			worldRevealMusicEndTick = nowTick + Math.max(1L, musicDurationTicks);
+		}
 		revealWorldRevealDeferredBatch(level, WORLD_REVEAL_SETTLE_DEFERRED_BATCH, true);
 		worldRevealBarriersPlaced = false;
 		worldRevealPhase = WorldRevealPhase.SETTLE;
@@ -3353,12 +3380,7 @@ public final class SeasonStartSystem {
 		tickWorldRevealDarknessRelease(level, nowTick);
 		revealWorldRevealEpisodeBatch(level, 96, true);
 		revealWorldRevealDeferredBatch(level, WORLD_REVEAL_SETTLE_DEFERRED_BATCH, true);
-		refreshWorldRevealTargets(level);
-		steerWorldRevealPlayers(server, level, false);
 		if (nowTick - worldRevealPhaseStartTick < WORLD_REVEAL_SETTLE_MIN_TICKS) {
-			return;
-		}
-		if (!areWorldRevealPlayersReady(server, level, false)) {
 			return;
 		}
 		if (worldRevealMusicEndTick != Long.MIN_VALUE && nowTick < worldRevealMusicEndTick) {
@@ -3368,6 +3390,26 @@ public final class SeasonStartSystem {
 			return;
 		}
 		completeWorldReveal(server, level);
+	}
+
+	private static void teleportWorldRevealPlayersToSafeTargets(MinecraftServer server, ServerLevel level) {
+		if (server == null || level == null || serverAnchor == null) {
+			return;
+		}
+		BoxGeometry outerGeometry = computeOuterBoxGeometry(resolveServerAnchor(level));
+		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			if (player == null || player.level() != level || !isInsideFootprint(outerGeometry, player.blockPosition())) {
+				continue;
+			}
+			Vec3 target = WORLD_REVEAL_SAFE_TARGETS.get(player.getUUID());
+			if (target == null) {
+				continue;
+			}
+			teleportPlayer(player, level, target, player.getYRot());
+			player.setDeltaMovement(Vec3.ZERO);
+			player.fallDistance = 0.0F;
+			player.hurtMarked = true;
+		}
 	}
 
 	private static void refreshWorldRevealTargets(ServerLevel level) {
@@ -3430,74 +3472,6 @@ public final class SeasonStartSystem {
 		return new Vec3(startX + 0.5D, barrierGeometry.floorY + WORLD_REVEAL_FINAL_TARGET_OFFSET, startZ + 0.5D);
 	}
 
-	private static void steerWorldRevealPlayers(MinecraftServer server, ServerLevel level, boolean relocatePhase) {
-		if (server == null || level == null || serverAnchor == null) {
-			return;
-		}
-		BoxGeometry outerGeometry = computeOuterBoxGeometry(resolveServerAnchor(level));
-		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-			if (player == null || player.level() != level || !isInsideFootprint(outerGeometry, player.blockPosition())) {
-				continue;
-			}
-			Vec3 finalTarget = WORLD_REVEAL_SAFE_TARGETS.get(player.getUUID());
-			if (finalTarget == null) {
-				continue;
-			}
-			Vec3 target = relocatePhase
-					? new Vec3(finalTarget.x, Math.max(finalTarget.y + (WORLD_REVEAL_PREP_TARGET_OFFSET - WORLD_REVEAL_FINAL_TARGET_OFFSET), player.getY()), finalTarget.z)
-					: finalTarget;
-			steerPlayerToWorldRevealTarget(player, target, relocatePhase);
-		}
-	}
-
-	private static void steerPlayerToWorldRevealTarget(ServerPlayer player, Vec3 target, boolean relocatePhase) {
-		if (player == null || target == null) {
-			return;
-		}
-		Vec3 delta = target.subtract(player.position());
-		Vec3 current = player.getDeltaMovement();
-		double pushX = Mth.clamp(delta.x * 0.18D, -WORLD_REVEAL_HORIZONTAL_SPEED, WORLD_REVEAL_HORIZONTAL_SPEED);
-		double pushZ = Mth.clamp(delta.z * 0.18D, -WORLD_REVEAL_HORIZONTAL_SPEED, WORLD_REVEAL_HORIZONTAL_SPEED);
-		double vertical;
-		if (relocatePhase && delta.y < 0.0D) {
-			vertical = Math.max(0.0D, current.y * 0.6D);
-		} else {
-			vertical = Math.abs(delta.y) < 0.04D ? 0.0D : Mth.clamp(delta.y * 0.22D, -WORLD_REVEAL_VERTICAL_SPEED, WORLD_REVEAL_VERTICAL_SPEED);
-		}
-		player.setDeltaMovement(current.x * 0.55D + pushX, vertical, current.z * 0.55D + pushZ);
-		player.hurtMarked = true;
-		player.fallDistance = 0.0F;
-		player.addEffect(new MobEffectInstance(MobEffects.SLOW_FALLING, 10, 0, false, false, false));
-	}
-
-	private static boolean areWorldRevealPlayersReady(MinecraftServer server, ServerLevel level, boolean relocatePhase) {
-		if (server == null || level == null || serverAnchor == null) {
-			return true;
-		}
-		BoxGeometry outerGeometry = computeOuterBoxGeometry(resolveServerAnchor(level));
-		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-			if (player == null || player.level() != level || !isInsideFootprint(outerGeometry, player.blockPosition())) {
-				continue;
-			}
-			Vec3 finalTarget = WORLD_REVEAL_SAFE_TARGETS.get(player.getUUID());
-			if (finalTarget == null) {
-				continue;
-			}
-			if (relocatePhase) {
-				double horizontalDistanceSqr = horizontalDistanceSqr(player.position(), finalTarget);
-				if (horizontalDistanceSqr > WORLD_REVEAL_READY_DISTANCE_SQR || player.getY() + 0.05D < finalTarget.y + 0.20D) {
-					return false;
-				}
-				continue;
-			}
-			double distanceSqr = player.position().distanceToSqr(finalTarget);
-			if (distanceSqr > WORLD_REVEAL_READY_DISTANCE_SQR || Math.abs(player.getY() - finalTarget.y) > WORLD_REVEAL_READY_VERTICAL_DELTA) {
-				return false;
-			}
-		}
-		return true;
-	}
-
 	private static void clearBarrierInteriorForWorldReveal(ServerLevel level, BoxGeometry geometry) {
 		if (level == null || geometry == null) {
 			return;
@@ -3543,8 +3517,12 @@ public final class SeasonStartSystem {
 		clearStartupWorldgenDisplay(level);
 		restorePostStartMorning(level);
 		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			clearPostStartPlayerInventory(player);
 			applyFreeState(player);
 			player.fallDistance = 0.0F;
+		}
+		if (serverAnchor != null) {
+			ServerBlock.ensureServerStructureDisplay(level, serverAnchor, serverStructureAxis);
 		}
 		worldRevealActive = false;
 		worldRevealBarriersPlaced = false;
@@ -3556,6 +3534,7 @@ public final class SeasonStartSystem {
 		worldRevealBurstCursor = 0;
 		worldRevealBurstWeightProgress = 0.0F;
 		worldRevealEarthquakeSoundStarted = false;
+		worldRevealDarknessRepositioned = false;
 		worldRevealPhase = WorldRevealPhase.NONE;
 		completed = true;
 		shellDissolving = false;
@@ -3590,7 +3569,44 @@ public final class SeasonStartSystem {
 			}
 			setSceneBlockSilently(level, placement.pos(), placement.state());
 		}
+		refreshWorldRevealBoundaryPhysics(level, anchor);
+		ServerBlock.ensureServerStructureDisplay(level, anchor, serverStructureAxis);
 		scenePrepared = false;
+	}
+
+	private static void refreshWorldRevealBoundaryPhysics(ServerLevel level, BlockPos anchor) {
+		if (level == null || anchor == null) {
+			return;
+		}
+		BoxGeometry outerGeometry = computeOuterBoxGeometry(anchor);
+		Set<BlockPos> refreshPositions = new LinkedHashSet<>();
+		for (BlockPos pos : collectBlackShellBlocks(outerGeometry)) {
+			if (pos == null) {
+				continue;
+			}
+			refreshPositions.add(pos.immutable());
+			for (Direction direction : Direction.values()) {
+				refreshPositions.add(pos.relative(direction).immutable());
+			}
+		}
+		for (BlockPos pos : refreshPositions) {
+			refreshWorldRevealBoundaryState(level, pos);
+		}
+	}
+
+	private static void refreshWorldRevealBoundaryState(ServerLevel level, BlockPos pos) {
+		if (level == null || pos == null) {
+			return;
+		}
+		BlockState state = level.getBlockState(pos);
+		level.updateNeighborsAt(pos, state.getBlock());
+		FluidState fluidState = state.getFluidState();
+		if (!fluidState.isEmpty()) {
+			level.scheduleTick(pos, fluidState.getType(), fluidState.getType().getTickDelay(level));
+		}
+		if (state.getBlock() instanceof FallingBlock) {
+			level.scheduleTick(pos, state.getBlock(), 2);
+		}
 	}
 
 	private static void restorePostStartMorning(ServerLevel level) {
@@ -3614,6 +3630,7 @@ public final class SeasonStartSystem {
 			return;
 		}
 		ensureSceneSnapshot(level);
+		clearStaleSceneShellVolume(level);
 		preparePlatformFloor(level);
 		buildSceneShell(level);
 		ensureStartupWorldgenDisplay(level);
@@ -3621,7 +3638,35 @@ public final class SeasonStartSystem {
 		if (!isServerStructurePresent(level, serverAnchor)) {
 			ServerBlock.placeServerStructure(level, serverAnchor, Direction.NORTH);
 		}
+		ServerBlock.ensureServerStructureDisplay(level, serverAnchor, serverStructureAxis);
 		scenePrepared = true;
+	}
+
+	private static void clearStaleSceneShellVolume(ServerLevel level) {
+		if (level == null || serverAnchor == null) {
+			return;
+		}
+		BoxGeometry outerGeometry = computeOuterBoxGeometry(serverAnchor);
+		BoxGeometry barrierGeometry = computeBarrierGeometry(serverAnchor);
+		int minX = Math.min(outerGeometry.minX, barrierGeometry.minX) - 1;
+		int maxX = Math.max(outerGeometry.maxX, barrierGeometry.maxX) + 1;
+		int minZ = Math.min(outerGeometry.minZ, barrierGeometry.minZ) - 1;
+		int maxZ = Math.max(outerGeometry.maxZ, barrierGeometry.maxZ) + 1;
+		int legacyFloorY = (serverAnchor.getY() - 1) - BARRIER_FLOOR_DEPTH;
+		int legacyRoofY = legacyFloorY + (Math.max(get().boxHalfWidth, get().boxHalfDepth) * 2 + 1) - 1;
+		int minY = Math.min(outerGeometry.floorY, Math.min(barrierGeometry.floorY - (BARRIER_FLOOR_DEPTH - 1), legacyFloorY));
+		int maxY = Math.max(outerGeometry.roofY, Math.max(barrierGeometry.roofY, legacyRoofY)) + 1;
+		for (int x = minX; x <= maxX; x++) {
+			for (int z = minZ; z <= maxZ; z++) {
+				for (int y = minY; y <= maxY; y++) {
+					BlockPos pos = new BlockPos(x, y, z);
+					BlockState state = level.getBlockState(pos);
+					if (state.is(Blocks.BLACK_CONCRETE) || state.is(Blocks.BARRIER)) {
+						setSceneBlockSilently(level, pos, Blocks.AIR.defaultBlockState());
+					}
+				}
+			}
+		}
 	}
 
 	private static void preparePlatformFloor(ServerLevel level) {
@@ -3651,6 +3696,24 @@ public final class SeasonStartSystem {
 		BoxGeometry barrierGeometry = computeBarrierGeometry(resolveServerAnchor(level));
 		for (BlockPos pos : collectBarrierShellBlocks(barrierGeometry)) {
 			setSceneBlockSilently(level, pos, Blocks.BARRIER.defaultBlockState());
+		}
+		sealSceneShellCaps(level, outerGeometry, barrierGeometry);
+	}
+
+	private static void sealSceneShellCaps(ServerLevel level, BoxGeometry outerGeometry, BoxGeometry barrierGeometry) {
+		if (level == null || outerGeometry == null || barrierGeometry == null) {
+			return;
+		}
+		fillHorizontalSlice(level, outerGeometry.minX, outerGeometry.maxX, outerGeometry.minZ, outerGeometry.maxZ, outerGeometry.floorY, Blocks.BLACK_CONCRETE.defaultBlockState());
+		fillHorizontalSlice(level, outerGeometry.minX, outerGeometry.maxX, outerGeometry.minZ, outerGeometry.maxZ, outerGeometry.roofY, Blocks.BLACK_CONCRETE.defaultBlockState());
+		fillHorizontalSlice(level, barrierGeometry.minX, barrierGeometry.maxX, barrierGeometry.minZ, barrierGeometry.maxZ, barrierGeometry.roofY, Blocks.BARRIER.defaultBlockState());
+	}
+
+	private static void fillHorizontalSlice(ServerLevel level, int minX, int maxX, int minZ, int maxZ, int y, BlockState state) {
+		for (int x = minX; x <= maxX; x++) {
+			for (int z = minZ; z <= maxZ; z++) {
+				setSceneBlockSilently(level, new BlockPos(x, y, z), state);
+			}
 		}
 	}
 
@@ -3751,7 +3814,7 @@ public final class SeasonStartSystem {
 		if (serverAnchor == null || pos == null) {
 			return false;
 		}
-		return ServerStructureBreakSystem.getStructurePositions(serverAnchor, Direction.Axis.Z).contains(pos);
+		return ServerStructureBreakSystem.getStructurePositions(serverAnchor, serverStructureAxis).contains(pos);
 	}
 
 	private static void placeIntroOre(ServerLevel level, SlotDefinition slot) {
@@ -3934,7 +3997,7 @@ public final class SeasonStartSystem {
 				16.0F,
 				Math.min(outerGeometry.maxX - outerGeometry.minX, outerGeometry.maxZ - outerGeometry.minZ) - STARTUP_WORLDGEN_MARGIN_BLOCKS
 		);
-		display.setPos(serverAnchor.getX() + 0.5D, outerGeometry.roofY - STARTUP_WORLDGEN_ROOF_OFFSET, serverAnchor.getZ() + 0.5D);
+		display.setPos(serverAnchor.getX() + 0.5D, outerGeometry.floorY + STARTUP_WORLDGEN_Y_OFFSET_FROM_OUTER_FLOOR, serverAnchor.getZ() + 0.5D);
 		display.setYRot(0.0F);
 		display.setXRot(0.0F);
 		display.setYHeadRot(0.0F);
@@ -3983,15 +4046,15 @@ public final class SeasonStartSystem {
 
 	private static AABB startupWorldgenDisplayBounds(BlockPos anchor, BoxGeometry outerGeometry) {
 		double centerX = anchor.getX() + 0.5D;
-		double centerY = outerGeometry.roofY - STARTUP_WORLDGEN_ROOF_OFFSET;
+		double centerY = (outerGeometry.floorY + outerGeometry.roofY) * 0.5D;
 		double centerZ = anchor.getZ() + 0.5D;
 		return new AABB(
-				centerX - 2.0D,
-				centerY - 2.0D,
-				centerZ - 2.0D,
-				centerX + 2.0D,
-				centerY + 2.0D,
-				centerZ + 2.0D
+				outerGeometry.minX - 2.0D,
+				outerGeometry.floorY - 2.0D,
+				outerGeometry.minZ - 2.0D,
+				outerGeometry.maxX + 2.0D,
+				outerGeometry.roofY + 2.0D,
+				outerGeometry.maxZ + 2.0D
 		);
 	}
 
@@ -4028,6 +4091,142 @@ public final class SeasonStartSystem {
 			display.discard();
 		}
 		startupWorldgenFrameIndex = Integer.MIN_VALUE;
+	}
+
+	private static void rememberServerStructure(BlockPos anchor, Direction.Axis axis) {
+		if (anchor == null) {
+			return;
+		}
+		BlockPos immutableAnchor = anchor.immutable();
+		Direction.Axis safeAxis = axis == Direction.Axis.X ? Direction.Axis.X : Direction.Axis.Z;
+		if (!immutableAnchor.equals(serverAnchor) || serverStructureAxis != safeAxis) {
+			serverAnchor = immutableAnchor;
+			serverStructureAxis = safeAxis;
+			stateDirty = true;
+		}
+	}
+
+	public static void onServerStructurePlaced(ServerLevel level, BlockPos anchor, Direction.Axis axis) {
+		if (level == null || anchor == null || !Level.OVERWORLD.equals(level.dimension())) {
+			return;
+		}
+		rememberServerStructure(anchor, axis);
+	}
+
+	public static void onServerStructureRemoved(ServerLevel level, BlockPos anchor) {
+		if (level == null || anchor == null || serverAnchor == null || !Level.OVERWORLD.equals(level.dimension())) {
+			return;
+		}
+		if (!serverAnchor.equals(anchor)) {
+			return;
+		}
+		serverAnchor = null;
+		serverStructureAxis = Direction.Axis.Z;
+		stateDirty = true;
+	}
+
+	private static Direction.Axis resolveKnownServerStructureAxis(ServerLevel level, BlockPos anchor) {
+		if (level == null || anchor == null) {
+			return null;
+		}
+		if (isWholeServerStructurePresent(level, anchor, serverStructureAxis)) {
+			return serverStructureAxis;
+		}
+		for (Direction.Axis axis : List.of(Direction.Axis.Z, Direction.Axis.X)) {
+			if (axis != serverStructureAxis && isWholeServerStructurePresent(level, anchor, axis)) {
+				return axis;
+			}
+		}
+		return null;
+	}
+
+	private static boolean isWholeServerStructurePresent(ServerLevel level, BlockPos anchor, Direction.Axis axis) {
+		if (level == null || anchor == null || axis == null) {
+			return false;
+		}
+		for (BlockPos pos : ServerStructureBreakSystem.getStructurePositions(anchor, axis)) {
+			if (!level.getBlockState(pos).is(ModBlocks.SERVER)) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	private static ResolvedServerStructure resolveServerStructurePlacement(ServerLevel level, BlockPos structurePos) {
+		if (level == null || structurePos == null) {
+			return null;
+		}
+		Set<Long> checked = new HashSet<>();
+		for (Direction.Axis axis : List.of(Direction.Axis.Z, Direction.Axis.X)) {
+			for (int dy = 0; dy < ServerStructureBreakSystem.STRUCTURE_HEIGHT; dy++) {
+				for (int depth = -ServerStructureBreakSystem.STRUCTURE_HALF_DEPTH; depth <= ServerStructureBreakSystem.STRUCTURE_HALF_DEPTH; depth++) {
+					for (int width = -ServerStructureBreakSystem.STRUCTURE_HALF_WIDTH; width <= ServerStructureBreakSystem.STRUCTURE_HALF_WIDTH; width++) {
+						BlockPos anchor = axis == Direction.Axis.X
+								? structurePos.offset(-depth, -dy, -width)
+								: structurePos.offset(-width, -dy, -depth);
+						if (!checked.add(anchor.asLong())) {
+							continue;
+						}
+						if (isWholeServerStructurePresent(level, anchor, axis)) {
+							return new ResolvedServerStructure(anchor.immutable(), axis);
+						}
+					}
+				}
+			}
+		}
+		return null;
+	}
+
+	private static void reconcileStackedServerDuplicates(ServerLevel level) {
+		if (level == null || serverAnchor == null) {
+			return;
+		}
+		ResolvedServerStructure keeper = resolveServerStructurePlacement(level, serverAnchor);
+		if (keeper == null) {
+			return;
+		}
+		Map<Long, ResolvedServerStructure> stacked = new LinkedHashMap<>();
+		stacked.put(keeper.anchor().asLong(), keeper);
+		int minY = keeper.anchor().getY() - (ServerStructureBreakSystem.STRUCTURE_HEIGHT * 3);
+		int maxY = keeper.anchor().getY() + (ServerStructureBreakSystem.STRUCTURE_HEIGHT * 3);
+		for (int y = minY; y <= maxY; y++) {
+			BlockPos centerPos = new BlockPos(keeper.anchor().getX(), y, keeper.anchor().getZ());
+			if (!level.getBlockState(centerPos).is(ModBlocks.SERVER)) {
+				continue;
+			}
+			ResolvedServerStructure candidate = resolveServerStructurePlacement(level, centerPos);
+			if (candidate == null
+					|| candidate.axis() != keeper.axis()
+					|| candidate.anchor().getX() != keeper.anchor().getX()
+					|| candidate.anchor().getZ() != keeper.anchor().getZ()) {
+				continue;
+			}
+			stacked.putIfAbsent(candidate.anchor().asLong(), candidate);
+		}
+		if (stacked.size() <= 1) {
+			rememberServerStructure(keeper.anchor(), keeper.axis());
+			return;
+		}
+		ResolvedServerStructure canonical = keeper;
+		for (ResolvedServerStructure candidate : stacked.values()) {
+			if (candidate.anchor().getY() > canonical.anchor().getY()) {
+				canonical = candidate;
+			}
+		}
+		for (ResolvedServerStructure candidate : stacked.values()) {
+			if (!candidate.anchor().equals(canonical.anchor())) {
+				ServerStructureBreakSystem.clearStructureSilently(level, candidate.anchor(), candidate.axis());
+			}
+		}
+		rememberServerStructure(canonical.anchor(), canonical.axis());
+	}
+
+	private static Direction.Axis parseServerAxis(String value) {
+		return "x".equalsIgnoreCase(value) ? Direction.Axis.X : Direction.Axis.Z;
+	}
+
+	private static String serializeServerAxis(Direction.Axis axis) {
+		return axis == Direction.Axis.X ? "x" : "z";
 	}
 
 	private static void refreshSharedLaunchBossBar(MinecraftServer server) {
@@ -4307,6 +4506,16 @@ public final class SeasonStartSystem {
 		removeIntroTool(player);
 	}
 
+	private static void clearPostStartPlayerInventory(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		player.getInventory().clearContent();
+		player.containerMenu.setCarried(ItemStack.EMPTY);
+		player.inventoryMenu.broadcastChanges();
+		player.containerMenu.broadcastChanges();
+	}
+
 	private static void applyStateForPhase(ServerPlayer player, PlayerSceneState state) {
 		if (state == null || player == null) {
 			return;
@@ -4411,7 +4620,7 @@ public final class SeasonStartSystem {
 	}
 
 	private static boolean isServerStructurePresent(ServerLevel level, BlockPos anchor) {
-		return level != null && anchor != null && level.getBlockState(anchor).is(ModBlocks.SERVER);
+		return resolveKnownServerStructureAxis(level, anchor) != null;
 	}
 
 	private static boolean shouldRelocateBuriedBootstrapServer(BlockPos currentAnchor, BlockPos bootstrapAnchor) {
@@ -4479,80 +4688,94 @@ public final class SeasonStartSystem {
 		if (level == null) {
 			return serverAnchor;
 		}
-		BlockPos resolved = discoverLiveServerAnchor(level);
+		ResolvedServerStructure resolved = discoverLiveServerStructure(level);
 		if (resolved != null) {
-			if (!resolved.equals(serverAnchor)) {
-				serverAnchor = resolved.immutable();
-				stateDirty = true;
-			}
+			rememberServerStructure(resolved.anchor(), resolved.axis());
 			return serverAnchor;
 		}
 		if (serverAnchor == null) {
-			serverAnchor = resolveBootstrapAnchor(level);
-			stateDirty = true;
+			rememberServerStructure(resolveBootstrapAnchor(level), Direction.Axis.Z);
 		}
 		return serverAnchor;
 	}
 
-	private static BlockPos discoverLiveServerAnchor(ServerLevel level) {
+	private static ResolvedServerStructure discoverLiveServerStructure(ServerLevel level) {
 		if (level == null) {
-			return serverAnchor;
+			return serverAnchor == null ? null : new ResolvedServerStructure(serverAnchor, serverStructureAxis);
 		}
-		if (serverAnchor != null && isServerStructurePresent(level, serverAnchor)) {
-			return serverAnchor;
+		if (serverAnchor != null) {
+			if (isWholeServerStructurePresent(level, serverAnchor, serverStructureAxis)) {
+				return new ResolvedServerStructure(serverAnchor, serverStructureAxis);
+			}
+			ResolvedServerStructure current = resolveServerStructurePlacement(level, serverAnchor);
+			if (current != null) {
+				return current;
+			}
 		}
 		BlockPos preferred = serverAnchor != null ? serverAnchor : resolveBootstrapAnchor(level);
-		BlockPos best = null;
+		ResolvedServerStructure best = null;
 		double bestDistance = Double.MAX_VALUE;
 		for (Entity entity : level.getAllEntities()) {
 			if (!ServerStructureBreakSystem.isServerStructureDisplay(entity)) {
 				continue;
 			}
 			var anchor = ServerStructureBreakSystem.getServerStructureDisplayAnchor(entity);
-			if (anchor.isEmpty() || !isServerStructurePresent(level, anchor.get())) {
+			if (anchor.isEmpty()) {
 				continue;
 			}
-			double distance = anchor.get().distSqr(preferred);
-			if (best == null || distance < bestDistance) {
-				best = anchor.get().immutable();
+			ResolvedServerStructure candidate = resolveServerStructurePlacement(level, anchor.get());
+			if (candidate == null) {
+				continue;
+			}
+			double distance = candidate.anchor().distSqr(preferred);
+			if (best == null
+					|| distance < bestDistance
+					|| (distance == bestDistance && candidate.anchor().getY() > best.anchor().getY())) {
+				best = candidate;
 				bestDistance = distance;
 			}
 		}
 		return best;
 	}
 
-	private static BlockPos discoverExistingServerAnchor(ServerLevel level, BlockPos primaryAnchor, BlockPos bootstrapAnchor) {
+	private static ResolvedServerStructure discoverExistingServerStructure(ServerLevel level, BlockPos primaryAnchor, BlockPos bootstrapAnchor) {
 		if (level == null) {
 			return null;
 		}
-		BlockPos discovered = discoverLiveServerAnchor(level);
+		ResolvedServerStructure discovered = discoverLiveServerStructure(level);
 		if (discovered != null) {
-			return discovered.immutable();
+			return discovered;
 		}
 		BlockPos around = primaryAnchor != null ? primaryAnchor : bootstrapAnchor;
-		discovered = discoverServerAnchorNearSurface(level, around, EXISTING_SERVER_SCAN_RADIUS);
+		discovered = discoverServerStructureNearSurface(level, around, EXISTING_SERVER_SCAN_RADIUS);
 		if (discovered != null) {
-			return discovered.immutable();
+			return discovered;
 		}
 		if (bootstrapAnchor != null && (around == null || !bootstrapAnchor.equals(around))) {
-			discovered = discoverServerAnchorNearSurface(level, bootstrapAnchor, EXISTING_SERVER_SCAN_RADIUS);
+			discovered = discoverServerStructureNearSurface(level, bootstrapAnchor, EXISTING_SERVER_SCAN_RADIUS);
 			if (discovered != null) {
-				return discovered.immutable();
+				return discovered;
 			}
 		}
 		return null;
 	}
 
-	private static BlockPos discoverServerAnchorNearSurface(ServerLevel level, BlockPos center, int radius) {
+	private static ResolvedServerStructure discoverServerStructureNearSurface(ServerLevel level, BlockPos center, int radius) {
 		if (level == null || center == null || radius < 0) {
 			return null;
 		}
-		BlockPos best = null;
+		ResolvedServerStructure best = null;
 		double bestDistance = Double.MAX_VALUE;
+		Set<Long> seenAnchors = new HashSet<>();
 		for (int dx = -radius; dx <= radius; dx++) {
 			for (int dz = -radius; dz <= radius; dz++) {
 				int x = center.getX() + dx;
 				int z = center.getZ() + dz;
+				int chunkX = x >> 4;
+				int chunkZ = z >> 4;
+				if (!level.hasChunk(chunkX, chunkZ)) {
+					continue;
+				}
 				int surfaceTop = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z);
 				int minY = Math.max(level.getMinY(), surfaceTop - EXISTING_SERVER_SCAN_VERTICAL_MARGIN);
 				int maxY = Math.min(level.getMaxY() - 1, surfaceTop + EXISTING_SERVER_SCAN_VERTICAL_MARGIN);
@@ -4561,9 +4784,18 @@ public final class SeasonStartSystem {
 					if (!level.getBlockState(pos).is(ModBlocks.SERVER)) {
 						continue;
 					}
-					double distance = pos.distSqr(center);
-					if (best == null || distance < bestDistance) {
-						best = pos.immutable();
+					ResolvedServerStructure candidate = resolveServerStructurePlacement(level, pos);
+					if (candidate == null) {
+						break;
+					}
+					if (!seenAnchors.add(candidate.anchor().asLong())) {
+						break;
+					}
+					double distance = candidate.anchor().distSqr(center);
+					if (best == null
+							|| distance < bestDistance
+							|| (distance == bestDistance && candidate.anchor().getY() > best.anchor().getY())) {
+						best = candidate;
 						bestDistance = distance;
 					}
 					break;
@@ -4641,15 +4873,16 @@ public final class SeasonStartSystem {
 	private static BoxGeometry computeOuterBoxGeometry(BlockPos anchor) {
 		int halfExtent = Math.max(get().boxHalfWidth, get().boxHalfDepth);
 		int barrierFloorY = anchor.getY() - 1;
-		int floorY = barrierFloorY - BARRIER_FLOOR_DEPTH;
 		int sideLength = halfExtent * 2 + 1;
+		int roofY = barrierFloorY + get().boxHeight;
+		int floorY = roofY - sideLength + 1;
 		return new BoxGeometry(
 				anchor.getX() - halfExtent,
 				anchor.getX() + halfExtent,
 				anchor.getZ() - halfExtent,
 				anchor.getZ() + halfExtent,
 				floorY,
-				floorY + sideLength - 1
+				roofY
 		);
 	}
 
@@ -4701,6 +4934,7 @@ public final class SeasonStartSystem {
 		worldRevealBurstCursor = 0;
 		worldRevealBurstWeightProgress = 0.0F;
 		worldRevealEarthquakeSoundStarted = false;
+		worldRevealDarknessRepositioned = false;
 		worldRevealPhase = WorldRevealPhase.NONE;
 		SHELL_DISSOLVE_ORDER.clear();
 		WORLD_REVEAL_TERRAIN.clear();
@@ -4725,6 +4959,7 @@ public final class SeasonStartSystem {
 			completed = state.completed;
 			worldRevealActive = state.worldRevealActive;
 			serverAnchor = parseBlockPos(state.serverAnchor);
+			serverStructureAxis = parseServerAxis(state.serverAxis);
 			difficultyBeforeSeasonStart = parseDifficulty(state.difficultyBeforeSeasonStart);
 			sharedLaunchCollectedBitcoins = Math.max(0, state.sharedLaunchCollectedBitcoins);
 			sharedLaunchRequiredBitcoins = Math.max(0, state.sharedLaunchRequiredBitcoins);
@@ -4763,6 +4998,7 @@ public final class SeasonStartSystem {
 		state.completed = completed;
 		state.worldRevealActive = worldRevealActive;
 		state.serverAnchor = serializeBlockPos(serverAnchor);
+		state.serverAxis = serializeServerAxis(serverStructureAxis);
 		state.difficultyBeforeSeasonStart = difficultyBeforeSeasonStart == null ? "" : difficultyBeforeSeasonStart.getKey();
 		state.sharedLaunchCollectedBitcoins = sharedLaunchCollectedBitcoins;
 		state.sharedLaunchRequiredBitcoins = sharedLaunchRequiredBitcoins;
@@ -5154,6 +5390,9 @@ public final class SeasonStartSystem {
 	private record ServerStructureBounds(double minX, double maxX, double minZ, double maxZ) {
 	}
 
+	private record ResolvedServerStructure(BlockPos anchor, Direction.Axis axis) {
+	}
+
 	private record WorldRevealSeed(Vec3 point, int round, double crackRadius, double terrainRadius) {
 	}
 
@@ -5192,6 +5431,7 @@ public final class SeasonStartSystem {
 		private boolean completed;
 		private boolean worldRevealActive;
 		private String serverAnchor;
+		private String serverAxis;
 		private String difficultyBeforeSeasonStart;
 		private int sharedLaunchCollectedBitcoins;
 		private int sharedLaunchRequiredBitcoins;
