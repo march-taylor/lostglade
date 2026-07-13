@@ -75,6 +75,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 public final class ServerUpgradeUiSystem {
@@ -254,6 +255,10 @@ public final class ServerUpgradeUiSystem {
 		if (player == null || screenId == null || screenId.isBlank()) {
 			return false;
 		}
+		if (!SeasonStartSystem.isServerMenuAvailable(player)) {
+			SeasonStartSystem.onServerMenuRequestedTooEarly(player);
+			return false;
+		}
 		if ("it_drones".equals(screenId) && !hasUpgrade(player, IT_DRONE_SCOUT_UPGRADE_ID)) {
 			playPurchaseBlockedSound(player);
 			return false;
@@ -295,6 +300,7 @@ public final class ServerUpgradeUiSystem {
 			ERAS_PROGRESS_ANIMATIONS.remove(player.getUUID());
 			MAIN_TITLE_SIGNATURES.remove(player.getUUID());
 		}
+		SeasonStartSystem.onServerUpgradeScreenOpened(player, screenId);
 		return true;
 	}
 
@@ -365,6 +371,51 @@ public final class ServerUpgradeUiSystem {
 
 		saveState(server);
 		return changedPlayers;
+	}
+
+	/** Removes only the temporary race upgrades bought during the season-start tutorial. */
+	public static void resetSeasonStartRacePurchases(
+			MinecraftServer server,
+			Collection<UUID> playerIds,
+			Collection<String> upgradeIds
+	) {
+		if (server == null || playerIds == null || playerIds.isEmpty() || upgradeIds == null || upgradeIds.isEmpty()) {
+			return;
+		}
+		Set<String> ids = new LinkedHashSet<>();
+		for (String upgradeId : upgradeIds) {
+			if (upgradeId != null && !upgradeId.isBlank()) {
+				ids.add(upgradeId.trim());
+			}
+		}
+		if (ids.isEmpty()) {
+			return;
+		}
+		for (UUID playerId : playerIds) {
+			if (playerId == null) {
+				continue;
+			}
+			Map<String, Integer> levels = PLAYER_UPGRADE_LEVELS.get(playerId.toString());
+			if (levels == null) {
+				continue;
+			}
+			boolean changed = levels.keySet().removeIf(ids::contains);
+			if (!changed) {
+				continue;
+			}
+			if (levels.isEmpty()) {
+				PLAYER_UPGRADE_LEVELS.remove(playerId.toString());
+			}
+			stateDirty = true;
+			ServerPlayer player = server.getPlayerList().getPlayer(playerId);
+			if (player != null) {
+				refreshUpgradeMenu(player);
+				CartelSecretRecipeBookSystem.syncPlayerRecipeBook(player);
+				CopperManGogglesSystem.syncPlayerRecipeBook(player);
+				MarkShieldRecipeSystem.syncPlayerRecipeBook(player);
+			}
+		}
+		saveState(server);
 	}
 
 	private static Iterable<String> collectKnownUpgradeIds() {
@@ -862,7 +913,7 @@ public final class ServerUpgradeUiSystem {
 
 		int currentLevel = getUpgradeLevel(viewer, button.upgradeId);
 		int index = Math.max(0, Math.min(button.pricesBitcoins.size() - 1, state == ButtonState.MAXED ? button.pricesBitcoins.size() - 1 : currentLevel));
-		int price = button.pricesBitcoins.get(index);
+		int price = SeasonStartSystem.resolveStartupMenuPrice(viewer, button.upgradeId, button.pricesBitcoins.get(index));
 		boolean affordable = countBitcoins(viewer) >= price;
 		int priceColor = state == ButtonState.MAXED
 				? 0xBFAE89
@@ -1184,6 +1235,7 @@ public final class ServerUpgradeUiSystem {
 		if (type == null) {
 			return false;
 		}
+		SeasonStartSystem.onServerUpgradeButtonClicked(player, screenId, buttonId);
 		boolean suppressClickSound = shouldSuppressClickSound(screenId, buttonId);
 
 		ButtonState state = getButtonState(player, button);
@@ -1195,6 +1247,7 @@ public final class ServerUpgradeUiSystem {
 			}
 			case CLOSE -> {
 				player.closeContainer();
+				SeasonStartSystem.onServerUpgradeMenuClosed(player, screenId);
 				playUiClick(player, true, suppressClickSound);
 				return true;
 			}
@@ -1283,6 +1336,7 @@ public final class ServerUpgradeUiSystem {
 			String buttonId,
 			UpgradeUiConfig.ButtonConfig button
 	) {
+		SeasonStartSystem.onServerUpgradePressed(player, screenId, button.upgradeId);
 		maybeFlashDimensionPurchaseLockCursor(player, screenId, buttonId, button);
 
 		if (!meetsRequirements(player, button)) {
@@ -1302,7 +1356,7 @@ public final class ServerUpgradeUiSystem {
 			return true;
 		}
 
-		int cost = button.pricesBitcoins.get(currentLevel);
+		int cost = getCurrentCost(player, button);
 		if (!consumeBitcoins(player, cost)) {
 			playPurchaseBlockedSound(player);
 			sendPlayerMessage(player, localizeSystem(player, "Not enough bitcoins.", "Недостаточно биткоинов."));
@@ -1380,7 +1434,7 @@ public final class ServerUpgradeUiSystem {
 		if (currentLevel < 0 || currentLevel >= button.pricesBitcoins.size()) {
 			return 0;
 		}
-		return button.pricesBitcoins.get(currentLevel);
+		return SeasonStartSystem.resolveStartupMenuPrice(player, button.upgradeId, button.pricesBitcoins.get(currentLevel));
 	}
 
 	private static int countBitcoins(Player player) {

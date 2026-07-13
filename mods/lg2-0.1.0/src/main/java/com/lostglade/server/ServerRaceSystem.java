@@ -266,6 +266,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -896,6 +897,8 @@ public final class ServerRaceSystem {
 	private static final Property CARTEL_LAWYER_FALLBACK_SKIN_PROPERTY = new Property("textures", CARTEL_LAWYER_SKIN_VALUE);
 
 	private static final Map<String, PlayerRaceConfig> RACES_BY_NICKNAME = new LinkedHashMap<>();
+	// A tutorial race must be shareable, unlike normal config races which have exactly one owner.
+	private static final Map<UUID, PlayerRaceConfig> SEASON_START_RACES = new LinkedHashMap<>();
 	private static final Map<String, String> DIALOG_ID_BY_NICKNAME = new LinkedHashMap<>();
 	private static final Map<String, String> GENERATED_DIALOG_JSON_BY_PATH = new LinkedHashMap<>();
 	private static final Map<UUID, Long> CARTEL_ATTACK_COOLDOWNS = new LinkedHashMap<>();
@@ -1375,6 +1378,7 @@ public final class ServerRaceSystem {
 			Lg2.LOGGER.info("Loaded {} configured personal races", RACES_BY_NICKNAME.size());
 		});
 		ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
+			SEASON_START_RACES.clear();
 			saveWomanShnyagaLinks(server);
 			saveLittleDictatorTaxChests(server);
 			saveLongPassiveEffects(server);
@@ -2204,7 +2208,119 @@ public final class ServerRaceSystem {
 	}
 
 	public static Optional<PlayerRaceConfig> getRace(ServerPlayer player) {
-		return player == null ? Optional.empty() : getRace(player.getGameProfile().name());
+		if (player == null) {
+			return Optional.empty();
+		}
+		PlayerRaceConfig startupRace = SEASON_START_RACES.get(player.getUUID());
+		return startupRace == null ? getRace(player.getGameProfile().name()) : Optional.of(startupRace);
+	}
+
+	/** Gives a participant an in-memory tutorial race without changing race ownership in JSON. */
+	public static boolean assignSeasonStartRace(ServerPlayer player, String raceId) {
+		if (player == null) {
+			return false;
+		}
+		PlayerRaceConfig race = resolveSeasonStartRace(raceId);
+		if (race == null) {
+			return false;
+		}
+		SEASON_START_RACES.put(player.getUUID(), race);
+		return true;
+	}
+
+	public static void beginSeasonStartRaces(MinecraftServer server, String raceId) {
+		SEASON_START_RACES.clear();
+		if (server == null) {
+			return;
+		}
+		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			assignSeasonStartRace(player, raceId);
+			applyRaceCommandRuntimeRefresh(server, player);
+		}
+	}
+
+	/** Removes the shared tutorial race and only the ability purchases made for it. */
+	public static void endSeasonStartRaces(MinecraftServer server) {
+		if (SEASON_START_RACES.isEmpty()) {
+			return;
+		}
+		Set<UUID> playerIds = new LinkedHashSet<>(SEASON_START_RACES.keySet());
+		Set<String> abilityIds = new LinkedHashSet<>();
+		for (PlayerRaceConfig race : SEASON_START_RACES.values()) {
+			collectAbilityId(abilityIds, race == null ? null : race.attack);
+			collectAbilityId(abilityIds, race == null ? null : race.defense);
+			collectAbilityId(abilityIds, race == null ? null : race.uniqueAbility);
+			collectAbilityId(abilityIds, race == null ? null : race.shnyaga);
+		}
+		ServerUpgradeUiSystem.resetSeasonStartRacePurchases(server, playerIds, abilityIds);
+		for (UUID playerId : playerIds) {
+			SEASON_START_RACES.remove(playerId);
+			ServerPlayer player = server == null ? null : server.getPlayerList().getPlayer(playerId);
+			if (player != null && server != null) {
+				applyRaceCommandRuntimeRefresh(server, player);
+			}
+		}
+	}
+
+	public static boolean isSeasonStartRaceAbility(ServerPlayer player, String upgradeId) {
+		if (player == null || upgradeId == null || upgradeId.isBlank()) {
+			return false;
+		}
+		PlayerRaceConfig race = SEASON_START_RACES.get(player.getUUID());
+		if (race == null) {
+			return false;
+		}
+		Set<String> abilityIds = new LinkedHashSet<>();
+		collectAbilityId(abilityIds, race.attack);
+		collectAbilityId(abilityIds, race.defense);
+		collectAbilityId(abilityIds, race.uniqueAbility);
+		collectAbilityId(abilityIds, race.shnyaga);
+		return abilityIds.contains(upgradeId);
+	}
+
+	public static void clearSeasonStartRace(MinecraftServer server, ServerPlayer player) {
+		if (player == null || SEASON_START_RACES.remove(player.getUUID()) == null) {
+			return;
+		}
+		if (server != null) {
+			applyRaceCommandRuntimeRefresh(server, player);
+		}
+	}
+
+	public static Set<String> getRaceAbilityIds(String raceId) {
+		PlayerRaceConfig race = findConfiguredRaceById(raceId);
+		if (race == null) {
+			return Set.of();
+		}
+		LinkedHashSet<String> ids = new LinkedHashSet<>();
+		collectAbilityId(ids, race.attack);
+		collectAbilityId(ids, race.defense);
+		collectAbilityId(ids, race.uniqueAbility);
+		collectAbilityId(ids, race.shnyaga);
+		return ids;
+	}
+
+	private static void collectAbilityId(Set<String> ids, RaceAbilityConfig ability) {
+		if (ids == null || ability == null || ability.abilityId == null || ability.abilityId.isBlank()) {
+			return;
+		}
+		ids.add(ability.abilityId);
+	}
+
+	private static PlayerRaceConfig resolveSeasonStartRace(String raceId) {
+		RaceConfig.load();
+		PlayerRaceConfig configured = findConfiguredRaceById(raceId);
+		if (configured != null && configured.enabled) {
+			return configured;
+		}
+		for (PlayerRaceConfig candidate : RaceConfig.get().races) {
+			if (candidate != null && candidate.enabled && !"no_race".equals(sanitizePath(candidate.id))) {
+				Lg2.LOGGER.warn("Season-start race '{}' is unavailable; using '{}'.", raceId, candidate.id);
+				return candidate;
+			}
+		}
+		Lg2.LOGGER.error("No enabled race is available for the season-start tutorial.");
+		return null;
 	}
 
 	public static Optional<PlayerRaceConfig> getRace(String nickname) {
@@ -2248,6 +2364,11 @@ public final class ServerRaceSystem {
 
 	private static boolean hasUnlockedAbility(ServerPlayer player, PlayerRaceConfig race, RaceAbilitySlot slot) {
 		if (slot == null) {
+			return false;
+		}
+		if (player != null
+				&& SEASON_START_RACES.containsKey(player.getUUID())
+				&& SeasonStartSystem.isSeasonStartRaceTestingPending(player)) {
 			return false;
 		}
 		RaceAbilityConfig ability = getAbility(race, slot);

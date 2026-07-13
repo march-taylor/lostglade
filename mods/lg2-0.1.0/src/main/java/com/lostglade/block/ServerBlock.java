@@ -119,6 +119,10 @@ public class ServerBlock extends SimplePolymerBlock {
 		if (!(player instanceof ServerPlayer serverPlayer)) {
 			return InteractionResult.PASS;
 		}
+		if (!SeasonStartSystem.isServerMenuAvailable(serverPlayer)) {
+			SeasonStartSystem.onServerMenuRequestedTooEarly(serverPlayer);
+			return InteractionResult.CONSUME;
+		}
 		ServerUpgradeUiSystem.openRootScreen(serverPlayer);
 
 		return InteractionResult.CONSUME;

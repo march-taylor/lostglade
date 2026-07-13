@@ -2,10 +2,10 @@
   "version": 4,
   "cues": {
     "phase1_intro_welcome": {
-      "fingerprint": "fd6e8f412f3250d62f258200f8d8a3bf0f574c8734b191be63c12196dcb5d183",
-      "text": "Добро пожаловать в Lost Glade.",
+      "fingerprint": "047f7dc1b941fb6b82057b00ad61a1742c8846872e310a6ddf6c6b9cb541e18c",
+      "text": "Добро пожаловать на лост гладе.",
       "outputPath": "config/lg2-season-start/voice/phase1_intro_welcome.wav",
-      "durationTicks": 49,
+      "durationTicks": 52,
       "generatorVersion": 4
     },
     "phase1_intro_dont_move": {
@@ -30,17 +30,17 @@
       "generatorVersion": 4
     },
     "phase1_intro_blindness": {
-      "fingerprint": "26417a7afbc6ff09df049c3fce0a99c838dc6f25f8dad41322534f4357329fa4",
-      "text": "Сейчас вы видите примерно ничего. Это не ошибка. Это проверка, как вы справляетесь без лишних привилегий.",
+      "fingerprint": "7725b784fc531c0bd48d0ed55689eb32576aa358996e8f751192e72c36d180d2",
+      "text": "Сейчас вы видите примерно ничего. Не стоит беспокоиться. Сейчас вам нужно будет запитать сервер чтобы включить свет",
       "outputPath": "config/lg2-season-start/voice/phase1_intro_blindness.wav",
-      "durationTicks": 148,
+      "durationTicks": 151,
       "generatorVersion": 4
     },
     "phase1_intro_block": {
-      "fingerprint": "9364cc1ff1778b6a1c644d1399c692e5810ab12e3f2b8ea67a11442abba4ea86",
-      "text": "В нескольких шагах от вас стоит руда. Первый бит-коин. Кирка уже у вас.",
+      "fingerprint": "6621ea00584c4d383b22a50e6f825e963d05bf9e92daa0edafef9695045ae2f2",
+      "text": "В нескольких шагах от вас стоит руда. Кирка уже у вас.",
       "outputPath": "config/lg2-season-start/voice/phase1_intro_block.wav",
-      "durationTicks": 108,
+      "durationTicks": 83,
       "generatorVersion": 4
     },
     "phase1_intro_break": {
@@ -86,10 +86,10 @@
       "generatorVersion": 4
     },
     "phase1_leave_no": {
-      "fingerprint": "c5e2f75d7f3d493563d5669fff7c9fe61629bd3755b84ba63a730ac7a0ae5adc",
-      "text": "Не туда. Начнём с одного бит-коина, а потом уже с ваших попыток к побегу.",
+      "fingerprint": "2490dd433be2280f61d734cf5ec5305a1fe6cf66693bddf4337b5a3491237e4a",
+      "text": "Не туда. Начнём с одного биткоина, а потом уже с ваших попыток к побегу.",
       "outputPath": "config/lg2-season-start/voice/phase1_leave_no.wav",
-      "durationTicks": 103,
+      "durationTicks": 100,
       "generatorVersion": 4
     },
     "phase1_spin_darkness_everywhere": {
@@ -107,10 +107,10 @@
       "generatorVersion": 4
     },
     "phase1_air_punch_almost": {
-      "fingerprint": "1d291c8625f61d52ae2ec30032ef3afb3ae547344fead8510da3e1c82ddc9edf",
-      "text": "Нет. Бить воздух не надо. Руду. Киркой. Это была короткая, но важная цепочка.",
+      "fingerprint": "01998bbfa6bd0108391c5df98f49bdcf91db8f5af417a0a1f1be2fdd8603b528",
+      "text": "Нет. Бить воздух не надо. Руду. Киркой.",
       "outputPath": "config/lg2-season-start/voice/phase1_air_punch_almost.wav",
-      "durationTicks": 135,
+      "durationTicks": 78,
       "generatorVersion": 4
     },
     "guide_turn_right": {
@@ -156,10 +156,10 @@
       "generatorVersion": 4
     },
     "shared_reminder": {
-      "fingerprint": "811e2abba97718d47b9ff92088d52442c5eec7309e449abac77ec6b9e2381f1e",
-      "text": "Бит-коины в коробке. Ядро в центре. Дальше всё на удивление просто.",
+      "fingerprint": "0e24a1add04ed912d85817856ae4fa0126947c741d8e8aa5f0290a214a7e0bd8",
+      "text": "Биткоины в коробке. Ядро в центре. Дальше всё на удивление просто.",
       "outputPath": "config/lg2-season-start/voice/shared_reminder.wav",
-      "durationTicks": 99,
+      "durationTicks": 100,
       "generatorVersion": 4
     },
     "season_finish": {
@@ -170,43 +170,43 @@
       "generatorVersion": 4
     },
     "phase1_wait_start_prompt_01": {
-      "fingerprint": "bf8c0ad73fa16e95753f32a8447b9c09e1804c077df275b65b772302e10e548f",
-      "text": "Когда будете готовы слушать и играть, напишите в чат слово старт. Можно и по-русски: старт. Остальное чат всё равно унизит.",
+      "fingerprint": "3e5c5cf5de0ecd87ae9d1553590c4b37b73c6219c0e71db189508ae9f98260be",
+      "text": "Когда будете готовы слушать и играть, напишите в чат слово start. Можно и по-русски: старт.",
       "outputPath": "config/lg2-season-start/voice/phase1_wait_start_prompt_01.wav",
-      "durationTicks": 164,
+      "durationTicks": 131,
       "generatorVersion": 4
     },
     "phase1_wait_start_prompt_02": {
-      "fingerprint": "b900074b8e8cb108b25e5768e2a1ca72a58ad58e8f5115da93b64312f6535676",
-      "text": "Старт сцены начинается словом старт. Да, я понимаю иронию. Просто напишите его.",
+      "fingerprint": "3b272507a047a39aefc50f2a39645bdc5c6839a2ae5ad37c634ab4ac42570cde",
+      "text": "Старт сцены начинается словом старт. Просто напишите его.",
       "outputPath": "config/lg2-season-start/voice/phase1_wait_start_prompt_02.wav",
-      "durationTicks": 111,
+      "durationTicks": 89,
       "generatorVersion": 4
     },
     "phase1_wait_start_prompt_03": {
-      "fingerprint": "c85657a721f884aa65d255ef66ad8bad90abb7fecbce81af554e11962c9230f4",
-      "text": "Я не начну говорить в пустоту. Напишите старт. Или старт по-русски. Четыре буквы и чуть-чуть воли.",
+      "fingerprint": "af02741df6abb6ee05a1ce1a9af6ba2ab526bdc9e924212fb7b6f31f5e8f2cac",
+      "text": "Я не начну говорить в пустоту. Напишите start. Или старт по-русски. Четыре буквы и чуть-чуть воли.",
       "outputPath": "config/lg2-season-start/voice/phase1_wait_start_prompt_03.wav",
       "durationTicks": 145,
       "generatorVersion": 4
     },
     "phase1_wait_start_wrong_01": {
-      "fingerprint": "7898f1b779350db3c4f77a27dd8bb7956fb8be29bed6a51a6a35755c0ce5d774",
-      "text": "Нет. Я просил слово старт. Не поэзию, не крик души и не то слово, которое чат только что исправил.",
+      "fingerprint": "dfe43951c43ec5521c8b9980f5b38fdde36fec670670d5dd4f472ab11ce08234",
+      "text": "Нет. Я просил start. Не вашу поэзию",
       "outputPath": "config/lg2-season-start/voice/phase1_wait_start_wrong_01.wav",
-      "durationTicks": 137,
+      "durationTicks": 78,
       "generatorVersion": 4
     },
     "phase1_wait_start_wrong_02": {
-      "fingerprint": "229bcdd551b2740ec16424694054107fbc9f6581d7359782668c237ab4a4f7d1",
-      "text": "Любопытно. Но для запуска сцены мне всё ещё нужно слово старт. Или старт по-русски.",
+      "fingerprint": "3665bc59b9ddee16e44498048c194cce81e0ecb0cfa7ca91f50815e294886e01",
+      "text": "Любопытно. Но для запуска сцены мне всё ещё нужно слово start. Или старт по-русски.",
       "outputPath": "config/lg2-season-start/voice/phase1_wait_start_wrong_02.wav",
-      "durationTicks": 132,
+      "durationTicks": 126,
       "generatorVersion": 4
     },
     "phase1_wait_start_confirmed": {
-      "fingerprint": "9dbe7e9ec5ab8892ecf75c7a4e8ef48c4dfa1cb3bdfbf3266325b488e46ee0e4",
-      "text": "Да. Вот теперь можно.",
+      "fingerprint": "5201a8736e964aaa6b6d08499c646f1106e9c7198e6da5254f7fff9e34ed55e4",
+      "text": "Да. команда принята.",
       "outputPath": "config/lg2-season-start/voice/phase1_wait_start_confirmed.wav",
       "durationTicks": 41,
       "generatorVersion": 4
@@ -247,17 +247,17 @@
       "generatorVersion": 4
     },
     "intro_target_stare_02": {
-      "fingerprint": "95f5e4d49aa7f04a3d1ff8ec29fc62b9e0a19e4cbf0dc6303e8887ec58cc1941",
-      "text": "Вы уже навелись. Остался редкий для этого сервера шаг: довести действие до конца.",
+      "fingerprint": "a478608dc4543882bb218b679cb53bc0641dcdcc41c2f3e1ff4641b127374bf5",
+      "text": "Вы уже навелись. Пожалуйста, просто сломайте его",
       "outputPath": "config/lg2-season-start/voice/intro_target_stare_02.wav",
-      "durationTicks": 115,
+      "durationTicks": 62,
       "generatorVersion": 4
     },
     "phase1_mined_handover": {
-      "fingerprint": "0102b382b7a1d0a73a1c452f0dd8cbc937383b357daa84fed4fbeeccd1547642",
-      "text": "Вот. Первый бит-коин. Теперь отдайте его мне. Я буду говорить, куда поворачиваться, а вы постарайтесь не превращать это в семейную ссору с навигатором.",
+      "fingerprint": "8b66fa7bc9ad134da45181a61d351bbb42788a6b73f5a69a3ec2c670b96e7b18",
+      "text": "Вот. Первый биткоин. Теперь отдайте его мне. Я буду говорить, куда поворачиваться, а вы постарайтесь следовать инструкциям",
       "outputPath": "config/lg2-season-start/voice/phase1_mined_handover.wav",
-      "durationTicks": 206,
+      "durationTicks": 169,
       "generatorVersion": 4
     },
     "guide_turn_left_hard_01": {
@@ -268,10 +268,10 @@
       "generatorVersion": 4
     },
     "guide_turn_left_hard_02": {
-      "fingerprint": "5b942caf20adf896f7e9060df885e2ea4c27cd4d08a1f55de98546240dc7a752",
-      "text": "Левее. Намного. Сейчас вы обращены не ко мне, а к какой-то философской ошибке.",
+      "fingerprint": "ca0ca490c950c0f722c33c390572fdaa3c3f104384ea9b756588a0a2c66304f6",
+      "text": "Левее. Намного. Сейчас вы смотрите не туда",
       "outputPath": "config/lg2-season-start/voice/guide_turn_left_hard_02.wav",
-      "durationTicks": 113,
+      "durationTicks": 70,
       "generatorVersion": 4
     },
     "guide_turn_left_hard_03": {
@@ -345,10 +345,10 @@
       "generatorVersion": 4
     },
     "guide_turn_right_medium_01": {
-      "fingerprint": "4f3b44db9c013f0286bedb3cce7ea9140d9c4e5148a4a40a2a5d535099498ff9",
-      "text": "Направо. Да, заметно.",
+      "fingerprint": "469d137fc8da3773f321e129b097d8803304761c7d3dfe00b8483d48f1f93d4f",
+      "text": "Направо. Салидно.",
       "outputPath": "config/lg2-season-start/voice/guide_turn_right_medium_01.wav",
-      "durationTicks": 46,
+      "durationTicks": 38,
       "generatorVersion": 4
     },
     "guide_turn_right_medium_02": {
@@ -415,17 +415,17 @@
       "generatorVersion": 4
     },
     "guide_turn_around_right_02": {
-      "fingerprint": "8795bc7383d9d78f2b0d9b7328b2bec61d3818fca3d8170f34f0f7c6f410bca7",
-      "text": "Нет, это уже не коррекция. Разворачивайтесь через правое плечо.",
+      "fingerprint": "f952b248336e975466dbf3b015bd8c4cad59d12266b43516d618a44dfb5a20f2",
+      "text": "Нет, это ужасная коррекция. Разворачивайтесь через правое плечо.",
       "outputPath": "config/lg2-season-start/voice/guide_turn_around_right_02.wav",
       "durationTicks": 105,
       "generatorVersion": 4
     },
     "guide_turn_around_right_03": {
-      "fingerprint": "ac217c809fb9c62080d3285a367211e1a449788c897f66324e449a0c509d61e0",
-      "text": "Сейчас нужен большой разворот направо. Прямо большой.",
+      "fingerprint": "a379813bc15a17f4f8d207583ffcad66766bf47cdd6e68cfb02085af255130ec",
+      "text": "Сейчас нужен большой разворот направо. Огроменный",
       "outputPath": "config/lg2-season-start/voice/guide_turn_around_right_03.wav",
-      "durationTicks": 71,
+      "durationTicks": 73,
       "generatorVersion": 4
     },
     "guide_locked_on_01": {
@@ -478,10 +478,10 @@
       "generatorVersion": 4
     },
     "guide_server_in_sight_01": {
-      "fingerprint": "27a9e60c9b741df391a05d7c11be18b21a174f1ffb9c4ef365690f0707e0cceb",
-      "text": "Вот. Да, это я. Ядро Lost Glade. Железная ебаная коробка, если вам так проще.",
+      "fingerprint": "38024e56040781abd0800c35be5e76783562c1bf96dc231d33830ace40b7a7c8",
+      "text": "Вот. Да, это я. Ядро Lost Glade. К сожалению другие зовут меня Железная ебаная коробка",
       "outputPath": "config/lg2-season-start/voice/guide_server_in_sight_01.wav",
-      "durationTicks": 131,
+      "durationTicks": 147,
       "generatorVersion": 4
     },
     "guide_server_in_sight_02": {
@@ -625,10 +625,10 @@
       "generatorVersion": 4
     },
     "guide_wrong_way_01": {
-      "fingerprint": "5d9e633a0893f5023cc08318238183c1ffc58f2328aa8a8b4b27c67e9048e103",
-      "text": "Блять, не туда. Вы уходите от сервера.",
+      "fingerprint": "523d04c7f152eb4d867fbf4b6312cd3f90a6f73127bd40e8bd3c0c107f5461bc",
+      "text": "Не туда. Вы уходите от сервера.",
       "outputPath": "config/lg2-season-start/voice/guide_wrong_way_01.wav",
-      "durationTicks": 62,
+      "durationTicks": 60,
       "generatorVersion": 4
     },
     "guide_wrong_way_02": {
@@ -667,38 +667,38 @@
       "generatorVersion": 4
     },
     "guide_passed_server_03": {
-      "fingerprint": "d7ddb1483b5f00679018c43f1d60407044be238caf236aee9248dbad2c1940a0",
-      "text": "Блять, вы проскочили. Чуть назад.",
+      "fingerprint": "7951918bfaed33e34a855344bb1617528392df88abf72f90a156938c8b3eafd3",
+      "text": "Кажется, вы проскочили. Чуть назад.",
       "outputPath": "config/lg2-season-start/voice/guide_passed_server_03.wav",
-      "durationTicks": 62,
+      "durationTicks": 57,
       "generatorVersion": 4
     },
     "guide_drop_coin_01": {
-      "fingerprint": "4ca78513e14b31312fa3ec0ac0a5429be38a96a2502428dbdb74a60346346830",
-      "text": "Стоп. Я прямо перед вами. Нажмите кью и бросьте бит-коин в сервер.",
+      "fingerprint": "fea84594c861f88c1ae907ade562f1325bf48b98c18b411be14a14e8ca17ff67",
+      "text": "Стоп. Я прямо перед вами. Нажмите кью и бросьте биткоин в сервер.",
       "outputPath": "config/lg2-season-start/voice/guide_drop_coin_01.wav",
-      "durationTicks": 107,
-      "generatorVersion": 4
-    },
-    "guide_drop_coin_02": {
-      "fingerprint": "9d3524c76c67678a65716cc7d511fb57db0dbe474940e2befd91046322a58af8",
-      "text": "Вот оно. Ядро перед вами. Кью. Бит-коин сюда.",
-      "outputPath": "config/lg2-season-start/voice/guide_drop_coin_02.wav",
       "durationTicks": 105,
       "generatorVersion": 4
     },
+    "guide_drop_coin_02": {
+      "fingerprint": "8593c4132e0ec709d0ab24d5e2e6477fe623ceaa61d8f336e466be8527cc729d",
+      "text": "Вот оно. Ядро перед вами. Кью. Биткоин сюда.",
+      "outputPath": "config/lg2-season-start/voice/guide_drop_coin_02.wav",
+      "durationTicks": 83,
+      "generatorVersion": 4
+    },
     "guide_drop_coin_03": {
-      "fingerprint": "518a03fdfc3e52435137d60f7839d987674cf0184bcaa20ca85bef069d9bf8bb",
-      "text": "Не проходите мимо. Это я. Кью и бит-коин в мою сторону.",
+      "fingerprint": "ec21a0a1dcf47160c677b6c08506c6fc05bf275c549c06ea08a7222f5346f6af",
+      "text": "Не проходите мимо. Это я. Кью и биткоин в мою сторону.",
       "outputPath": "config/lg2-season-start/voice/guide_drop_coin_03.wav",
-      "durationTicks": 111,
+      "durationTicks": 89,
       "generatorVersion": 4
     },
     "guide_drop_coin_04": {
-      "fingerprint": "da6abc38150de5e452f34da861956ca36b559c35ba8cf6c87b04fb62ff711f86",
-      "text": "Да, всё. Финал простой. Бросьте бит-коин. Клавиша кью.",
+      "fingerprint": "19bd8c97331bf165b27734c0acf39aad152a76d311cc11928ecefabeb74fc865",
+      "text": "Да, всё. Финал простой. Бросьте биткоин. Клавиша кью.",
       "outputPath": "config/lg2-season-start/voice/guide_drop_coin_04.wav",
-      "durationTicks": 100,
+      "durationTicks": 92,
       "generatorVersion": 4
     },
     "intro_guide_wrong_way_01": {
@@ -716,10 +716,10 @@
       "generatorVersion": 4
     },
     "intro_guide_wrong_way_03": {
-      "fingerprint": "62a0f613eaa647a6e6272090a47daa5804c4c2e923a1b50684a36c8fe4b339c0",
-      "text": "Блять, это было уверенное движение совсем не к бит-коину.",
+      "fingerprint": "34f048eaf0b61ccb9daccf53ba1a804b0d5bfa5ec10006e825d04d42b54055cf",
+      "text": "Это было уверенное движение совсем не к биткоину.",
       "outputPath": "config/lg2-season-start/voice/intro_guide_wrong_way_03.wav",
-      "durationTicks": 81,
+      "durationTicks": 70,
       "generatorVersion": 4
     },
     "guide_close_presence_01": {
@@ -758,10 +758,10 @@
       "generatorVersion": 4
     },
     "intro_guide_route_start_03": {
-      "fingerprint": "273e95ebd3a1ce4d22353d8808992719337e465abe9a5024e0c70a0212d2dae1",
-      "text": "Сейчас будет очень простая навигация к руде. Я говорю, куда повернуться, а вы не устраиваете драму.",
+      "fingerprint": "acc410d061816dc3f109455df3b0da26d12d66179a35239d2c4201d0ac7d7636",
+      "text": "Сейчас будет очень простая навигация к руде. Я говорю куда повернуться, вы не устраиваете драму.",
       "outputPath": "config/lg2-season-start/voice/intro_guide_route_start_03.wav",
-      "durationTicks": 135,
+      "durationTicks": 139,
       "generatorVersion": 4
     },
     "guide_turn_left_recover_01": {
@@ -849,17 +849,17 @@
       "generatorVersion": 4
     },
     "phase3_payment_small": {
-      "fingerprint": "f4321e09cc10516d48949f6559aa1351ac0fe163b60d6a678a6aac3dd00c0932",
-      "text": "Немного. Но и вы пока не производите впечатление долгосрочного инвестора.",
+      "fingerprint": "7d66da2c1ccc937579b3941696abee647cf8404704d33f64356488a310e0e397",
+      "text": "Питания мало. Но и вы пока не похожи на долгосрочного майнера.",
       "outputPath": "config/lg2-season-start/voice/phase3_payment_small.wav",
-      "durationTicks": 94,
+      "durationTicks": 92,
       "generatorVersion": 4
     },
     "phase3_restore_vision": {
-      "fingerprint": "af664b72aeacb9f6dcd11814a6a69dc002631641b4df714401abd06bc1a8215f",
-      "text": "Восстанавливаю зрение.",
+      "fingerprint": "fc6678bb18854dd5607f003052b6dd6e7a56b312c37a0f530e7e6af73c75ed65",
+      "text": "Включаю свет",
       "outputPath": "config/lg2-season-start/voice/phase3_restore_vision.wav",
-      "durationTicks": 36,
+      "durationTicks": 30,
       "generatorVersion": 4
     },
     "phase3_restore_body": {
@@ -891,38 +891,255 @@
       "generatorVersion": 4
     },
     "phase4_launch_intro_02": {
-      "fingerprint": "8d1f850ef9ac4fcd0aca81319980c9143df08d1d1c2c6808472f6df69828ebee",
-      "text": "Теперь нужно запустить Lost Glade полностью. В коробке есть бит-коины.",
+      "fingerprint": "0e8a51cc5819b58fa09e0a023f2def7cacce7647fb4ae7a44f53dd922944db2a",
+      "text": "Теперь нужно запустить Lost Glade полностью. Вокруг есть биткоины.",
       "outputPath": "config/lg2-season-start/voice/phase4_launch_intro_02.wav",
-      "durationTicks": 99,
+      "durationTicks": 97,
       "generatorVersion": 4
     },
     "phase4_launch_intro_03": {
-      "fingerprint": "e9aa2c4c848bc4dfbfc108b950000e0d832acb6f64aeb1550b55999904c14241",
-      "text": "Добывайте их. Бросайте в ядро. Когда питание дойдёт до ста процентов, коробка исчезнет.",
+      "fingerprint": "9c1bae68c12af55c2f081e77961afc1071f65669f787fc66b1452c50ad84218e",
+      "text": "Добывайте их. Бросайте в ядро. Когда питание дойдёт до ста процентов, Мир сгенирируется.",
       "outputPath": "config/lg2-season-start/voice/phase4_launch_intro_03.wav",
-      "durationTicks": 135,
+      "durationTicks": 143,
       "generatorVersion": 4
     },
     "shared_launch_halfway": {
-      "fingerprint": "9efcc4395b3fd044fc0ae75ee890e69ef0086faf0e610dc6fe94bc9729860870",
-      "text": "Половина. Продолжайте.",
+      "fingerprint": "3bba8c6d3c09dea4e8f8041d3751bd50a8e58006b7c04cb85815ce2ded02c8a9",
+      "text": "50 процентов. Да, Половина.",
       "outputPath": "config/lg2-season-start/voice/shared_launch_halfway.wav",
-      "durationTicks": 43,
+      "durationTicks": 52,
       "generatorVersion": 4
     },
     "shared_launch_ninety": {
-      "fingerprint": "feef10003097526d4c8ad77f0b1e391aca7e068f6e5ce5180539dc0d28fc8a5e",
-      "text": "Девяносто процентов. Последние бит-коины в ядро.",
+      "fingerprint": "791675ae9afaa7ff4381fb4cba0c30cc5b2ed041a404ccafec0b2d93d4f7741a",
+      "text": "Девяносто процентов. Последние биткоины в ядро. Не в карман. Я вижу инвентари.",
       "outputPath": "config/lg2-season-start/voice/shared_launch_ninety.wav",
-      "durationTicks": 78,
+      "durationTicks": 131,
       "generatorVersion": 4
     },
     "shared_launch_complete": {
-      "fingerprint": "e6a599a2e43385b148fcb1057cd7672e33d4fbfc92e81302dc99799f6111eb3d",
-      "text": "Сто процентов. Питание принято.",
+      "fingerprint": "1876b9bc7c20c8a1b988795ec6163df2121a279abc1ba60b48fd602802a1423a",
+      "text": "Сто процентов. Питание принято. Не расслабляйтесь. Мы ещё не закончили.",
       "outputPath": "config/lg2-season-start/voice/shared_launch_complete.wav",
-      "durationTicks": 60,
+      "durationTicks": 108,
+      "generatorVersion": 4
+    },
+    "phase5_menu_power_received": {
+      "fingerprint": "48ec17c07551801bbfbe50b7117a4988537929f805f071370fc77751aa594130",
+      "text": "Питание принято.",
+      "outputPath": "config/lg2-season-start/voice/phase5_menu_power_received.wav",
+      "durationTicks": 33,
+      "generatorVersion": 4
+    },
+    "phase5_menu_spending": {
+      "fingerprint": "6814745c0e7d75c95291af21a1aaf339cf495dcead10ca06a63310aa5d0a9b23",
+      "text": "Теперь посмотрим, на что вы сможете его тратить.",
+      "outputPath": "config/lg2-season-start/voice/phase5_menu_spending.wav",
+      "durationTicks": 62,
+      "generatorVersion": 4
+    },
+    "phase5_menu_approach_core": {
+      "fingerprint": "b1f8506df33121bc90cd50d1b2c15a4e6803bb0cfe269a95b1e20e738a16422e",
+      "text": "Подойдите к ядру Lost Glade.",
+      "outputPath": "config/lg2-season-start/voice/phase5_menu_approach_core.wav",
+      "durationTicks": 49,
+      "generatorVersion": 4
+    },
+    "phase5_menu_right_click": {
+      "fingerprint": "30efda08539d89dc9fb8cabf6a7e2ea2cd66cc2c3a95d4272a0c78a8d4bcb21b",
+      "text": "Нажмите ПКМ.",
+      "outputPath": "config/lg2-season-start/voice/phase5_menu_right_click.wav",
+      "durationTicks": 33,
+      "generatorVersion": 4
+    },
+    "phase5_menu_progress_name": {
+      "fingerprint": "87f1ad1a5f8b52725b60d6f1b620303bbf3555fb0465e255725604dc682f62c6",
+      "text": "Это меню сервера. Вежливо называемое меню прогресса.",
+      "outputPath": "config/lg2-season-start/voice/phase5_menu_progress_name.wav",
+      "durationTicks": 78,
+      "generatorVersion": 4
+    },
+    "phase5_menu_reminder_first": {
+      "fingerprint": "743aae679a1825d2c34d3c36a7a6bd85ae97b5e4364c6ae88b468562b2365ef8",
+      "text": "Ядро перед вами. ПКМ по ядру. Не по полу. Не по соседу. По ядру.",
+      "outputPath": "config/lg2-season-start/voice/phase5_menu_reminder_first.wav",
+      "durationTicks": 118,
+      "generatorVersion": 4
+    },
+    "phase5_menu_reminder_later": {
+      "fingerprint": "d145e0d2439c39eab0d25d404ae3d3f6f4f180d1e435233a298483029b4fb436",
+      "text": "Меню не откроет себя само. Хотя, признаю, я рассматривал этот вариант. Потом вспомнил, что вам нужно чему-то научиться.",
+      "outputPath": "config/lg2-season-start/voice/phase5_menu_reminder_later.wav",
+      "durationTicks": 166,
+      "generatorVersion": 4
+    },
+    "phase5_menu_opened": {
+      "fingerprint": "ccf7faff6cc83fb96e32b48741cbbb4cb9abccbdb1595a77e3ceb0ea9271eceb",
+      "text": "Здесь биткоины становятся развитием. Прокачка индивидуальная так что купили - ваше. остальное будет раздражать, когда это купит кто-то другой.",
+      "outputPath": "config/lg2-season-start/voice/phase5_menu_opened.wav",
+      "durationTicks": 198,
+      "generatorVersion": 4
+    },
+    "phase5_menu_eras": {
+      "fingerprint": "3310cdde847de5825e0695811a4847d9b489c3e92bc443a81e3542ad93e84a90",
+      "text": "Эры. Здесь открывается общий уровень развития. Чем выше эра, тем больше возможностей.",
+      "outputPath": "config/lg2-season-start/voice/phase5_menu_eras.wav",
+      "durationTicks": 118,
+      "generatorVersion": 4
+    },
+    "phase5_menu_root_idle": {
+      "fingerprint": "f7745ccf73ad2a6e222ea536be13f85e799285de749f7004486f47665c91e714",
+      "text": "Выберите любой раздел, который вызывает у вас меньше тревоги. Интерфейс не кусается. Пока.",
+      "outputPath": "config/lg2-season-start/voice/phase5_menu_root_idle.wav",
+      "durationTicks": 113,
+      "generatorVersion": 4
+    },
+    "phase5_menu_balance": {
+      "fingerprint": "0ccbf484ede716edb0ed43b67667558fa2641c6278cdc2441dcd2dd11aa8fb6d",
+      "text": "Здесь ваш личный баланс. Не общий. Никто не потратит ваши биткоины за вас. Я просто прослежу, чтобы вы сделали это сами.",
+      "outputPath": "config/lg2-season-start/voice/phase5_menu_balance.wav",
+      "durationTicks": 164,
+      "generatorVersion": 4
+    },
+    "phase5_menu_mechanics": {
+      "fingerprint": "ff922f1e119e8c9e0e7e53f31532168f30f7568107768cab81f50858bf17c0b6",
+      "text": "Механики. Здесь открываются отдельные возможности сервера. Покупайте то, что действительно нужно.",
+      "outputPath": "config/lg2-season-start/voice/phase5_menu_mechanics.wav",
+      "durationTicks": 132,
+      "generatorVersion": 4
+    },
+    "phase5_menu_it": {
+      "fingerprint": "cfc3daf9dc04862b89d466a4e0b3ed527e3616cf82f8fc936ee26fada0e95980",
+      "text": "IT-ветка. Самая техническая часть сервера. Здесь всё связано с устройствами, связью и ужасами современного мира",
+      "outputPath": "config/lg2-season-start/voice/phase5_menu_it.wav",
+      "durationTicks": 164,
+      "generatorVersion": 4
+    },
+    "phase5_menu_worlds": {
+      "fingerprint": "f8d1451afbb3aa89db0e21a016b7c23dfcb264a75c63f768b2144bd68d753a51",
+      "text": "Миры. Здесь открывается доступ к другим измерениям. Без него портал для вас просто не сработает",
+      "outputPath": "config/lg2-season-start/voice/phase5_menu_worlds.wav",
+      "durationTicks": 139,
+      "generatorVersion": 4
+    },
+    "phase5_menu_races": {
+      "fingerprint": "cab36509175069b4a377e93028b502e4b24dbb9e2cdc98023c5a6ea169c1fa00",
+      "text": "Последний важный раздел: раса. Здесь открываются способности вашего персонажа. У каждой расы есть собственный набор инструментов. Посмотрите внимательно.",
+      "outputPath": "config/lg2-season-start/voice/phase5_menu_races.wav",
+      "durationTicks": 198,
+      "generatorVersion": 4
+    },
+    "phase5_menu_race_purchase": {
+      "fingerprint": "f72d914a9221d419e6dc8dc08981c5b3a6336a2ed12eb8eedb2616b763c39621",
+      "text": "Способность открыта. Теперь вы можете её использовать в меню способностей.",
+      "outputPath": "config/lg2-season-start/voice/phase5_menu_race_purchase.wav",
+      "durationTicks": 99,
+      "generatorVersion": 4
+    },
+    "phase5_menu_price_limit": {
+      "fingerprint": "7a8fdc2d93a4fc3b1d49cf443f528b909c6d2847367ca45ff9993b8c414fa205",
+      "text": "Эта покупка стоит девять тысяч девятьсот девяносто девять биткоинов. Не торопитесь. Сейчас достаточно посмотреть, как устроена ветка.",
+      "outputPath": "config/lg2-season-start/voice/phase5_menu_price_limit.wav",
+      "durationTicks": 167,
+      "generatorVersion": 4
+    },
+    "phase5_menu_section_eras_idle": {
+      "fingerprint": "cb82c5f1e74dabe991897b21e6b4431b46c7ab1a1e5b279a9c2167fc5d1cb2b1",
+      "text": "Да, незерит выглядит приятно. Нет, он не станет вашим только потому, что вы долго на него смотрите.",
+      "outputPath": "config/lg2-season-start/voice/phase5_menu_section_eras_idle.wav",
+      "durationTicks": 148,
+      "generatorVersion": 4
+    },
+    "phase5_menu_section_mechanics_idle": {
+      "fingerprint": "2b0cfcbf6b096236072305579d8f3c00eb1602ad1a41997afa39c27ce2c8997f",
+      "text": "Редстоун редко заканчивается хорошо. Но почти всегда интересно.",
+      "outputPath": "config/lg2-season-start/voice/phase5_menu_section_mechanics_idle.wav",
+      "durationTicks": 92,
+      "generatorVersion": 4
+    },
+    "phase5_menu_section_it_idle": {
+      "fingerprint": "2daf8c75d26878ae47d1bc0f0971434d5885339e0f02a58dfa26ec67fd3e2536",
+      "text": "Камера. Технологии не делают людей умнее. Они просто расширяют радиус последствий.",
+      "outputPath": "config/lg2-season-start/voice/phase5_menu_section_it_idle.wav",
+      "durationTicks": 126,
+      "generatorVersion": 4
+    },
+    "phase5_menu_section_worlds_idle": {
+      "fingerprint": "59cd83085dd9863f2c3b49ba0700821b3bfa2d54d360ce05d12be1ea67d547b4",
+      "text": "Незер прекрасное место. Если у вас странное отношение к прекрасному.",
+      "outputPath": "config/lg2-season-start/voice/phase5_menu_section_worlds_idle.wav",
+      "durationTicks": 105,
+      "generatorVersion": 4
+    },
+    "phase5_menu_section_races_idle": {
+      "fingerprint": "b5a9ed4cab622dac8e9de074d1a486719b08d7e2a4f245c39805bffba65cf9ba",
+      "text": "У каждой расы четыре способности. Слишком много для вас, не так ли?",
+      "outputPath": "config/lg2-season-start/voice/phase5_menu_section_races_idle.wav",
+      "durationTicks": 129,
+      "generatorVersion": 4
+    },
+    "phase5_menu_info": {
+      "fingerprint": "aad1e077086d36b4b91d999187e5812b699dba31d24dcd4e5ed78c1f7a3825b2",
+      "text": "Здесь справка. На случай, если вы решили сначала прочитать, а потом нажимать. Редкий, но допустимый порядок.",
+      "outputPath": "config/lg2-season-start/voice/phase5_menu_info.wav",
+      "durationTicks": 150,
+      "generatorVersion": 4
+    },
+    "phase5_menu_closed": {
+      "fingerprint": "f590960f7272b3ba12021ec94be81f10fa9dd9b4274bdc412ab00d11c8e5da1e",
+      "text": "Меню закрыто. Когда захотите продолжить, ядро всё ещё на месте. В отличие от некоторых ваших решений.",
+      "outputPath": "config/lg2-season-start/voice/phase5_menu_closed.wav",
+      "durationTicks": 143,
+      "generatorVersion": 4
+    },
+    "shared_launch_ten": {
+      "fingerprint": "3a719559c45cbd73660ea3c9c7204a444c4b1b747f8f1c81265b0b54b6572584",
+      "text": "Десять процентов. Пока всё пучком.",
+      "outputPath": "config/lg2-season-start/voice/shared_launch_ten.wav",
+      "durationTicks": 54,
+      "generatorVersion": 4
+    },
+    "shared_launch_twenty": {
+      "fingerprint": "0aab6d6cf4c1f3a6e7e057f010dca687d55174ef1fafdc836d1598949dced8dc",
+      "text": "Двадцать процентов. У вас получается. Неприятно признавать, но факт есть факт.",
+      "outputPath": "config/lg2-season-start/voice/shared_launch_twenty.wav",
+      "durationTicks": 121,
+      "generatorVersion": 4
+    },
+    "shared_launch_thirty": {
+      "fingerprint": "25f2a16d87af9cebe764fc7d31dd704bbb6bab35e8b5afc618b7477a8f198ce3",
+      "text": "Тридцать процентов. Важная деталь. Биткоин нужен не только для запуска. Биткоином вы будете покупать развитие и оплачивать работу сервера. Это экономика.",
+      "outputPath": "config/lg2-season-start/voice/shared_launch_thirty.wav",
+      "durationTicks": 211,
+      "generatorVersion": 4
+    },
+    "shared_launch_forty": {
+      "fingerprint": "01c96259069e7210c21b74b662e3b785c011bedb5723661aa6d39e0306a783d3",
+      "text": "Сорок процентов. Запомните: если ядро перестанет получать биткоины, стабильность начнёт падать. На нуле сервер выключится. Сезон закончится.",
+      "outputPath": "config/lg2-season-start/voice/shared_launch_forty.wav",
+      "durationTicks": 206,
+      "generatorVersion": 4
+    },
+    "shared_launch_sixty": {
+      "fingerprint": "00e7ef9be1581950636f75356199de3044888d73e62ef1b180c7ac3c75796555",
+      "text": "Шестьдесят процентов. Пока всё идёт лучше, чем я ожидал. Не примите это за комплимент. Ожидания были низкими.",
+      "outputPath": "config/lg2-season-start/voice/shared_launch_sixty.wav",
+      "durationTicks": 143,
+      "generatorVersion": 4
+    },
+    "shared_launch_seventy": {
+      "fingerprint": "3a43cfe4c3218c146685aa9f80fdf6792b4a2d3e631e16970d5bf2648ad9472a",
+      "text": "Семьдесят процентов. Ядро уже не развалилось. Это почти повод для гордости. Продолжайте.",
+      "outputPath": "config/lg2-season-start/voice/shared_launch_seventy.wav",
+      "durationTicks": 126,
+      "generatorVersion": 4
+    },
+    "shared_launch_eighty": {
+      "fingerprint": "de5ec99f9c91e18c26222bd91dc10cf620d256905d6f6fd4cafe44d05552d989",
+      "text": "Восемьдесят процентов. Мир скоро сгенирируется.",
+      "outputPath": "config/lg2-season-start/voice/shared_launch_eighty.wav",
+      "durationTicks": 70,
       "generatorVersion": 4
     }
   }

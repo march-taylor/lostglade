@@ -2,6 +2,51 @@
   "races": [
     {
       "enabled": true,
+      "id": "startup_race",
+      "displayName": "Стартовая раса",
+      "ownerNickname": "",
+      "description": "Стартовая ветка способностей.",
+      "attack": {
+        "enabled": true,
+        "abilityId": "startup_race_attack",
+        "name": "Атака",
+        "description": "Заглушка способности.",
+        "priceBitcoins": 1,
+        "cooldownSeconds": -1.0
+      },
+      "defense": {
+        "enabled": true,
+        "abilityId": "startup_race_defense",
+        "name": "Защита",
+        "description": "Заглушка способности.",
+        "priceBitcoins": 1,
+        "cooldownSeconds": -1.0
+      },
+      "uniqueAbility": {
+        "enabled": true,
+        "abilityId": "startup_race_unique",
+        "name": "Особая способность",
+        "description": "Заглушка способности.",
+        "priceBitcoins": 1,
+        "cooldownSeconds": -1.0
+      },
+      "shnyaga": {
+        "enabled": true,
+        "abilityId": "startup_race_shnyaga",
+        "name": "Способность",
+        "description": "Заглушка способности.",
+        "priceBitcoins": 1,
+        "cooldownSeconds": -1.0
+      },
+      "stock": {
+        "enabled": true,
+        "abilityId": "startup_race_stock",
+        "name": "Сток",
+        "description": ""
+      }
+    },
+    {
+      "enabled": true,
       "id": "mister_cartel_49",
       "displayName": "Мистер Картель",
       "ownerNickname": "vghnnnn4",

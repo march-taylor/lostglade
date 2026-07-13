@@ -119,6 +119,10 @@ public final class SeasonStartConfig {
 			configData.sharedReminderIntervalTicks = clampedSharedReminderIntervalTicks;
 			changed = true;
 		}
+		if (configData.startupRaceId == null || configData.startupRaceId.isBlank()) {
+			configData.startupRaceId = "startup_race";
+			changed = true;
+		}
 		int clampedIntroBlindnessTicks = clamp(configData.introBlindnessTicks, 20 * 10, 20 * 60 * 60);
 		if (clampedIntroBlindnessTicks != configData.introBlindnessTicks) {
 			configData.introBlindnessTicks = clampedIntroBlindnessTicks;
@@ -200,6 +204,8 @@ public final class SeasonStartConfig {
 		public int guidanceRepeatTicks = 60;
 		public int sharedReminderIntervalTicks = 20 * 30;
 		public int serverVoiceDistance = 40;
+		/** Shared placeholder race assigned to every participant while the start tutorial is active. */
+		public String startupRaceId = "startup_race";
 		public List<VoiceCue> cues = defaultCues();
 
 		public static ConfigData defaults() {

@@ -135,7 +135,7 @@ public final class SeasonStartSystem {
 	private static final long GUIDANCE_CORRECTION_COOLDOWN_TICKS = 8L;
 	private static final long GUIDANCE_FORWARD_COOLDOWN_TICKS = 16L;
 	private static final long GUIDANCE_STALL_COOLDOWN_TICKS = 24L;
-	private static final long GUIDANCE_RECOVER_REACTION_WINDOW_TICKS = 28L;
+	private static final long GUIDANCE_RECOVER_REACTION_WINDOW_TICKS = 20L * 4L;
 	private static final long GUIDANCE_STALL_AFTER_ALIGNMENT_TICKS = 20L;
 	private static final long GUIDANCE_STALL_AFTER_TURN_TICKS = 18L;
 	private static final int BARRIER_FLOOR_DEPTH = 5;
@@ -325,7 +325,11 @@ public final class SeasonStartSystem {
 	private static final double SHARED_FEED_PLAYER_MATCH_DISTANCE = 8.0D;
 	private static final long SHARED_IDLE_REMINDER_TICKS = 20L * 45L;
 	private static final long SHARED_FINISH_DELAY_TICKS = 20L * 2L;
-	private static final int[] SHARED_LAUNCH_MILESTONES = {50, 90, 100};
+	private static final long MENU_OPEN_REMINDER_TICKS = 20L * 26L;
+	private static final long MENU_SECTION_REMINDER_TICKS = 20L * 22L;
+	private static final long MENU_PRICE_REACTION_COOLDOWN_TICKS = 20L * 3L;
+	private static final int MENU_EXPLANATION_UNLOCK_PERCENT = 50;
+	private static final int[] SHARED_LAUNCH_MILESTONES = {10, 20, 30, 40, 50, 60, 70, 80, 90, 100};
 	private static final String STARTUP_WORLDGEN_DISPLAY_TAG = "lg2_season_start_display";
 	private static final int STARTUP_WORLDGEN_FRAME_COUNT = 35;
 	private static final float STARTUP_WORLDGEN_VIEW_RANGE = 96.0F;
@@ -456,6 +460,7 @@ public final class SeasonStartSystem {
 	private static long nextSharedReminderTick = Long.MIN_VALUE;
 	private static long lastSharedLaunchProgressTick = Long.MIN_VALUE;
 	private static long pendingSharedFinishTick = Long.MIN_VALUE;
+	private static long pendingMenuExplanationTick = Long.MIN_VALUE;
 	private static long worldRevealPhaseStartTick = Long.MIN_VALUE;
 	private static long worldRevealCrackStartTick = Long.MIN_VALUE;
 	private static long worldRevealMusicEndTick = Long.MIN_VALUE;
@@ -464,6 +469,7 @@ public final class SeasonStartSystem {
 	private static int sharedLaunchRequiredBitcoins = 0;
 	private static int sharedLaunchMilestoneCursor = 0;
 	private static boolean sharedLaunchIntroTriggered = false;
+	private static boolean menuExplanationActive = false;
 	private static int startupWorldgenFrameIndex = Integer.MIN_VALUE;
 	private static int worldRevealVisibleEpisodeCursor = 0;
 	private static int worldRevealBurstCursor = 0;
@@ -493,6 +499,7 @@ public final class SeasonStartSystem {
 		nextSharedReminderTick = Long.MIN_VALUE;
 		lastSharedLaunchProgressTick = Long.MIN_VALUE;
 		pendingSharedFinishTick = Long.MIN_VALUE;
+		pendingMenuExplanationTick = Long.MIN_VALUE;
 		worldRevealPhaseStartTick = Long.MIN_VALUE;
 		worldRevealCrackStartTick = Long.MIN_VALUE;
 		worldRevealMusicEndTick = Long.MIN_VALUE;
@@ -501,6 +508,7 @@ public final class SeasonStartSystem {
 		sharedLaunchRequiredBitcoins = 0;
 		sharedLaunchMilestoneCursor = 0;
 		sharedLaunchIntroTriggered = false;
+		menuExplanationActive = false;
 		startupWorldgenFrameIndex = Integer.MIN_VALUE;
 		worldRevealVisibleEpisodeCursor = 0;
 		worldRevealBurstCursor = 0;
@@ -560,6 +568,11 @@ public final class SeasonStartSystem {
 	public static boolean isInSharedPhase(ServerPlayer player) {
 		PlayerSceneState state = player == null ? null : PLAYER_STATES.get(player.getUUID());
 		return state != null && state.phase == PlayerPhase.SHARED;
+	}
+
+	/** Shared milestones are delayed by the voice queue, never discarded because a menu is open. */
+	public static boolean canReceiveSharedNarration(ServerPlayer player) {
+		return player != null && (!active || isInSharedPhase(player));
 	}
 
 	public static boolean isLiveVoiceControlled(ServerPlayer player) {
@@ -657,6 +670,149 @@ public final class SeasonStartSystem {
 
 	public static boolean shouldUseFlatNarrationMix() {
 		return active && !completed;
+	}
+
+	/** The progression UI unlocks halfway through startup, while the shared launch keeps running. */
+	public static boolean isServerMenuAvailable(ServerPlayer player) {
+		if (!active) {
+			return true;
+		}
+		PlayerSceneState state = player == null ? null : PLAYER_STATES.get(player.getUUID());
+		return menuExplanationActive && state != null && state.phase == PlayerPhase.SHARED;
+	}
+
+	public static void onServerMenuRequestedTooEarly(ServerPlayer player) {
+		if (player == null || !active) {
+			return;
+		}
+		player.displayClientMessage(Component.literal("Меню прогресса станет доступно после запуска ядра."), true);
+	}
+
+	public static int resolveStartupMenuPrice(ServerPlayer player, String upgradeId, int configuredPrice) {
+		if (!active || !menuExplanationActive || player == null) {
+			return Math.max(0, configuredPrice);
+		}
+		return ServerRaceSystem.isSeasonStartRaceAbility(player, upgradeId) ? 1 : 9_999;
+	}
+
+	/** The next phase will enable the temporary race; phase five only teaches and buys it. */
+	public static boolean isSeasonStartRaceTestingPending(ServerPlayer player) {
+		return active && menuExplanationActive && player != null && PLAYER_STATES.containsKey(player.getUUID());
+	}
+
+	public static void onServerUpgradeScreenOpened(ServerPlayer player, String screenId) {
+		if (!isServerMenuAvailable(player) || screenId == null || screenId.isBlank()) {
+			return;
+		}
+		PlayerSceneState state = PLAYER_STATES.get(player.getUUID());
+		MinecraftServer server = player.level().getServer();
+		if (state == null || server == null) {
+			return;
+		}
+		long nowTick = player.level().getGameTime();
+		state.menuLastInteractionTick = nowTick;
+		state.nextMenuSectionReminderTick = nowTick + MENU_SECTION_REMINDER_TICKS;
+		state.menuNarrationMuted = true;
+		if (!state.menuOpened) {
+			state.menuOpened = true;
+			state.nextMenuReminderTick = Long.MAX_VALUE;
+			SeasonStartVoiceSystem.clearPlayerChannel(player);
+			SeasonStartVoiceSystem.fireTrigger(server, "player_menu_opened", player);
+		}
+
+		MenuSection section = MenuSection.byScreenId(screenId);
+		state.activeMenuSection = section.id;
+		if (section == MenuSection.ROOT || !state.seenMenuSections.add(section.id)) {
+			stateDirty = true;
+			return;
+		}
+		SeasonStartVoiceSystem.clearPlayerChannel(player);
+		SeasonStartVoiceSystem.fireTrigger(server, section.openTrigger, player);
+		if (section == MenuSection.RACES) {
+			state.raceMenuReached = true;
+		}
+		stateDirty = true;
+	}
+
+	public static void onServerUpgradePressed(ServerPlayer player, String screenId, String upgradeId) {
+		if (!isServerMenuAvailable(player)) {
+			return;
+		}
+		PlayerSceneState state = PLAYER_STATES.get(player.getUUID());
+		MinecraftServer server = player.level().getServer();
+		if (state == null || server == null) {
+			return;
+		}
+		long nowTick = player.level().getGameTime();
+		state.menuLastInteractionTick = nowTick;
+		state.nextMenuSectionReminderTick = nowTick + MENU_SECTION_REMINDER_TICKS;
+		String itemExplanationTrigger = resolveMenuItemExplanationTrigger(upgradeId);
+		if (itemExplanationTrigger != null) {
+			String explanationKey = "menu_item:" + upgradeId;
+			if (state.seenMenuSections.add(explanationKey)) {
+				SeasonStartVoiceSystem.clearPlayerChannel(player);
+				SeasonStartVoiceSystem.fireTrigger(server, itemExplanationTrigger, player);
+			}
+		} else if (ServerRaceSystem.isSeasonStartRaceAbility(player, upgradeId)) {
+			if (!state.racePurchaseExplained) {
+				state.racePurchaseExplained = true;
+				SeasonStartVoiceSystem.clearPlayerChannel(player);
+				SeasonStartVoiceSystem.fireTrigger(server, "player_menu_race_purchase", player);
+			}
+		} else if (nowTick >= state.nextMenuPriceReactionTick) {
+			state.nextMenuPriceReactionTick = nowTick + MENU_PRICE_REACTION_COOLDOWN_TICKS;
+			SeasonStartVoiceSystem.clearPlayerChannel(player);
+			SeasonStartVoiceSystem.fireTrigger(server, "player_menu_price_limit", player);
+		}
+		stateDirty = true;
+	}
+
+	public static void onServerUpgradeButtonClicked(ServerPlayer player, String screenId, String buttonId) {
+		if (!isServerMenuAvailable(player) || player == null || screenId == null || buttonId == null) {
+			return;
+		}
+		if (!"main".equals(screenId)) {
+			return;
+		}
+		String reactionKey;
+		String trigger;
+		if ("info".equals(buttonId)) {
+			reactionKey = "info";
+			trigger = "player_menu_info";
+		} else {
+			return;
+		}
+		PlayerSceneState state = PLAYER_STATES.get(player.getUUID());
+		MinecraftServer server = player.level().getServer();
+		if (state == null || server == null || !state.seenMenuSections.add(reactionKey)) {
+			return;
+		}
+		state.menuLastInteractionTick = player.level().getGameTime();
+		state.nextMenuSectionReminderTick = state.menuLastInteractionTick + MENU_SECTION_REMINDER_TICKS;
+		SeasonStartVoiceSystem.clearPlayerChannel(player);
+		SeasonStartVoiceSystem.fireTrigger(server, trigger, player);
+		stateDirty = true;
+	}
+
+	public static void onServerUpgradeMenuClosed(ServerPlayer player, String screenId) {
+		if (!isServerMenuAvailable(player) || player == null || screenId == null || screenId.isBlank()) {
+			return;
+		}
+		PlayerSceneState state = PLAYER_STATES.get(player.getUUID());
+		MinecraftServer server = player.level().getServer();
+		if (state == null || server == null) {
+			return;
+		}
+		state.menuLastInteractionTick = player.level().getGameTime();
+		state.nextMenuSectionReminderTick = state.menuLastInteractionTick + MENU_SECTION_REMINDER_TICKS;
+		state.menuNarrationMuted = false;
+		if (!state.seenMenuSections.add("menu_closed")) {
+			stateDirty = true;
+			return;
+		}
+		SeasonStartVoiceSystem.clearPlayerChannel(player);
+		SeasonStartVoiceSystem.fireTrigger(server, "player_menu_closed", player);
+		stateDirty = true;
 	}
 
 	public static boolean shouldSuppressOutgoingPacket(ServerPlayer receiver, Packet<?> packet) {
@@ -1145,7 +1301,9 @@ public final class SeasonStartSystem {
 				placeIntroOre(overworld, slot);
 			}
 		}
-		ensureSharedBitcoinPopulation(overworld);
+		if (sharedLaunchCollectedBitcoins < sharedLaunchRequiredBitcoins) {
+			ensureSharedBitcoinPopulation(overworld);
+		}
 	}
 
 	private static void startSeasonStart(MinecraftServer server, boolean automatic) {
@@ -1167,6 +1325,7 @@ public final class SeasonStartSystem {
 		nextSharedReminderTick = Long.MIN_VALUE;
 		lastSharedLaunchProgressTick = Long.MIN_VALUE;
 		pendingSharedFinishTick = Long.MIN_VALUE;
+		pendingMenuExplanationTick = Long.MIN_VALUE;
 		worldRevealPhaseStartTick = Long.MIN_VALUE;
 		worldRevealCrackStartTick = Long.MIN_VALUE;
 		worldRevealMusicEndTick = Long.MIN_VALUE;
@@ -1175,6 +1334,7 @@ public final class SeasonStartSystem {
 		sharedLaunchRequiredBitcoins = 0;
 		sharedLaunchMilestoneCursor = 0;
 		sharedLaunchIntroTriggered = false;
+		menuExplanationActive = false;
 		startupWorldgenFrameIndex = Integer.MIN_VALUE;
 		worldRevealVisibleEpisodeCursor = 0;
 		worldRevealBurstCursor = 0;
@@ -1202,6 +1362,7 @@ public final class SeasonStartSystem {
 		stopWorldRevealEarthquakeSound(overworld);
 		enforcePeacefulDifficulty(server);
 		ensureSceneBuilt(overworld);
+		ServerRaceSystem.beginSeasonStartRaces(server, get().startupRaceId);
 		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
 			assignOrRestorePlayer(server, player, true);
 		}
@@ -1224,6 +1385,8 @@ public final class SeasonStartSystem {
 		nextSharedReminderTick = Long.MIN_VALUE;
 		lastSharedLaunchProgressTick = Long.MIN_VALUE;
 		pendingSharedFinishTick = Long.MIN_VALUE;
+		pendingMenuExplanationTick = Long.MIN_VALUE;
+		menuExplanationActive = false;
 		worldRevealPhaseStartTick = Long.MIN_VALUE;
 		worldRevealCrackStartTick = Long.MIN_VALUE;
 		worldRevealMusicEndTick = Long.MIN_VALUE;
@@ -1235,6 +1398,7 @@ public final class SeasonStartSystem {
 		worldRevealDarknessRepositioned = false;
 		worldRevealPhase = WorldRevealPhase.CRACKING;
 		clearSharedLaunchBossBar();
+		ServerRaceSystem.endSeasonStartRaces(server);
 		ServerLevel overworld = server.overworld();
 		if (overworld != null) {
 			stopWorldRevealEarthquakeSound(overworld);
@@ -1262,6 +1426,7 @@ public final class SeasonStartSystem {
 		if (server == null || player == null || !active) {
 			return;
 		}
+		ServerRaceSystem.assignSeasonStartRace(player, get().startupRaceId);
 		ServerLevel overworld = server.overworld();
 		if (overworld == null) {
 			return;
@@ -1986,7 +2151,9 @@ public final class SeasonStartSystem {
 		}
 		return "guide_wrong_way".equals(instruction.stateKey)
 				|| "guide_passed_server".equals(instruction.stateKey)
-				|| "intro_guide_wrong_way".equals(instruction.stateKey);
+				|| "intro_guide_wrong_way".equals(instruction.stateKey)
+				|| "guide_turn_left_recover".equals(instruction.stateKey)
+				|| "guide_turn_right_recover".equals(instruction.stateKey);
 	}
 
 	private static long resolveCueEndTickById(String cueId) {
@@ -2128,20 +2295,77 @@ public final class SeasonStartSystem {
 			return;
 		}
 		ensureStartupWorldgenDisplay(overworld);
-		ensureSharedBitcoinPopulation(overworld);
 		refreshSharedLaunchBossBar(server);
 		if (countSharedPlayers() <= 0) {
 			return;
 		}
 		long nowTick = overworld.getGameTime();
-		if (pendingSharedFinishTick != Long.MIN_VALUE && nowTick >= pendingSharedFinishTick) {
-			pendingSharedFinishTick = Long.MIN_VALUE;
-			finishSeasonStart(server);
-			return;
+		if (!menuExplanationActive && sharedLaunchRequiredBitcoins > 0 && getSharedLaunchPercent() >= MENU_EXPLANATION_UNLOCK_PERCENT
+				&& pendingMenuExplanationTick == Long.MIN_VALUE) {
+			pendingMenuExplanationTick = nowTick;
 		}
+		if (!menuExplanationActive && pendingMenuExplanationTick != Long.MIN_VALUE && nowTick >= pendingMenuExplanationTick) {
+			beginMenuExplanationPhase(server);
+		}
+		if (menuExplanationActive) {
+			tickMenuExplanation(server, nowTick);
+		}
+		ensureSharedBitcoinPopulation(overworld);
 		if (nextSharedReminderTick != Long.MIN_VALUE && nowTick >= nextSharedReminderTick && sharedLaunchCollectedBitcoins < sharedLaunchRequiredBitcoins) {
 			SeasonStartVoiceSystem.fireTrigger(server, "shared_phase_reminder", null);
 			nextSharedReminderTick = nowTick + SHARED_IDLE_REMINDER_TICKS;
+		}
+	}
+
+	private static void beginMenuExplanationPhase(MinecraftServer server) {
+		ServerLevel overworld = server == null ? null : server.overworld();
+		if (server == null || overworld == null || menuExplanationActive) {
+			return;
+		}
+		menuExplanationActive = true;
+		pendingMenuExplanationTick = Long.MIN_VALUE;
+		long nowTick = overworld.getGameTime();
+		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			PlayerSceneState state = PLAYER_STATES.get(player.getUUID());
+			if (state == null || state.phase != PlayerPhase.SHARED) {
+				continue;
+			}
+			state.menuOpened = false;
+			state.menuNarrationMuted = false;
+			state.raceMenuReached = false;
+			state.racePurchaseExplained = false;
+			state.seenMenuSections.clear();
+			state.activeMenuSection = MenuSection.ROOT.id;
+			if (!state.menuRaceAllowanceGranted) {
+				giveOrDrop(player, new ItemStack(ModItems.BITCOIN, 4));
+				state.menuRaceAllowanceGranted = true;
+			}
+			state.nextMenuReminderTick = nowTick + resolveTriggerSequenceDurationTicks("player_menu_phase_started") + MENU_OPEN_REMINDER_TICKS;
+			state.nextMenuSectionReminderTick = Long.MAX_VALUE;
+			state.nextMenuPriceReactionTick = nowTick;
+			SeasonStartVoiceSystem.fireTrigger(server, "player_menu_phase_started", player);
+		}
+		stateDirty = true;
+	}
+
+	private static void tickMenuExplanation(MinecraftServer server, long nowTick) {
+		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			PlayerSceneState state = PLAYER_STATES.get(player.getUUID());
+			if (state == null || state.phase != PlayerPhase.SHARED) {
+				continue;
+			}
+			if (!state.menuOpened && state.nextMenuReminderTick == Long.MAX_VALUE) {
+				// A restart has no scheduled in-memory timers, so resume the next reminder gracefully.
+				state.nextMenuReminderTick = nowTick + MENU_OPEN_REMINDER_TICKS;
+			}
+			if (!state.menuOpened && nowTick >= state.nextMenuReminderTick) {
+				String trigger = state.menuReminderIndex++ == 0
+						? "player_menu_open_reminder_first"
+						: "player_menu_open_reminder_later";
+				SeasonStartVoiceSystem.fireTrigger(server, trigger, player);
+				state.nextMenuReminderTick = nowTick + MENU_OPEN_REMINDER_TICKS;
+				continue;
+			}
 		}
 	}
 
@@ -4138,8 +4362,10 @@ public final class SeasonStartSystem {
 			}
 			sharedLaunchMilestoneCursor++;
 		}
-		if (sharedLaunchCollectedBitcoins >= sharedLaunchRequiredBitcoins && pendingSharedFinishTick == Long.MIN_VALUE) {
-			pendingSharedFinishTick = nowTick + resolveTriggerSequenceDurationTicks("shared_launch_complete") + SHARED_FINISH_DELAY_TICKS;
+		if (!menuExplanationActive
+				&& getSharedLaunchPercent() >= MENU_EXPLANATION_UNLOCK_PERCENT
+				&& pendingMenuExplanationTick == Long.MIN_VALUE) {
+			pendingMenuExplanationTick = nowTick;
 		}
 		refreshSharedLaunchBossBar(server);
 		stateDirty = true;
@@ -4147,9 +4373,37 @@ public final class SeasonStartSystem {
 
 	private static String resolveSharedLaunchMilestoneTrigger(int milestone) {
 		return switch (milestone) {
+			case 10 -> "shared_launch_ten";
+			case 20 -> "shared_launch_twenty";
+			case 30 -> "shared_launch_thirty";
+			case 40 -> "shared_launch_forty";
 			case 50 -> "shared_launch_halfway";
+			case 60 -> "shared_launch_sixty";
+			case 70 -> "shared_launch_seventy";
+			case 80 -> "shared_launch_eighty";
 			case 90 -> "shared_launch_ninety";
 			case 100 -> "shared_launch_complete";
+			default -> null;
+		};
+	}
+
+	private static int resolveSharedLaunchMilestoneCursor(int percent) {
+		int cursor = 0;
+		while (cursor < SHARED_LAUNCH_MILESTONES.length && percent >= SHARED_LAUNCH_MILESTONES[cursor]) {
+			cursor++;
+		}
+		return cursor;
+	}
+
+	private static String resolveMenuItemExplanationTrigger(String upgradeId) {
+		if (upgradeId == null || upgradeId.isBlank()) {
+			return null;
+		}
+		return switch (upgradeId) {
+			case "era_netherite" -> "player_menu_item_netherite";
+			case "mechanic_redstone" -> "player_menu_item_redstone";
+			case "it_camera" -> "player_menu_item_camera";
+			case "world_nether" -> "player_menu_item_nether";
 			default -> null;
 		};
 	}
@@ -5128,6 +5382,7 @@ public final class SeasonStartSystem {
 		worldRevealBarriersPlaced = false;
 		lastSharedLaunchProgressTick = Long.MIN_VALUE;
 		pendingSharedFinishTick = Long.MIN_VALUE;
+		pendingMenuExplanationTick = Long.MIN_VALUE;
 		worldRevealPhaseStartTick = Long.MIN_VALUE;
 		worldRevealCrackStartTick = Long.MIN_VALUE;
 		worldRevealMusicEndTick = Long.MIN_VALUE;
@@ -5136,6 +5391,7 @@ public final class SeasonStartSystem {
 		sharedLaunchRequiredBitcoins = 0;
 		sharedLaunchMilestoneCursor = 0;
 		sharedLaunchIntroTriggered = false;
+		menuExplanationActive = false;
 		startupWorldgenFrameIndex = Integer.MIN_VALUE;
 		worldRevealVisibleEpisodeCursor = 0;
 		worldRevealBurstCursor = 0;
@@ -5170,8 +5426,9 @@ public final class SeasonStartSystem {
 			difficultyBeforeSeasonStart = parseDifficulty(state.difficultyBeforeSeasonStart);
 			sharedLaunchCollectedBitcoins = Math.max(0, state.sharedLaunchCollectedBitcoins);
 			sharedLaunchRequiredBitcoins = Math.max(0, state.sharedLaunchRequiredBitcoins);
-			sharedLaunchMilestoneCursor = Math.max(0, Math.min(SHARED_LAUNCH_MILESTONES.length, state.sharedLaunchMilestoneCursor));
+			sharedLaunchMilestoneCursor = resolveSharedLaunchMilestoneCursor(getSharedLaunchPercent());
 			sharedLaunchIntroTriggered = state.sharedLaunchIntroTriggered;
+			menuExplanationActive = state.menuExplanationActive;
 			if (state.players != null) {
 				for (Map.Entry<String, PersistedPlayerState> entry : state.players.entrySet()) {
 					UUID playerId = parseUuid(entry.getKey());
@@ -5186,6 +5443,15 @@ public final class SeasonStartSystem {
 					runtime.phase = PlayerPhase.byId(persisted.phase);
 					if (runtime.poweredServer) {
 						runtime.phase = PlayerPhase.SHARED;
+					}
+					runtime.menuOpened = persisted.menuOpened;
+					runtime.menuNarrationMuted = persisted.menuNarrationMuted;
+					runtime.raceMenuReached = persisted.raceMenuReached;
+					runtime.racePurchaseExplained = persisted.racePurchaseExplained;
+					runtime.menuRaceAllowanceGranted = persisted.menuRaceAllowanceGranted;
+					runtime.menuReminderIndex = Math.max(0, persisted.menuReminderIndex);
+					if (persisted.seenMenuSections != null) {
+						runtime.seenMenuSections.addAll(persisted.seenMenuSections);
 					}
 					PLAYER_STATES.put(playerId, runtime);
 				}
@@ -5211,6 +5477,7 @@ public final class SeasonStartSystem {
 		state.sharedLaunchRequiredBitcoins = sharedLaunchRequiredBitcoins;
 		state.sharedLaunchMilestoneCursor = sharedLaunchMilestoneCursor;
 		state.sharedLaunchIntroTriggered = sharedLaunchIntroTriggered;
+		state.menuExplanationActive = menuExplanationActive;
 		state.players = new LinkedHashMap<>();
 		for (Map.Entry<UUID, PlayerSceneState> entry : PLAYER_STATES.entrySet()) {
 			PlayerSceneState runtime = entry.getValue();
@@ -5222,6 +5489,13 @@ public final class SeasonStartSystem {
 			persisted.phase = runtime.phase.id;
 			persisted.minedIntroBitcoin = runtime.minedIntroBitcoin;
 			persisted.poweredServer = runtime.poweredServer;
+			persisted.menuOpened = runtime.menuOpened;
+			persisted.menuNarrationMuted = runtime.menuNarrationMuted;
+			persisted.raceMenuReached = runtime.raceMenuReached;
+			persisted.racePurchaseExplained = runtime.racePurchaseExplained;
+			persisted.menuRaceAllowanceGranted = runtime.menuRaceAllowanceGranted;
+			persisted.menuReminderIndex = runtime.menuReminderIndex;
+			persisted.seenMenuSections = new ArrayList<>(runtime.seenMenuSections);
 			state.players.put(entry.getKey().toString(), persisted);
 		}
 		Path path = getStatePath(server);
@@ -5410,7 +5684,8 @@ public final class SeasonStartSystem {
 		if (server == null || player == null || state == null || cycleKey == null || cycleKey.isBlank() || triggers == null || triggers.length == 0) {
 			return;
 		}
-		int nextIndex = Math.floorMod(state.guidanceCueCycles.getOrDefault(cycleKey, 0), triggers.length);
+		int initialIndex = Math.floorMod(player.getUUID().hashCode() ^ cycleKey.hashCode(), triggers.length);
+		int nextIndex = Math.floorMod(state.guidanceCueCycles.getOrDefault(cycleKey, initialIndex), triggers.length);
 		state.guidanceCueCycles.put(cycleKey, nextIndex + 1);
 		SeasonStartVoiceSystem.fireTrigger(server, triggers[nextIndex], player);
 	}
@@ -5523,6 +5798,56 @@ public final class SeasonStartSystem {
 		}
 	}
 
+	private enum MenuSection {
+		ROOT("main", "player_menu_opened"),
+		ERAS("eras", "player_menu_section_eras"),
+		MECHANICS("mechanics", "player_menu_section_mechanics"),
+		IT("it", "player_menu_section_it"),
+		WORLDS("worlds", "player_menu_section_worlds"),
+		RACES("races", "player_menu_section_races"),
+		OTHER("other", "player_menu_opened");
+
+		private final String id;
+		private final String openTrigger;
+
+		MenuSection(String id, String openTrigger) {
+			this.id = id;
+			this.openTrigger = openTrigger;
+		}
+
+		private static MenuSection byScreenId(String screenId) {
+			String normalized = screenId == null ? "" : screenId.trim().toLowerCase(java.util.Locale.ROOT);
+			if (normalized.equals("main") || normalized.equals("root")) {
+				return ROOT;
+			}
+			if (normalized.contains("race")) {
+				return RACES;
+			}
+			if (normalized.contains("era")) {
+				return ERAS;
+			}
+			if (normalized.contains("mechanic") || normalized.contains("system")) {
+				return MECHANICS;
+			}
+			if (normalized.equals("it") || normalized.startsWith("it_") || normalized.contains("drone")) {
+				return IT;
+			}
+			if (normalized.contains("world") || normalized.contains("dimension")) {
+				return WORLDS;
+			}
+			return OTHER;
+		}
+
+		private static MenuSection byId(String id) {
+			for (MenuSection value : values()) {
+				if (value.id.equals(id)) {
+					return value;
+				}
+			}
+			return OTHER;
+		}
+	}
+
 	private static final class PlayerSceneState {
 		private int slotIndex;
 		private PlayerPhase phase = PlayerPhase.ISOLATED;
@@ -5571,6 +5896,18 @@ public final class SeasonStartSystem {
 		private long nextStartPromptTick = 0L;
 		private int startPromptVariantIndex = 0;
 		private int wrongStartVariantIndex = 0;
+		private boolean menuOpened;
+		private boolean menuNarrationMuted;
+		private boolean raceMenuReached;
+		private boolean racePurchaseExplained;
+		private boolean menuRaceAllowanceGranted;
+		private int menuReminderIndex;
+		private String activeMenuSection = "";
+		private long menuLastInteractionTick = Long.MIN_VALUE;
+		private long nextMenuReminderTick = Long.MAX_VALUE;
+		private long nextMenuSectionReminderTick = Long.MAX_VALUE;
+		private long nextMenuPriceReactionTick = Long.MIN_VALUE;
+		private final Set<String> seenMenuSections = new LinkedHashSet<>();
 	}
 
 	private record PlayerVisibilityPair(UUID viewerId, UUID subjectId) {
@@ -5644,6 +5981,7 @@ public final class SeasonStartSystem {
 		private int sharedLaunchRequiredBitcoins;
 		private int sharedLaunchMilestoneCursor;
 		private boolean sharedLaunchIntroTriggered;
+		private boolean menuExplanationActive;
 		private Map<String, PersistedPlayerState> players;
 	}
 
@@ -5652,5 +5990,12 @@ public final class SeasonStartSystem {
 		private String phase;
 		private boolean minedIntroBitcoin;
 		private boolean poweredServer;
+		private boolean menuOpened;
+		private boolean menuNarrationMuted;
+		private boolean raceMenuReached;
+		private boolean racePurchaseExplained;
+		private boolean menuRaceAllowanceGranted;
+		private int menuReminderIndex;
+		private List<String> seenMenuSections;
 	}
 }

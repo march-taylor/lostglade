@@ -199,7 +199,9 @@ public final class SeasonStartVoiceSystem {
 			activePlayback = null;
 		}
 		if (cue.interruptCurrent && shouldInterruptImmediately(cue)) {
-			if (activePlayback != null && executeTick - activePlayback.startedTick < REALTIME_INTERRUPT_GRACE_TICKS) {
+			if (activePlayback != null
+					&& executeTick - activePlayback.startedTick < REALTIME_INTERRUPT_GRACE_TICKS
+					&& !shouldInterruptWithoutGrace(cue)) {
 				for (QueuedCue existing : queue) {
 					if (sameCue(existing, queuedCue)) {
 						return;
@@ -326,6 +328,9 @@ public final class SeasonStartVoiceSystem {
 					continue;
 				}
 				if (next.executeTick > nowTick) {
+					break;
+				}
+				if (isBlockedByOverlappingNarration(server, entry.getKey(), next, nowTick)) {
 					break;
 				}
 				entry.getValue().pollFirst();
@@ -455,7 +460,8 @@ public final class SeasonStartVoiceSystem {
 			if (player == null) {
 				continue;
 			}
-			if ("shared".equalsIgnoreCase(cue.audience) && !SeasonStartSystem.isInSharedPhase(player)) {
+			if ("shared".equalsIgnoreCase(cue.audience)
+					&& (!SeasonStartSystem.isInSharedPhase(player) || !SeasonStartSystem.canReceiveSharedNarration(player))) {
 				continue;
 			}
 			if ("all_active".equalsIgnoreCase(cue.audience) && !SeasonStartSystem.isStartParticipant(player)) {
@@ -559,6 +565,10 @@ public final class SeasonStartVoiceSystem {
 				LocationalSoundPacketImpl wrappedPacket = new LocationalSoundPacketImpl(soundPacket);
 				if (!shouldAbortPlayback(channelKey, playbackId, future)) {
 					for (UUID recipientId : recipientIds) {
+						ServerPlayer recipient = server.getPlayerList().getPlayer(recipientId);
+						if ("global".equals(channelKey) && !SeasonStartSystem.canReceiveSharedNarration(recipient)) {
+							continue;
+						}
 						VoicechatConnection receiverConnection = voicechatServerApi.getConnectionOf(recipientId);
 						if (receiverConnection != null) {
 							voicechatServerApi.sendLocationalSoundPacketTo(receiverConnection, wrappedPacket);
@@ -806,6 +816,61 @@ public final class SeasonStartVoiceSystem {
 		return nowTick - activePlayback.startedTick >= FEEDBACK_PREEMPT_GRACE_TICKS;
 	}
 
+	/**
+	 * A global cue is one audio stream for several listeners, while a player cue is
+	 * private. They used to have independent queues, which let both streams reach
+	 * the same listener at once. Do not start either stream while the other one is
+	 * still relevant to that listener.
+	 */
+	private static boolean isBlockedByOverlappingNarration(
+			MinecraftServer server,
+			String channelKey,
+			QueuedCue queuedCue,
+			long nowTick
+	) {
+		if (server == null || channelKey == null || queuedCue == null) {
+			return false;
+		}
+		if ("global".equals(channelKey)) {
+			for (ServerPlayer recipient : resolveRecipients(server, queuedCue.cue, queuedCue.focusPlayerId)) {
+				if (recipient != null && hasPendingPlayerNarration(recipient.getUUID(), nowTick)) {
+					return true;
+				}
+			}
+			return false;
+		}
+		if (!channelKey.startsWith("player:") || queuedCue.focusPlayerId == null) {
+			return false;
+		}
+		ActiveCuePlayback globalPlayback = ACTIVE_PLAYBACKS.get("global");
+		if (globalPlayback == null || globalPlayback.future == null || globalPlayback.future.isDone()) {
+			return false;
+		}
+		for (ServerPlayer recipient : resolveRecipients(server, globalPlayback.queuedCue.cue, globalPlayback.queuedCue.focusPlayerId)) {
+			if (recipient != null && queuedCue.focusPlayerId.equals(recipient.getUUID())) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static boolean hasPendingPlayerNarration(UUID playerId, long nowTick) {
+		if (playerId == null) {
+			return false;
+		}
+		String channelKey = "player:" + playerId;
+		ActiveCuePlayback activePlayback = ACTIVE_PLAYBACKS.get(channelKey);
+		if (activePlayback != null && activePlayback.future != null && !activePlayback.future.isDone()) {
+			return true;
+		}
+		Deque<QueuedCue> queue = CHANNEL_QUEUES.get(channelKey);
+		if (queue == null || queue.isEmpty()) {
+			return false;
+		}
+		pruneExpiredQueuedCues(queue, nowTick);
+		return !queue.isEmpty();
+	}
+
 	private static void insertQueuedCue(Deque<QueuedCue> queue, QueuedCue queuedCue) {
 		if (queue == null || queuedCue == null) {
 			return;
@@ -855,7 +920,9 @@ public final class SeasonStartVoiceSystem {
 		String trigger = cue.trigger == null ? "" : cue.trigger;
 		if (id.startsWith("guide_wrong_way_")
 				|| id.startsWith("guide_passed_server_")
-				|| id.startsWith("intro_guide_wrong_way_")) {
+				|| id.startsWith("intro_guide_wrong_way_")
+				|| id.startsWith("guide_turn_left_recover_")
+				|| id.startsWith("guide_turn_right_recover_")) {
 			return CueRole.URGENT;
 		}
 		if (trigger.startsWith("intro_phase1_")
@@ -881,7 +948,17 @@ public final class SeasonStartVoiceSystem {
 		}
 		return cue.id.startsWith("guide_wrong_way_")
 				|| cue.id.startsWith("guide_passed_server_")
-				|| cue.id.startsWith("intro_guide_wrong_way_");
+				|| cue.id.startsWith("intro_guide_wrong_way_")
+				|| cue.id.startsWith("guide_turn_left_recover_")
+				|| cue.id.startsWith("guide_turn_right_recover_");
+	}
+
+	private static boolean shouldInterruptWithoutGrace(VoiceCue cue) {
+		if (cue == null || cue.id == null || cue.id.isBlank()) {
+			return false;
+		}
+		return cue.id.startsWith("guide_turn_left_recover_")
+				|| cue.id.startsWith("guide_turn_right_recover_");
 	}
 
 	private static Object resolveRawServerPlayer(de.maxhenkel.voicechat.api.ServerPlayer player) {
