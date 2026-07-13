@@ -36,7 +36,7 @@ public final class ServerTabPacketSystem {
 		boolean changed = false;
 
 		for (ClientboundPlayerInfoUpdatePacket.Entry entry : packet.entries()) {
-			if (shouldHideEntry(server, entry)) {
+			if (shouldHideEntry(server, receiver, entry)) {
 				removedProfileIds.add(entry.profileId());
 				changed = true;
 				continue;
@@ -71,10 +71,11 @@ public final class ServerTabPacketSystem {
 		return new RewriteResult(rewrittenPacket, List.copyOf(removedProfileIds));
 	}
 
-	private static boolean shouldHideEntry(MinecraftServer server, ClientboundPlayerInfoUpdatePacket.Entry entry) {
+	private static boolean shouldHideEntry(MinecraftServer server, ServerPlayer receiver, ClientboundPlayerInfoUpdatePacket.Entry entry) {
 		ServerPlayer onlinePlayer = server.getPlayerList().getPlayer(entry.profileId());
 		if (onlinePlayer != null) {
-			return RendererBotPresenceSystem.shouldHideFromPlayerList(onlinePlayer);
+			return RendererBotPresenceSystem.shouldHideFromPlayerList(onlinePlayer)
+					|| SeasonStartSystem.shouldHidePlayerFrom(receiver, onlinePlayer);
 		}
 
 		GameProfile profile = entry.profile();

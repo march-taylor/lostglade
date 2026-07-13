@@ -29,10 +29,26 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.ChatType;
 import net.minecraft.network.chat.PlayerChatMessage;
 import net.minecraft.network.protocol.Packet;
+import net.minecraft.network.protocol.game.ClientboundAddEntityPacket;
+import net.minecraft.network.protocol.game.ClientboundAnimatePacket;
+import net.minecraft.network.protocol.game.ClientboundBlockUpdatePacket;
+import net.minecraft.network.protocol.game.ClientboundDisguisedChatPacket;
+import net.minecraft.network.protocol.game.ClientboundEntityEventPacket;
 import net.minecraft.network.protocol.game.ClientboundLevelParticlesPacket;
+import net.minecraft.network.protocol.game.ClientboundMoveEntityPacket;
+import net.minecraft.network.protocol.game.ClientboundPlayerChatPacket;
+import net.minecraft.network.protocol.game.ClientboundPlayerInfoRemovePacket;
+import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket;
+import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
+import net.minecraft.network.protocol.game.ClientboundSetEntityLinkPacket;
+import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
+import net.minecraft.network.protocol.game.ClientboundSetEquipmentPacket;
+import net.minecraft.network.protocol.game.ClientboundSetPassengersPacket;
 import net.minecraft.network.protocol.game.ClientboundSoundEntityPacket;
 import net.minecraft.network.protocol.game.ClientboundSoundPacket;
 import net.minecraft.network.protocol.game.ClientboundStopSoundPacket;
+import net.minecraft.network.protocol.game.ClientboundTakeItemEntityPacket;
+import net.minecraft.network.protocol.game.ClientboundTeleportEntityPacket;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerBossEvent;
@@ -415,6 +431,7 @@ public final class SeasonStartSystem {
 	private static final float WORLD_REVEAL_TOTAL_BURST_WEIGHT = computeWorldRevealTotalBurstWeight();
 
 	private static final Map<UUID, PlayerSceneState> PLAYER_STATES = new LinkedHashMap<>();
+	private static final Set<PlayerVisibilityPair> HIDDEN_PLAYER_PROFILE_PAIRS = new HashSet<>();
 	private static final List<BlockPos> SHELL_DISSOLVE_ORDER = new ArrayList<>();
 	private static final List<TerrainPlacement> WORLD_REVEAL_TERRAIN = new ArrayList<>();
 	private static final List<BlockPos> WORLD_REVEAL_BARRIER_COLLISION = new ArrayList<>();
@@ -496,6 +513,7 @@ public final class SeasonStartSystem {
 		serverAnchor = null;
 		serverStructureAxis = Direction.Axis.Z;
 		PLAYER_STATES.clear();
+		HIDDEN_PLAYER_PROFILE_PAIRS.clear();
 		SHELL_DISSOLVE_ORDER.clear();
 		WORLD_REVEAL_TERRAIN.clear();
 		WORLD_REVEAL_BARRIER_COLLISION.clear();
@@ -566,6 +584,62 @@ public final class SeasonStartSystem {
 				&& sender.level().dimension().equals(receiver.level().dimension());
 	}
 
+	/**
+	 * Keeps every private intro physically separate from every other player until its light cue ends.
+	 * This is intentionally server-side: clients never begin tracking the hidden player in the first place.
+	 */
+	public static boolean shouldSuppressEntityTracking(ServerPlayer receiver, Entity entity) {
+		if (receiver == null || entity == null || entity == receiver || !active) {
+			return false;
+		}
+		if (entity instanceof ServerPlayer subject) {
+			return shouldHidePlayerFrom(receiver, subject);
+		}
+		if (!(entity instanceof ItemEntity itemEntity)) {
+			return false;
+		}
+		if (isInPrivateIntroPhase(receiver)) {
+			return true;
+		}
+		Entity owner = itemEntity.getOwner();
+		return owner instanceof ServerPlayer ownerPlayer && isInPrivateIntroPhase(ownerPlayer);
+	}
+
+	public static boolean shouldHidePlayerFrom(ServerPlayer receiver, ServerPlayer subject) {
+		return receiver != null
+				&& subject != null
+				&& receiver != subject
+				&& active
+				&& (isInPrivateIntroPhase(receiver) || isInPrivateIntroPhase(subject));
+	}
+
+	public static boolean shouldBlockEntityInteraction(ServerPlayer actor, Entity target) {
+		if (actor == null || target == null || !active) {
+			return false;
+		}
+		if (target instanceof ServerPlayer targetPlayer) {
+			return shouldHidePlayerFrom(actor, targetPlayer);
+		}
+		return target instanceof ItemEntity && isInPrivateIntroPhase(actor);
+	}
+
+	public static boolean shouldBlockItemPickup(ServerPlayer player, ItemEntity itemEntity) {
+		if (player == null || itemEntity == null || !active) {
+			return false;
+		}
+		if (isInPrivateIntroPhase(player)) {
+			return true;
+		}
+		Entity owner = itemEntity.getOwner();
+		return owner instanceof ServerPlayer ownerPlayer && isInPrivateIntroPhase(ownerPlayer);
+	}
+
+	public static boolean shouldBlockEntityPush(Entity first, Entity second) {
+		return first instanceof ServerPlayer firstPlayer
+				&& second instanceof ServerPlayer secondPlayer
+				&& shouldHidePlayerFrom(firstPlayer, secondPlayer);
+	}
+
 	public static boolean shouldOverrideStabilityHud() {
 		return (active || worldRevealActive) && !completed;
 	}
@@ -586,13 +660,130 @@ public final class SeasonStartSystem {
 	}
 
 	public static boolean shouldSuppressOutgoingPacket(ServerPlayer receiver, Packet<?> packet) {
-		if (receiver == null || packet == null || !isInSensoryIsolation(receiver)) {
+		if (receiver == null || packet == null) {
 			return false;
 		}
-		return packet instanceof ClientboundSoundPacket
-				|| packet instanceof ClientboundSoundEntityPacket
-				|| packet instanceof ClientboundStopSoundPacket
-				|| packet instanceof ClientboundLevelParticlesPacket;
+		if (packet instanceof ClientboundPlayerChatPacket playerChatPacket) {
+			ServerPlayer sender = receiver.level() instanceof ServerLevel level
+					? level.getServer().getPlayerList().getPlayer(playerChatPacket.sender())
+					: null;
+			return isInPrivateIntroPhase(receiver) || shouldHidePlayerFrom(receiver, sender);
+		}
+		if (packet instanceof ClientboundDisguisedChatPacket && isInPrivateIntroPhase(receiver)) {
+			return true;
+		}
+		if (packet instanceof ClientboundBlockUpdatePacket blockUpdatePacket
+				&& shouldSuppressPrivateIntroBlockUpdate(receiver, blockUpdatePacket.getPos())) {
+			return true;
+		}
+		if (shouldSuppressTrackedEntityPacket(receiver, packet)) {
+			return true;
+		}
+		if (isInPrivateIntroPhase(receiver)) {
+			return packet instanceof ClientboundSoundPacket
+					|| packet instanceof ClientboundSoundEntityPacket
+					|| packet instanceof ClientboundStopSoundPacket
+					|| packet instanceof ClientboundLevelParticlesPacket;
+		}
+		if (packet instanceof ClientboundSoundEntityPacket soundEntityPacket) {
+			return shouldSuppressEntityTracking(receiver, resolveEntity(receiver, soundEntityPacket.getId()));
+		}
+		if (packet instanceof ClientboundSoundPacket soundPacket) {
+			return isPrivateIntroParticipantNear(receiver, soundPacket.getX(), soundPacket.getY(), soundPacket.getZ(), 5.0D);
+		}
+		if (packet instanceof ClientboundLevelParticlesPacket particlesPacket) {
+			return isPrivateIntroParticipantNear(receiver, particlesPacket.getX(), particlesPacket.getY(), particlesPacket.getZ(), 3.0D);
+		}
+		return false;
+	}
+
+	private static boolean shouldSuppressPrivateIntroBlockUpdate(ServerPlayer receiver, BlockPos pos) {
+		if (receiver == null || pos == null || serverAnchor == null || !active) {
+			return false;
+		}
+		BoxGeometry barrierGeometry = computeBarrierGeometry(serverAnchor);
+		MinecraftServer server = receiver.level().getServer();
+		for (Map.Entry<UUID, PlayerSceneState> entry : PLAYER_STATES.entrySet()) {
+			PlayerSceneState state = entry.getValue();
+			if (state == null) {
+				continue;
+			}
+			SlotDefinition slot = resolveSlotDefinition(barrierGeometry, state.slotIndex);
+			if (slot == null || (!slot.orePos.equals(pos) && !slot.oreSupportPos.equals(pos))) {
+				continue;
+			}
+			ServerPlayer owner = server.getPlayerList().getPlayer(entry.getKey());
+			return owner != null && owner != receiver && shouldHidePlayerFrom(receiver, owner);
+		}
+		return false;
+	}
+
+	private static boolean shouldSuppressTrackedEntityPacket(ServerPlayer receiver, Packet<?> packet) {
+		if (packet instanceof ClientboundAddEntityPacket addEntityPacket) {
+			return shouldSuppressEntityTracking(receiver, resolveEntity(receiver, addEntityPacket.getId()));
+		}
+		if (packet instanceof ClientboundMoveEntityPacket moveEntityPacket) {
+			return shouldSuppressEntityTracking(receiver, moveEntityPacket.getEntity((ServerLevel) receiver.level()));
+		}
+		if (packet instanceof ClientboundTeleportEntityPacket teleportEntityPacket) {
+			return shouldSuppressEntityTracking(receiver, resolveEntity(receiver, teleportEntityPacket.id()));
+		}
+		if (packet instanceof ClientboundSetEntityDataPacket entityDataPacket) {
+			return shouldSuppressEntityTracking(receiver, resolveEntity(receiver, entityDataPacket.id()));
+		}
+		if (packet instanceof ClientboundSetEquipmentPacket equipmentPacket) {
+			return shouldSuppressEntityTracking(receiver, resolveEntity(receiver, equipmentPacket.getEntity()));
+		}
+		if (packet instanceof ClientboundSetEntityMotionPacket motionPacket) {
+			return shouldSuppressEntityTracking(receiver, resolveEntity(receiver, motionPacket.getId()));
+		}
+		if (packet instanceof ClientboundAnimatePacket animatePacket) {
+			return shouldSuppressEntityTracking(receiver, resolveEntity(receiver, animatePacket.getId()));
+		}
+		if (packet instanceof ClientboundEntityEventPacket entityEventPacket) {
+			return shouldSuppressEntityTracking(receiver, entityEventPacket.getEntity((ServerLevel) receiver.level()));
+		}
+		if (packet instanceof ClientboundSetEntityLinkPacket linkPacket) {
+			return shouldSuppressEntityTracking(receiver, resolveEntity(receiver, linkPacket.getSourceId()))
+					|| shouldSuppressEntityTracking(receiver, resolveEntity(receiver, linkPacket.getDestId()));
+		}
+		if (packet instanceof ClientboundSetPassengersPacket passengersPacket) {
+			if (shouldSuppressEntityTracking(receiver, resolveEntity(receiver, passengersPacket.getVehicle()))) {
+				return true;
+			}
+			for (int passengerId : passengersPacket.getPassengers()) {
+				if (shouldSuppressEntityTracking(receiver, resolveEntity(receiver, passengerId))) {
+					return true;
+				}
+			}
+			return false;
+		}
+		if (packet instanceof ClientboundTakeItemEntityPacket takeItemPacket) {
+			return shouldSuppressEntityTracking(receiver, resolveEntity(receiver, takeItemPacket.getItemId()))
+					|| shouldSuppressEntityTracking(receiver, resolveEntity(receiver, takeItemPacket.getPlayerId()));
+		}
+		return false;
+	}
+
+	private static Entity resolveEntity(ServerPlayer receiver, int entityId) {
+		if (receiver == null || !(receiver.level() instanceof ServerLevel level)) {
+			return null;
+		}
+		return level.getEntity(entityId);
+	}
+
+	private static boolean isPrivateIntroParticipantNear(ServerPlayer receiver, double x, double y, double z, double radius) {
+		if (receiver == null || !(receiver.level() instanceof ServerLevel level)) {
+			return false;
+		}
+		double radiusSquared = radius * radius;
+		for (ServerPlayer candidate : level.players()) {
+			if (candidate != receiver && isInPrivateIntroPhase(candidate)
+					&& candidate.distanceToSqr(x, y, z) <= radiusSquared) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	public static Vec3 resolveServerVoiceOrigin(MinecraftServer server, ServerPlayer focusPlayer) {
@@ -688,6 +879,7 @@ public final class SeasonStartSystem {
 			for (ServerPlayer player : server.getPlayerList().getPlayers()) {
 				assignOrRestorePlayer(server, player, false);
 			}
+			syncPrivatePlayerProfiles(server);
 			if (countSharedPlayers() > 0) {
 				if (nextSharedReminderTick == Long.MIN_VALUE && server.overworld() != null) {
 					nextSharedReminderTick = server.overworld().getGameTime() + SHARED_IDLE_REMINDER_TICKS;
@@ -747,6 +939,7 @@ public final class SeasonStartSystem {
 		}
 		if (active) {
 			assignOrRestorePlayer(server, player, true);
+			syncPrivatePlayerProfiles(server);
 		} else if (worldRevealActive) {
 			applyFreeState(player);
 		} else if (shellDissolving) {
@@ -801,17 +994,20 @@ public final class SeasonStartSystem {
 			return true;
 		}
 		PlayerSceneState state = PLAYER_STATES.get(sender.getUUID());
-		if (state == null || state.phase != PlayerPhase.WAITING_START) {
+		if (state == null || state.phase == PlayerPhase.SHARED || state.phase == PlayerPhase.FREE) {
 			return true;
 		}
 		MinecraftServer server = sender.level().getServer();
 		if (server == null) {
-			return true;
+			return false;
+		}
+		if (state.phase != PlayerPhase.WAITING_START) {
+			return false;
 		}
 
 		String raw = message.signedContent() == null ? "" : message.signedContent().trim();
 		String transformed = shouldUseLatinReplacement(raw) ? "srat" : "срать";
-		server.getPlayerList().broadcastSystemMessage(params.decorate(Component.literal(transformed)), false);
+		sender.sendSystemMessage(params.decorate(Component.literal(transformed)));
 
 		if (matchesStartWord(raw)) {
 			beginIntroAfterChatStart(server, sender, state);
@@ -1009,6 +1205,7 @@ public final class SeasonStartSystem {
 		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
 			assignOrRestorePlayer(server, player, true);
 		}
+		syncPrivatePlayerProfiles(server);
 		stateDirty = true;
 	}
 
@@ -1052,6 +1249,7 @@ public final class SeasonStartSystem {
 			for (ServerPlayer player : server.getPlayerList().getPlayers()) {
 				applyFreeState(player);
 			}
+			syncPrivatePlayerProfiles(server);
 			SeasonStartVoiceSystem.fireTrigger(server, "season_finished", null);
 			worldRevealCrackStartTick = overworld.getGameTime()
 					+ resolveTriggerSequenceDurationTicks("season_finished")
@@ -1820,15 +2018,11 @@ public final class SeasonStartSystem {
 		state.nextGuidanceEarliestTick = Long.MAX_VALUE;
 		state.lastGuidanceStateKey = "";
 		state.restoreVisionTick = nowTick + resolveCueEndTickById("phase3_restore_vision");
-		state.restoreBodyTick = nowTick + resolveCueEndTickById("phase3_restore_body");
-		state.activateSharedTick = nowTick + resolveTriggerSequenceDurationTicks("player_powered_server");
 		state.sharedVisionRestored = false;
-		state.sharedBodyRestored = false;
 		state.pendingSharedPeersLine = countSharedPlayers() > 0;
 		stateDirty = true;
 
 		ensureRestoringPlayerState(player, state);
-		spawnLightOnlineParticles(server.overworld());
 		SeasonStartVoiceSystem.fireTrigger(server, "player_powered_server", player);
 	}
 
@@ -1878,26 +2072,17 @@ public final class SeasonStartSystem {
 			return;
 		}
 		long nowTick = player.level().getGameTime();
-		if (!state.sharedVisionRestored && nowTick >= state.restoreVisionTick) {
-			player.removeEffect(MobEffects.BLINDNESS);
-			state.sharedVisionRestored = true;
-			stateDirty = true;
-		}
-		if (!state.sharedBodyRestored && nowTick >= state.restoreBodyTick) {
-			ServerAbsoluteInvisibilitySystem.deactivate(player);
-			player.removeEffect(MobEffects.INVISIBILITY);
-			state.sharedBodyRestored = true;
-			stateDirty = true;
-		}
-		if (nowTick < state.activateSharedTick) {
+		if (state.sharedVisionRestored || nowTick < state.restoreVisionTick) {
 			return;
 		}
+		player.removeEffect(MobEffects.BLINDNESS);
+		state.sharedVisionRestored = true;
 		state.phase = PlayerPhase.SHARED;
 		state.restoreVisionTick = Long.MAX_VALUE;
-		state.restoreBodyTick = Long.MAX_VALUE;
-		state.activateSharedTick = Long.MAX_VALUE;
 		stateDirty = true;
 		applySharedPlayerState(player);
+		syncPrivatePlayerProfiles(server);
+		spawnLightOnlineParticles(server.overworld());
 		if (state.pendingSharedPeersLine) {
 			SeasonStartVoiceSystem.fireTrigger(server, "player_powered_server_others_visible", player);
 			state.pendingSharedPeersLine = false;
@@ -4406,10 +4591,7 @@ public final class SeasonStartSystem {
 		player.setSilent(true);
 		player.setGameMode(GameType.SURVIVAL);
 		player.addEffect(new MobEffectInstance(MobEffects.BLINDNESS, get().introBlindnessTicks, 0, false, false, true));
-		if (!player.hasEffect(MobEffects.INVISIBILITY)) {
-			player.addEffect(ServerAbsoluteInvisibilitySystem.createEffectInstance());
-		}
-		ServerAbsoluteInvisibilitySystem.activate(player);
+		clearLegacyIntroInvisibility(player);
 		ensureIntroTool(player);
 	}
 
@@ -4429,10 +4611,7 @@ public final class SeasonStartSystem {
 		player.setSilent(true);
 		player.setGameMode(GameType.SURVIVAL);
 		player.addEffect(new MobEffectInstance(MobEffects.BLINDNESS, get().introBlindnessTicks, 0, false, false, true));
-		if (!player.hasEffect(MobEffects.INVISIBILITY)) {
-			player.addEffect(ServerAbsoluteInvisibilitySystem.createEffectInstance());
-		}
-		ServerAbsoluteInvisibilitySystem.activate(player);
+		clearLegacyIntroInvisibility(player);
 		ensureIntroTool(player);
 	}
 
@@ -4449,10 +4628,7 @@ public final class SeasonStartSystem {
 		player.setSilent(true);
 		player.setGameMode(GameType.ADVENTURE);
 		player.addEffect(new MobEffectInstance(MobEffects.BLINDNESS, get().introBlindnessTicks, 0, false, false, true));
-		if (!player.hasEffect(MobEffects.INVISIBILITY)) {
-			player.addEffect(ServerAbsoluteInvisibilitySystem.createEffectInstance());
-		}
-		ServerAbsoluteInvisibilitySystem.activate(player);
+		clearLegacyIntroInvisibility(player);
 		removeIntroTool(player);
 	}
 
@@ -4474,21 +4650,12 @@ public final class SeasonStartSystem {
 		} else {
 			player.removeEffect(MobEffects.BLINDNESS);
 		}
-		if (!state.sharedBodyRestored) {
-			if (!player.hasEffect(MobEffects.INVISIBILITY)) {
-				player.addEffect(ServerAbsoluteInvisibilitySystem.createEffectInstance());
-			}
-			ServerAbsoluteInvisibilitySystem.activate(player);
-		} else {
-			ServerAbsoluteInvisibilitySystem.deactivate(player);
-			player.removeEffect(MobEffects.INVISIBILITY);
-		}
+		clearLegacyIntroInvisibility(player);
 	}
 
 	private static void applySharedPlayerState(ServerPlayer player) {
-		ServerAbsoluteInvisibilitySystem.deactivate(player);
+		clearLegacyIntroInvisibility(player);
 		player.removeEffect(MobEffects.BLINDNESS);
-		player.removeEffect(MobEffects.INVISIBILITY);
 		player.setSilent(false);
 		player.setGameMode(GameType.SURVIVAL);
 	}
@@ -4497,13 +4664,20 @@ public final class SeasonStartSystem {
 		if (player == null) {
 			return;
 		}
-		ServerAbsoluteInvisibilitySystem.deactivate(player);
+		clearLegacyIntroInvisibility(player);
 		player.removeEffect(MobEffects.BLINDNESS);
 		player.removeEffect(MobEffects.DARKNESS);
-		player.removeEffect(MobEffects.INVISIBILITY);
 		player.setSilent(false);
 		player.setGameMode(GameType.SURVIVAL);
 		removeIntroTool(player);
+	}
+
+	private static void clearLegacyIntroInvisibility(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		ServerAbsoluteInvisibilitySystem.deactivate(player);
+		player.removeEffect(MobEffects.INVISIBILITY);
 	}
 
 	private static void clearPostStartPlayerInventory(ServerPlayer player) {
@@ -4533,7 +4707,7 @@ public final class SeasonStartSystem {
 		}
 	}
 
-	private static boolean isInSensoryIsolation(ServerPlayer player) {
+	private static boolean isInPrivateIntroPhase(ServerPlayer player) {
 		PlayerSceneState state = player == null ? null : PLAYER_STATES.get(player.getUUID());
 		return active
 				&& state != null
@@ -4541,6 +4715,38 @@ public final class SeasonStartSystem {
 				|| state.phase == PlayerPhase.ISOLATED
 				|| state.phase == PlayerPhase.GUIDED_TO_SERVER
 				|| state.phase == PlayerPhase.RESTORING);
+	}
+
+	private static void syncPrivatePlayerProfiles(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+		List<ServerPlayer> players = server.getPlayerList().getPlayers();
+		Set<UUID> onlineIds = new HashSet<>();
+		for (ServerPlayer player : players) {
+			if (player != null) {
+				onlineIds.add(player.getUUID());
+			}
+		}
+		HIDDEN_PLAYER_PROFILE_PAIRS.removeIf(pair -> !onlineIds.contains(pair.viewerId) || !onlineIds.contains(pair.subjectId));
+		for (ServerPlayer viewer : players) {
+			if (viewer == null) {
+				continue;
+			}
+			for (ServerPlayer subject : players) {
+				if (subject == null || viewer == subject) {
+					continue;
+				}
+				PlayerVisibilityPair pair = new PlayerVisibilityPair(viewer.getUUID(), subject.getUUID());
+				if (shouldHidePlayerFrom(viewer, subject)) {
+					if (HIDDEN_PLAYER_PROFILE_PAIRS.add(pair)) {
+						viewer.connection.send(new ClientboundPlayerInfoRemovePacket(List.of(subject.getUUID())));
+					}
+				} else if (HIDDEN_PLAYER_PROFILE_PAIRS.remove(pair)) {
+					viewer.connection.send(ClientboundPlayerInfoUpdatePacket.createPlayerInitializing(List.of(subject)));
+				}
+			}
+		}
 	}
 
 	private static void ensureIntroTool(ServerPlayer player) {
@@ -4911,6 +5117,7 @@ public final class SeasonStartSystem {
 	private static void loadState(MinecraftServer server) {
 		Path path = getStatePath(server);
 		PLAYER_STATES.clear();
+		HIDDEN_PLAYER_PROFILE_PAIRS.clear();
 		SHARED_BITCOIN_POSITIONS.clear();
 		clearSharedLaunchBossBar();
 		stateLoaded = true;
@@ -5322,10 +5529,7 @@ public final class SeasonStartSystem {
 		private boolean minedIntroBitcoin;
 		private boolean poweredServer;
 		private long restoreVisionTick = Long.MAX_VALUE;
-		private long restoreBodyTick = Long.MAX_VALUE;
-		private long activateSharedTick = Long.MAX_VALUE;
 		private boolean sharedVisionRestored = false;
-		private boolean sharedBodyRestored = false;
 		private boolean pendingSharedPeersLine = false;
 		private long guidanceNarrationGateTick = 0L;
 		private long nextGuidanceTick = 0L;
@@ -5367,6 +5571,9 @@ public final class SeasonStartSystem {
 		private long nextStartPromptTick = 0L;
 		private int startPromptVariantIndex = 0;
 		private int wrongStartVariantIndex = 0;
+	}
+
+	private record PlayerVisibilityPair(UUID viewerId, UUID subjectId) {
 	}
 
 	private record BoxGeometry(int minX, int maxX, int minZ, int maxZ, int floorY, int roofY) {

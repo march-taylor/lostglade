@@ -3,6 +3,7 @@ package com.lostglade.mixin;
 import com.lostglade.block.ModBlocks;
 import com.lostglade.server.ServerMechanicsGateSystem;
 import com.lostglade.server.ServerRaceSystem;
+import com.lostglade.server.SeasonStartSystem;
 import com.lostglade.server.ServerUpgradeUiSystem;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
@@ -75,6 +76,10 @@ public abstract class ServerItemEntityMixin {
 		}
 
 		ItemEntity self = (ItemEntity) (Object) this;
+		if (SeasonStartSystem.shouldBlockItemPickup(serverPlayer, self)) {
+			ci.cancel();
+			return;
+		}
 		if (!ServerMechanicsGateSystem.canOwnItem(serverPlayer, self.getItem())) {
 			ci.cancel();
 		}

@@ -4,6 +4,7 @@ import com.lostglade.server.DroneSystem;
 import com.lostglade.server.RendererBotCameraSystem;
 import com.lostglade.server.RendererBotPresenceSystem;
 import com.lostglade.server.ServerRaceSystem;
+import com.lostglade.server.SeasonStartSystem;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.level.ServerEntity;
@@ -42,6 +43,12 @@ public abstract class ChunkMapTrackedEntityRendererBotMixin {
 
 	@Inject(method = "updatePlayer", at = @At("HEAD"), cancellable = true)
 	private void lg2$trackEntitiesFromVirtualCameraPositions(ServerPlayer player, CallbackInfo ci) {
+		if (SeasonStartSystem.shouldSuppressEntityTracking(player, this.entity)) {
+			ci.cancel();
+			this.removePlayer(player);
+			return;
+		}
+
 		if (this.entity instanceof ServerPlayer hiddenMilkMousePlayer
 				&& hiddenMilkMousePlayer != player
 				&& ServerRaceSystem.isMilkMouseActive(hiddenMilkMousePlayer)) {

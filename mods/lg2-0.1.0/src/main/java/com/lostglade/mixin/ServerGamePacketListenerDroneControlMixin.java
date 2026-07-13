@@ -1,6 +1,7 @@
 package com.lostglade.mixin;
 
 import com.lostglade.server.DroneSystem;
+import com.lostglade.server.SeasonStartSystem;
 import net.minecraft.network.protocol.game.ServerboundAcceptTeleportationPacket;
 import net.minecraft.network.protocol.game.ServerboundInteractPacket;
 import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket;
@@ -8,6 +9,7 @@ import net.minecraft.network.protocol.game.ServerboundPlayerActionPacket;
 import net.minecraft.network.protocol.game.ServerboundPlayerInputPacket;
 import net.minecraft.network.protocol.game.ServerboundUseItemPacket;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.network.ServerGamePacketListenerImpl;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.phys.Vec3;
@@ -36,6 +38,11 @@ public abstract class ServerGamePacketListenerDroneControlMixin {
 	@Inject(method = "handleInteract", at = @At("HEAD"), cancellable = true)
 	private void lg2$fireControlledDroneTurretOnInteraction(ServerboundInteractPacket packet, CallbackInfo ci) {
 		if (packet == null) {
+			return;
+		}
+		if (this.player.level() instanceof ServerLevel level
+				&& SeasonStartSystem.shouldBlockEntityInteraction(this.player, packet.getTarget(level))) {
+			ci.cancel();
 			return;
 		}
 		final boolean[] handled = {false};

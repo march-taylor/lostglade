@@ -1,6 +1,7 @@
 package com.lostglade.mixin;
 
 import com.lostglade.server.DroneSystem;
+import com.lostglade.server.SeasonStartSystem;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.material.PushReaction;
 import org.spongepowered.asm.mixin.Mixin;
@@ -37,6 +38,10 @@ public abstract class EntityDronePhysicalBodyMixin {
 	@Inject(method = "canCollideWith", at = @At("HEAD"), cancellable = true)
 	private void lg2$makeDroneRootCollideWithEntities(Entity other, CallbackInfoReturnable<Boolean> cir) {
 		Entity self = (Entity) (Object) this;
+		if (SeasonStartSystem.shouldBlockEntityPush(self, other)) {
+			cir.setReturnValue(false);
+			return;
+		}
 		if (lg2$isDroneRoot(self)) {
 			cir.setReturnValue(false);
 			return;
