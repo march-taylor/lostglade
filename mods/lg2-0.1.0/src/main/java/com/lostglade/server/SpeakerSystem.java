@@ -402,6 +402,10 @@ public final class SpeakerSystem {
 		return MAX_SPEAKER_GAIN * (float) Math.pow(normalized, SPEAKER_GAIN_EXPONENT);
 	}
 
+	static float maximumVolumeFactor() {
+		return MAX_SPEAKER_GAIN;
+	}
+
 	static float audibleDistance(int volumePercent) {
 		int clamped = Math.max(1, Math.min(100, volumePercent));
 		if (clamped <= 1) {
@@ -680,6 +684,7 @@ public final class SpeakerSystem {
 				float scaled = averaged * factor;
 				output[index] = softLimitSample(scaled);
 			}
+			MicrophoneSystem.offerSpeakerAudio(this.key.dimension(), this.key.pos(), audibleDistance(this.volumePercent), output);
 			return output;
 		}
 
