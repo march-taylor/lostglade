@@ -919,10 +919,10 @@
       "generatorVersion": 4
     },
     "shared_launch_complete": {
-      "fingerprint": "1876b9bc7c20c8a1b988795ec6163df2121a279abc1ba60b48fd602802a1423a",
-      "text": "Сто процентов. Питание принято. Не расслабляйтесь. Мы ещё не закончили.",
+      "fingerprint": "b1bb18dbfc44f415368cb4295d4be0478fbe830bbb47d2cef2567db92710f019",
+      "text": "Сто процентов. Сейчас разберусь что делаем дальше.",
       "outputPath": "config/lg2-season-start/voice/shared_launch_complete.wav",
-      "durationTicks": 108,
+      "durationTicks": 76,
       "generatorVersion": 4
     },
     "phase5_menu_power_received": {

@@ -2217,7 +2217,7 @@ public final class ServerRaceSystem {
 
 	/** Gives a participant an in-memory tutorial race without changing race ownership in JSON. */
 	public static boolean assignSeasonStartRace(ServerPlayer player, String raceId) {
-		if (player == null) {
+		if (player == null || RendererBotPresenceSystem.isRendererBot(player)) {
 			return false;
 		}
 		PlayerRaceConfig race = resolveSeasonStartRace(raceId);
@@ -2225,6 +2225,10 @@ public final class ServerRaceSystem {
 			return false;
 		}
 		SEASON_START_RACES.put(player.getUUID(), race);
+		MinecraftServer server = player.level().getServer();
+		if (server != null) {
+			applyRaceCommandRuntimeRefresh(server, player);
+		}
 		return true;
 	}
 
@@ -2235,7 +2239,6 @@ public final class ServerRaceSystem {
 		}
 		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
 			assignSeasonStartRace(player, raceId);
-			applyRaceCommandRuntimeRefresh(server, player);
 		}
 	}
 

@@ -54,7 +54,7 @@ public final class SeasonStartVoiceSystem {
 	private static final long URGENT_QUEUE_TTL_TICKS = 20L * 2L;
 	private static final UUID SERVER_VOICE_SOURCE_ID = UUID.nameUUIDFromBytes("lg2:season_start_server_voice".getBytes(StandardCharsets.UTF_8));
 	private static final Map<String, Deque<QueuedCue>> CHANNEL_QUEUES = new HashMap<>();
-	private static final Map<String, ActiveCuePlayback> ACTIVE_PLAYBACKS = new HashMap<>();
+	private static final Map<String, ActiveCuePlayback> ACTIVE_PLAYBACKS = new ConcurrentHashMap<>();
 	private static final Map<UUID, Set<String>> PLAYER_COMPLETED_CUES = new HashMap<>();
 	private static final Set<String> GLOBAL_COMPLETED_CUES = new HashSet<>();
 	private static final Map<UUID, Long> LIVE_VOICE_SEQUENCES = new HashMap<>();
@@ -76,6 +76,7 @@ public final class SeasonStartVoiceSystem {
 	}
 
 	public static void resetSceneState() {
+		cancelAllActivePlaybacks();
 		CHANNEL_QUEUES.clear();
 		ACTIVE_PLAYBACKS.clear();
 		PLAYER_COMPLETED_CUES.clear();
@@ -101,6 +102,42 @@ public final class SeasonStartVoiceSystem {
 			return;
 		}
 		clearChannel("player:" + player.getUUID());
+	}
+
+	/**
+	 * Progress narration is a live status, not a historical log. A later value
+	 * replaces any earlier percentage line that has not finished yet.
+	 */
+	public static void replaceSharedLaunchProgressNarration(MinecraftServer server, String trigger) {
+		clearSharedLaunchProgressNarration();
+		fireTrigger(server, trigger, null);
+	}
+
+	/** Stops only obsolete 10..90% launch commentary without touching other global scenes. */
+	public static void clearSharedLaunchProgressNarration() {
+		Deque<QueuedCue> queue = CHANNEL_QUEUES.get("global");
+		if (queue != null) {
+			queue.removeIf(queuedCue -> isSharedLaunchProgressCue(queuedCue == null ? null : queuedCue.cue));
+			if (queue.isEmpty()) {
+				CHANNEL_QUEUES.remove("global");
+			}
+		}
+		ActiveCuePlayback active = ACTIVE_PLAYBACKS.get("global");
+		if (active != null && isSharedLaunchProgressCue(active.queuedCue == null ? null : active.queuedCue.cue)) {
+			interruptActivePlayback("global");
+		}
+	}
+
+	private static boolean isSharedLaunchProgressCue(VoiceCue cue) {
+		if (cue == null || cue.trigger == null) {
+			return false;
+		}
+		return switch (cue.trigger) {
+			case "shared_launch_ten", "shared_launch_twenty", "shared_launch_thirty", "shared_launch_forty",
+					"shared_launch_halfway", "shared_launch_sixty", "shared_launch_seventy", "shared_launch_eighty",
+					"shared_launch_ninety" -> true;
+			default -> false;
+		};
 	}
 
 	public static void onMicrophonePacket(MicrophonePacketEvent event) {
@@ -230,10 +267,10 @@ public final class SeasonStartVoiceSystem {
 			return;
 		}
 		ActiveCuePlayback active = ACTIVE_PLAYBACKS.remove(channelKey);
-		if (active == null || active.future == null || active.future.isDone()) {
+		if (active == null) {
 			return;
 		}
-		active.future.complete(null);
+		cancelActivePlayback(active);
 	}
 
 	private static void clearChannel(String channelKey) {
@@ -246,6 +283,19 @@ public final class SeasonStartVoiceSystem {
 			CHANNEL_QUEUES.remove(channelKey);
 		}
 		interruptActivePlayback(channelKey);
+	}
+
+	private static void cancelAllActivePlaybacks() {
+		for (ActiveCuePlayback active : new ArrayList<>(ACTIVE_PLAYBACKS.values())) {
+			cancelActivePlayback(active);
+		}
+	}
+
+	private static void cancelActivePlayback(ActiveCuePlayback active) {
+		if (active == null || active.future == null || active.future.isDone()) {
+			return;
+		}
+		active.future.complete(null);
 	}
 
 	private static boolean shouldQueueCue(VoiceCue cue, ServerPlayer focusPlayer) {
@@ -453,11 +503,11 @@ public final class SeasonStartVoiceSystem {
 		}
 		if ("player".equalsIgnoreCase(cue.audience)) {
 			ServerPlayer player = focusPlayerId == null ? null : server.getPlayerList().getPlayer(focusPlayerId);
-			return player == null ? List.of() : List.of(player);
+			return player == null || RendererBotPresenceSystem.isRendererBot(player) ? List.of() : List.of(player);
 		}
 		List<ServerPlayer> recipients = new ArrayList<>();
 		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-			if (player == null) {
+			if (player == null || RendererBotPresenceSystem.isRendererBot(player)) {
 				continue;
 			}
 			if ("shared".equalsIgnoreCase(cue.audience)

@@ -616,7 +616,7 @@ public final class ServerStabilitySystem {
 			ActiveFeedSoundSource source = iterator.next();
 			ServerLevel level = server.getLevel(source.key.dimension());
 			long now = level == null ? Long.MAX_VALUE : level.getGameTime();
-			if (level == null || now >= source.endTick || isFeedSoundSourceGone(level, source.key.pos())) {
+			if (level == null || now >= source.endTick || (!source.centeredOnListener && isFeedSoundSourceGone(level, source.key.pos()))) {
 				stopFeedSoundForListeners(server, source);
 				iterator.remove();
 				continue;
@@ -678,6 +678,10 @@ public final class ServerStabilitySystem {
 
 	private static void syncStartupFeedMusicSource(ServerLevel level, ActiveFeedSoundSource source, Set<UUID> onlineInLevel) {
 		for (ServerPlayer player : level.players()) {
+			if (RendererBotPresenceSystem.isRendererBot(player)) {
+				source.lastSegmentByListener.remove(player.getUUID());
+				continue;
+			}
 			onlineInLevel.add(player.getUUID());
 			UUID playerId = player.getUUID();
 			boolean shouldHear = PolymerResourcePackUtils.hasMainPack(player);

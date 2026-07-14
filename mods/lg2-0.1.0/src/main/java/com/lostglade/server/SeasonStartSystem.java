@@ -25,6 +25,7 @@ import net.minecraft.core.Holder;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.particles.DustParticleOptions;
 import net.minecraft.core.particles.ParticleTypes;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.ChatType;
 import net.minecraft.network.chat.PlayerChatMessage;
@@ -60,12 +61,15 @@ import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.Brightness;
 import net.minecraft.util.Mth;
+import net.minecraft.util.ProblemReporter;
 import net.minecraft.world.BossEvent;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.Display;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.EntitySpawnReason;
+import net.minecraft.world.entity.ExperienceOrb;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.Relative;
 import net.minecraft.world.entity.item.ItemEntity;
@@ -85,6 +89,7 @@ import net.minecraft.world.level.levelgen.RandomState;
 import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.level.storage.LevelResource;
 import net.minecraft.world.level.storage.LevelData;
+import net.minecraft.world.level.storage.TagValueOutput;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
@@ -108,6 +113,7 @@ import java.util.Random;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
@@ -337,8 +343,15 @@ public final class SeasonStartSystem {
 	private static final float STARTUP_WORLDGEN_THICKNESS_SCALE = 0.25F;
 	private static final double STARTUP_WORLDGEN_Y_OFFSET_FROM_OUTER_FLOOR = 1.25D;
 	private static final int SCENE_BLOCK_SET_FLAGS = 2 | 16 | 32;
+	// Building the scene touches a large cube of terrain. Keep every server tick bounded.
+	private static final int SCENE_BUILD_BATCH_BLOCKS = 4_096;
+	private static final int SCENE_SNAPSHOT_BATCH_BLOCKS = 16_384;
 	private static final int EXISTING_SERVER_SCAN_RADIUS = 48;
 	private static final int EXISTING_SERVER_SCAN_VERTICAL_MARGIN = 24;
+	private static final int LEGACY_FLOATING_SERVER_REPAIR_MIN_GAP = 24;
+	private static final int LEGACY_FLOATING_SERVER_REPAIR_MIN_DROP = 12;
+	private static final int WORLD_REVEAL_BOUNDARY_RESTORE_RADIUS = 4;
+	private static final int SCENE_PHYSICS_FREEZE_RADIUS = 4;
 	private static final Brightness STARTUP_WORLDGEN_BRIGHTNESS = Brightness.FULL_BRIGHT;
 	private static final Identifier WORLD_REVEAL_EARTHQUAKE_SOUND_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "season_start_earthquake");
 	private static final Holder<SoundEvent> WORLD_REVEAL_EARTHQUAKE_SOUND = Holder.direct(SoundEvent.createVariableRangeEvent(WORLD_REVEAL_EARTHQUAKE_SOUND_ID));
@@ -440,22 +453,29 @@ public final class SeasonStartSystem {
 	private static final List<TerrainPlacement> WORLD_REVEAL_TERRAIN = new ArrayList<>();
 	private static final List<BlockPos> WORLD_REVEAL_BARRIER_COLLISION = new ArrayList<>();
 	private static final List<WorldRevealEpisode> WORLD_REVEAL_EPISODES = new ArrayList<>();
+	private static final List<CompoundTag> WORLD_REVEAL_ENTITY_SNAPSHOTS = new ArrayList<>();
 	private static final Map<Long, Integer> WORLD_REVEAL_SURFACE_Y = new LinkedHashMap<>();
 	private static final Map<Long, BlockState> WORLD_REVEAL_TARGET_STATES = new HashMap<>();
+	private static final Map<Long, BlockState> WORLD_REVEAL_BOUNDARY_TARGET_STATES = new HashMap<>();
 	private static final Map<UUID, Vec3> WORLD_REVEAL_SAFE_TARGETS = new LinkedHashMap<>();
 	private static final Set<Long> WORLD_REVEAL_REQUIRED_POSITIONS = new LinkedHashSet<>();
 	private static final Set<Long> WORLD_REVEAL_DEFERRED_POSITIONS = new LinkedHashSet<>();
 	private static final Set<Long> WORLD_REVEAL_REVEALED_POSITIONS = new HashSet<>();
 	private static final Set<BlockPos> SHARED_BITCOIN_POSITIONS = new LinkedHashSet<>();
+	private static final Set<UUID> SCENE_BUILD_FLOATING_PLAYERS = new HashSet<>();
+	private static CompletableFuture<WorldRevealPlan> worldRevealPlanFuture = null;
+	private static boolean worldRevealPlanReady = false;
 	private static boolean stateLoaded = false;
 	private static boolean stateDirty = false;
 	private static boolean bootstrapComplete = false;
 	private static boolean active = false;
 	private static boolean completed = false;
+	private static boolean sceneBoundaryPhysicsFrozen = false;
 	private static boolean shellDissolving = false;
 	private static boolean worldRevealActive = false;
 	private static boolean worldRevealBarriersPlaced = false;
 	private static boolean scenePrepared = false;
+	private static SceneBuildTask sceneBuildTask = null;
 	private static int dissolveCursor = 0;
 	private static long nextSharedReminderTick = Long.MIN_VALUE;
 	private static long lastSharedLaunchProgressTick = Long.MIN_VALUE;
@@ -463,6 +483,7 @@ public final class SeasonStartSystem {
 	private static long pendingMenuExplanationTick = Long.MIN_VALUE;
 	private static long worldRevealPhaseStartTick = Long.MIN_VALUE;
 	private static long worldRevealCrackStartTick = Long.MIN_VALUE;
+	private static long worldRevealCrackNotBeforeTick = Long.MIN_VALUE;
 	private static long worldRevealMusicEndTick = Long.MIN_VALUE;
 	private static long worldRevealDarknessClearTick = Long.MIN_VALUE;
 	private static int sharedLaunchCollectedBitcoins = 0;
@@ -491,10 +512,12 @@ public final class SeasonStartSystem {
 		bootstrapComplete = false;
 		active = false;
 		completed = false;
+		sceneBoundaryPhysicsFrozen = false;
 		shellDissolving = false;
 		worldRevealActive = false;
 		worldRevealBarriersPlaced = false;
 		scenePrepared = false;
+		sceneBuildTask = null;
 		dissolveCursor = 0;
 		nextSharedReminderTick = Long.MIN_VALUE;
 		lastSharedLaunchProgressTick = Long.MIN_VALUE;
@@ -502,6 +525,7 @@ public final class SeasonStartSystem {
 		pendingMenuExplanationTick = Long.MIN_VALUE;
 		worldRevealPhaseStartTick = Long.MIN_VALUE;
 		worldRevealCrackStartTick = Long.MIN_VALUE;
+		worldRevealCrackNotBeforeTick = Long.MIN_VALUE;
 		worldRevealMusicEndTick = Long.MIN_VALUE;
 		worldRevealDarknessClearTick = Long.MIN_VALUE;
 		sharedLaunchCollectedBitcoins = 0;
@@ -526,13 +550,18 @@ public final class SeasonStartSystem {
 		WORLD_REVEAL_TERRAIN.clear();
 		WORLD_REVEAL_BARRIER_COLLISION.clear();
 		WORLD_REVEAL_EPISODES.clear();
+		WORLD_REVEAL_ENTITY_SNAPSHOTS.clear();
 		WORLD_REVEAL_SURFACE_Y.clear();
 		WORLD_REVEAL_TARGET_STATES.clear();
+		WORLD_REVEAL_BOUNDARY_TARGET_STATES.clear();
 		WORLD_REVEAL_SAFE_TARGETS.clear();
 		WORLD_REVEAL_REQUIRED_POSITIONS.clear();
 		WORLD_REVEAL_DEFERRED_POSITIONS.clear();
 		WORLD_REVEAL_REVEALED_POSITIONS.clear();
+		worldRevealPlanFuture = null;
+		worldRevealPlanReady = false;
 		SHARED_BITCOIN_POSITIONS.clear();
+		SCENE_BUILD_FLOATING_PLAYERS.clear();
 
 		ServerLifecycleEvents.SERVER_STARTED.register(SeasonStartSystem::onServerStarted);
 		ServerLifecycleEvents.SERVER_STOPPING.register(SeasonStartSystem::onServerStopping);
@@ -562,7 +591,14 @@ public final class SeasonStartSystem {
 	}
 
 	public static boolean isStartParticipant(ServerPlayer player) {
-		return player != null && PLAYER_STATES.containsKey(player.getUUID()) && (active || shellDissolving || worldRevealActive);
+		return isSeasonStartEligiblePlayer(player)
+				&& PLAYER_STATES.containsKey(player.getUUID())
+				&& (active || shellDissolving || worldRevealActive);
+	}
+
+	/** Camera renderer bots must never receive tutorial state, inventory changes, or narration. */
+	public static boolean isSeasonStartEligiblePlayer(ServerPlayer player) {
+		return player != null && !RendererBotPresenceSystem.isRendererBot(player);
 	}
 
 	public static boolean isInSharedPhase(ServerPlayer player) {
@@ -570,18 +606,23 @@ public final class SeasonStartSystem {
 		return state != null && state.phase == PlayerPhase.SHARED;
 	}
 
-	/** Shared milestones are delayed by the voice queue, never discarded because a menu is open. */
+	/** Shared narration is available only after personal onboarding; live progress lines are coalesced. */
 	public static boolean canReceiveSharedNarration(ServerPlayer player) {
-		return player != null && (!active || isInSharedPhase(player));
+		return isSeasonStartEligiblePlayer(player) && (!active || isInSharedPhase(player));
 	}
 
 	public static boolean isLiveVoiceControlled(ServerPlayer player) {
-		return active && player != null && PLAYER_STATES.containsKey(player.getUUID());
+		return active && isSeasonStartEligiblePlayer(player) && PLAYER_STATES.containsKey(player.getUUID());
 	}
 
 	public static boolean canRelayLiveVoice(ServerPlayer player) {
 		PlayerSceneState state = player == null ? null : PLAYER_STATES.get(player.getUUID());
-		return active && state != null && state.phase == PlayerPhase.SHARED;
+		return active && isSeasonStartEligiblePlayer(player) && state != null && state.phase == PlayerPhase.SHARED;
+	}
+
+	/** Bitcoin mined during the launch is a progress resource, never an XP source. */
+	public static boolean isExperienceSuppressed(ServerLevel level) {
+		return active && level != null && Level.OVERWORLD.equals(level.dimension());
 	}
 
 	public static boolean canHearLiveVoice(ServerPlayer sender, ServerPlayer receiver) {
@@ -670,6 +711,22 @@ public final class SeasonStartSystem {
 
 	public static boolean shouldUseFlatNarrationMix() {
 		return active && !completed;
+	}
+
+	public static boolean shouldFreezeSceneBoundaryPhysics(Level level, BlockPos pos) {
+		if (!sceneBoundaryPhysicsFrozen || level == null || pos == null || serverAnchor == null) {
+			return false;
+		}
+		if (!(level instanceof ServerLevel serverLevel) || !Level.OVERWORLD.equals(level.dimension())) {
+			return false;
+		}
+		BoxGeometry outerGeometry = computeOuterBoxGeometry(resolveServerAnchor(serverLevel));
+		return pos.getX() >= outerGeometry.minX - SCENE_PHYSICS_FREEZE_RADIUS
+				&& pos.getX() <= outerGeometry.maxX + SCENE_PHYSICS_FREEZE_RADIUS
+				&& pos.getY() >= outerGeometry.floorY - SCENE_PHYSICS_FREEZE_RADIUS
+				&& pos.getY() <= outerGeometry.roofY + SCENE_PHYSICS_FREEZE_RADIUS
+				&& pos.getZ() >= outerGeometry.minZ - SCENE_PHYSICS_FREEZE_RADIUS
+				&& pos.getZ() <= outerGeometry.maxZ + SCENE_PHYSICS_FREEZE_RADIUS;
 	}
 
 	/** The progression UI unlocks halfway through startup, while the shared launch keeps running. */
@@ -1019,7 +1076,10 @@ public final class SeasonStartSystem {
 
 	private static void onServerStarted(MinecraftServer server) {
 		loadState(server);
+		sceneBoundaryPhysicsFrozen = active || worldRevealActive;
+		releaseSceneBuildFlight(server);
 		ensureBootstrap(server);
+		removeRendererBotSceneStates(server);
 		if (worldRevealActive) {
 			forceCompleteWorldReveal(server);
 		}
@@ -1032,16 +1092,6 @@ public final class SeasonStartSystem {
 		}
 		if (active) {
 			rebuildActiveScene(server);
-			for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-				assignOrRestorePlayer(server, player, false);
-			}
-			syncPrivatePlayerProfiles(server);
-			if (countSharedPlayers() > 0) {
-				if (nextSharedReminderTick == Long.MIN_VALUE && server.overworld() != null) {
-					nextSharedReminderTick = server.overworld().getGameTime() + SHARED_IDLE_REMINDER_TICKS;
-				}
-				refreshSharedLaunchBossBar(server);
-			}
 		}
 		if (serverAnchor != null && server.overworld() != null) {
 			ServerBlock.ensureServerStructureDisplay(server.overworld(), serverAnchor, serverStructureAxis);
@@ -1052,12 +1102,33 @@ public final class SeasonStartSystem {
 		saveState(server);
 	}
 
+	private static void removeRendererBotSceneStates(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+		boolean changed = false;
+		for (Iterator<Map.Entry<UUID, PlayerSceneState>> iterator = PLAYER_STATES.entrySet().iterator(); iterator.hasNext(); ) {
+			Map.Entry<UUID, PlayerSceneState> entry = iterator.next();
+			ServerPlayer player = server.getPlayerList().getPlayer(entry.getKey());
+			if (!RendererBotPresenceSystem.isRendererBot(player)) {
+				continue;
+			}
+			iterator.remove();
+			ServerRaceSystem.clearSeasonStartRace(server, player);
+			changed = true;
+		}
+		if (changed) {
+			HIDDEN_PLAYER_PROFILE_PAIRS.removeIf(pair -> !PLAYER_STATES.containsKey(pair.viewerId) || !PLAYER_STATES.containsKey(pair.subjectId));
+			stateDirty = true;
+		}
+	}
+
 	private static void preTickServer(MinecraftServer server) {
 		if (server == null || !active) {
 			return;
 		}
 		ServerLevel overworld = server.overworld();
-		if (overworld == null || serverAnchor == null) {
+		if (overworld == null || serverAnchor == null || !scenePrepared) {
 			return;
 		}
 		tickStartupOfferings(server, overworld);
@@ -1070,8 +1141,14 @@ public final class SeasonStartSystem {
 		if (active) {
 			ServerLevel overworld = server.overworld();
 			if (overworld != null) {
+				if (!tickSceneBuild(server, overworld)) {
+					return;
+				}
 				clearSceneMobs(overworld);
 				for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+					if (!isSeasonStartEligiblePlayer(player)) {
+						continue;
+					}
 					PlayerSceneState state = PLAYER_STATES.get(player.getUUID());
 					if (state == null) {
 						continue;
@@ -1093,9 +1170,18 @@ public final class SeasonStartSystem {
 		if (server == null || player == null) {
 			return;
 		}
+		if (!isSeasonStartEligiblePlayer(player)) {
+			PLAYER_STATES.remove(player.getUUID());
+			ServerRaceSystem.clearSeasonStartRace(server, player);
+			return;
+		}
 		if (active) {
-			assignOrRestorePlayer(server, player, true);
-			syncPrivatePlayerProfiles(server);
+			if (scenePrepared) {
+				assignOrRestorePlayer(server, player, true);
+				syncPrivatePlayerProfiles(server);
+			} else if (player.level() instanceof ServerLevel level) {
+				protectPlayersDuringSceneBuild(level, List.of(player));
+			}
 		} else if (worldRevealActive) {
 			applyFreeState(player);
 		} else if (shellDissolving) {
@@ -1176,6 +1262,10 @@ public final class SeasonStartSystem {
 	private static int toggleSeasonStart(CommandContext<CommandSourceStack> context) {
 		MinecraftServer server = context.getSource().getServer();
 		if (active) {
+			if (sceneBuildTask != null) {
+				context.getSource().sendFailure(Component.literal("Стартовая сцена ещё собирается. Дождитесь её появления."));
+				return 0;
+			}
 			finishSeasonStart(server);
 			context.getSource().sendSuccess(() -> Component.literal("Старт сезона завершён."), true);
 		} else {
@@ -1209,6 +1299,7 @@ public final class SeasonStartSystem {
 		if (overworld == null) {
 			return;
 		}
+		ServerStructureBreakSystem.pruneStructureDisplays(overworld);
 		BlockPos anchor = resolveServerAnchor(overworld);
 		BlockPos bootstrapAnchor = resolveBootstrapAnchor(overworld);
 		if (anchor == null) {
@@ -1216,13 +1307,6 @@ public final class SeasonStartSystem {
 			rememberServerStructure(anchor, Direction.Axis.Z);
 		}
 		Direction.Axis anchorAxis = resolveKnownServerStructureAxis(overworld, anchor);
-		if (shouldRelocateBuriedBootstrapServer(anchor, bootstrapAnchor)
-				&& isServerStructurePresent(overworld, anchor)) {
-			ServerStructureBreakSystem.clearStructureSilently(overworld, anchor, anchorAxis == null ? Direction.Axis.Z : anchorAxis);
-			anchor = bootstrapAnchor;
-			rememberServerStructure(anchor, Direction.Axis.Z);
-			anchorAxis = Direction.Axis.Z;
-		}
 		if (!isServerStructurePresent(overworld, anchor)) {
 			ResolvedServerStructure existingStructure = discoverExistingServerStructure(overworld, anchor, bootstrapAnchor);
 			if (existingStructure != null) {
@@ -1231,6 +1315,15 @@ public final class SeasonStartSystem {
 				rememberServerStructure(anchor, anchorAxis);
 			}
 		}
+		ResolvedServerStructure anchoredStructure = resolveServerStructurePlacement(overworld, anchor);
+		if (anchoredStructure != null && shouldRepairFloatingBootstrapServer(overworld, anchoredStructure, bootstrapAnchor)) {
+			Direction.Axis repairAxis = anchoredStructure.axis();
+			ServerStructureBreakSystem.clearStructureSilently(overworld, anchoredStructure.anchor(), repairAxis);
+			anchor = bootstrapAnchor;
+			anchorAxis = repairAxis;
+			ServerBlock.placeServerStructure(overworld, anchor, repairAxis == Direction.Axis.X ? Direction.EAST : Direction.NORTH);
+			rememberServerStructure(anchor, anchorAxis);
+		}
 		if (!isServerStructurePresent(overworld, anchor)) {
 			ServerBlock.placeServerStructure(overworld, anchor, Direction.NORTH);
 			rememberServerStructure(anchor, Direction.Axis.Z);
@@ -1238,7 +1331,13 @@ public final class SeasonStartSystem {
 			rememberServerStructure(anchor, anchorAxis);
 		}
 		reconcileStackedServerDuplicates(overworld);
-		ServerBlock.ensureServerStructureDisplay(overworld, anchor, anchorAxis == null ? serverStructureAxis : anchorAxis);
+		BlockPos resolvedAnchor = resolveServerAnchor(overworld);
+		Direction.Axis resolvedAxis = resolveKnownServerStructureAxis(overworld, resolvedAnchor);
+		ServerBlock.ensureServerStructureDisplay(
+				overworld,
+				resolvedAnchor == null ? anchor : resolvedAnchor,
+				resolvedAxis == null ? serverStructureAxis : resolvedAxis
+		);
 		setDefaultSpawn(overworld);
 		if (!bootstrapComplete) {
 			bootstrapComplete = true;
@@ -1290,20 +1389,6 @@ public final class SeasonStartSystem {
 			return;
 		}
 		ensureSceneBuilt(overworld);
-		clearSharedBitcoins(overworld, true);
-		for (Map.Entry<UUID, PlayerSceneState> entry : PLAYER_STATES.entrySet()) {
-			PlayerSceneState state = entry.getValue();
-			if (state == null || state.phase == PlayerPhase.WAITING_START || state.phase == PlayerPhase.SHARED || state.phase == PlayerPhase.RESTORING) {
-				continue;
-			}
-			SlotDefinition slot = resolveSlotDefinition(computeBarrierGeometry(resolveServerAnchor(overworld)), state.slotIndex);
-			if (slot != null) {
-				placeIntroOre(overworld, slot);
-			}
-		}
-		if (sharedLaunchCollectedBitcoins < sharedLaunchRequiredBitcoins) {
-			ensureSharedBitcoinPopulation(overworld);
-		}
 	}
 
 	private static void startSeasonStart(MinecraftServer server, boolean automatic) {
@@ -1317,10 +1402,12 @@ public final class SeasonStartSystem {
 		ensureBootstrap(server);
 		active = true;
 		completed = false;
+		sceneBoundaryPhysicsFrozen = true;
 		shellDissolving = false;
 		worldRevealActive = false;
 		worldRevealBarriersPlaced = false;
 		scenePrepared = false;
+		sceneBuildTask = null;
 		dissolveCursor = 0;
 		nextSharedReminderTick = Long.MIN_VALUE;
 		lastSharedLaunchProgressTick = Long.MIN_VALUE;
@@ -1328,6 +1415,7 @@ public final class SeasonStartSystem {
 		pendingMenuExplanationTick = Long.MIN_VALUE;
 		worldRevealPhaseStartTick = Long.MIN_VALUE;
 		worldRevealCrackStartTick = Long.MIN_VALUE;
+		worldRevealCrackNotBeforeTick = Long.MIN_VALUE;
 		worldRevealMusicEndTick = Long.MIN_VALUE;
 		worldRevealDarknessClearTick = Long.MIN_VALUE;
 		sharedLaunchCollectedBitcoins = 0;
@@ -1351,22 +1439,24 @@ public final class SeasonStartSystem {
 		WORLD_REVEAL_TERRAIN.clear();
 		WORLD_REVEAL_BARRIER_COLLISION.clear();
 		WORLD_REVEAL_EPISODES.clear();
+		WORLD_REVEAL_ENTITY_SNAPSHOTS.clear();
 		WORLD_REVEAL_SURFACE_Y.clear();
 		WORLD_REVEAL_TARGET_STATES.clear();
+		WORLD_REVEAL_BOUNDARY_TARGET_STATES.clear();
 		WORLD_REVEAL_SAFE_TARGETS.clear();
 		WORLD_REVEAL_REQUIRED_POSITIONS.clear();
 		WORLD_REVEAL_DEFERRED_POSITIONS.clear();
 		WORLD_REVEAL_REVEALED_POSITIONS.clear();
+		worldRevealPlanFuture = null;
+		worldRevealPlanReady = false;
 		SHARED_BITCOIN_POSITIONS.clear();
+		releaseSceneBuildFlight(server);
 		SeasonStartVoiceSystem.resetSceneState();
 		stopWorldRevealEarthquakeSound(overworld);
 		enforcePeacefulDifficulty(server);
-		ensureSceneBuilt(overworld);
+		// Also terminates any ability sessions from a previous race, including XP-draining ones.
 		ServerRaceSystem.beginSeasonStartRaces(server, get().startupRaceId);
-		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-			assignOrRestorePlayer(server, player, true);
-		}
-		syncPrivatePlayerProfiles(server);
+		ensureSceneBuilt(overworld);
 		stateDirty = true;
 	}
 
@@ -1376,10 +1466,12 @@ public final class SeasonStartSystem {
 		}
 		active = false;
 		completed = false;
+		sceneBoundaryPhysicsFrozen = true;
 		shellDissolving = false;
 		worldRevealActive = true;
 		worldRevealBarriersPlaced = false;
 		scenePrepared = false;
+		sceneBuildTask = null;
 		startupWorldgenFrameIndex = Integer.MIN_VALUE;
 		dissolveCursor = 0;
 		nextSharedReminderTick = Long.MIN_VALUE;
@@ -1389,6 +1481,7 @@ public final class SeasonStartSystem {
 		menuExplanationActive = false;
 		worldRevealPhaseStartTick = Long.MIN_VALUE;
 		worldRevealCrackStartTick = Long.MIN_VALUE;
+		worldRevealCrackNotBeforeTick = Long.MIN_VALUE;
 		worldRevealMusicEndTick = Long.MIN_VALUE;
 		worldRevealDarknessClearTick = Long.MIN_VALUE;
 		worldRevealVisibleEpisodeCursor = 0;
@@ -1397,8 +1490,10 @@ public final class SeasonStartSystem {
 		worldRevealEarthquakeSoundStarted = false;
 		worldRevealDarknessRepositioned = false;
 		worldRevealPhase = WorldRevealPhase.CRACKING;
+		SeasonStartVoiceSystem.clearSharedLaunchProgressNarration();
 		clearSharedLaunchBossBar();
 		ServerRaceSystem.endSeasonStartRaces(server);
+		releaseSceneBuildFlight(server);
 		ServerLevel overworld = server.overworld();
 		if (overworld != null) {
 			stopWorldRevealEarthquakeSound(overworld);
@@ -1409,13 +1504,17 @@ public final class SeasonStartSystem {
 			WORLD_REVEAL_REQUIRED_POSITIONS.clear();
 			WORLD_REVEAL_DEFERRED_POSITIONS.clear();
 			WORLD_REVEAL_REVEALED_POSITIONS.clear();
+			worldRevealPlanReady = false;
 			WORLD_REVEAL_SAFE_TARGETS.clear();
 			for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-				applyFreeState(player);
+				if (isSeasonStartEligiblePlayer(player)) {
+					applyFreeState(player);
+				}
 			}
 			syncPrivatePlayerProfiles(server);
+			SeasonStartVoiceSystem.resetSceneState();
 			SeasonStartVoiceSystem.fireTrigger(server, "season_finished", null);
-			worldRevealCrackStartTick = overworld.getGameTime()
+			worldRevealCrackNotBeforeTick = overworld.getGameTime()
 					+ resolveTriggerSequenceDurationTicks("season_finished")
 					+ WORLD_REVEAL_CRACK_START_BUFFER_TICKS;
 		}
@@ -1423,7 +1522,7 @@ public final class SeasonStartSystem {
 	}
 
 	private static void assignOrRestorePlayer(MinecraftServer server, ServerPlayer player, boolean announceIntro) {
-		if (server == null || player == null || !active) {
+		if (server == null || !isSeasonStartEligiblePlayer(player) || !active || !scenePrepared) {
 			return;
 		}
 		ServerRaceSystem.assignSeasonStartRace(player, get().startupRaceId);
@@ -2125,11 +2224,17 @@ public final class SeasonStartSystem {
 			return 0L;
 		}
 		long maxTicks = 0L;
+		Map<String, Long> channelEndTicks = new HashMap<>();
 		for (SeasonStartConfig.VoiceCue cue : SeasonStartConfig.get().cues) {
 			if (cue == null || !trigger.equals(cue.trigger)) {
 				continue;
 			}
-			maxTicks = Math.max(maxTicks, (long) cue.delayTicks + cue.durationTicks);
+			String channelKey = cue.channel == null || cue.channel.isBlank() ? "global" : cue.channel;
+			long scheduledTick = Math.max(0L, cue.delayTicks);
+			long startTick = Math.max(scheduledTick, channelEndTicks.getOrDefault(channelKey, 0L));
+			long endTick = startTick + Math.max(0L, cue.durationTicks);
+			channelEndTicks.put(channelKey, endTick);
+			maxTicks = Math.max(maxTicks, endTick);
 		}
 		return maxTicks;
 	}
@@ -2296,10 +2401,15 @@ public final class SeasonStartSystem {
 		}
 		ensureStartupWorldgenDisplay(overworld);
 		refreshSharedLaunchBossBar(server);
+		long nowTick = overworld.getGameTime();
+		if (pendingSharedFinishTick != Long.MIN_VALUE && nowTick >= pendingSharedFinishTick) {
+			pendingSharedFinishTick = Long.MIN_VALUE;
+			finishSeasonStart(server);
+			return;
+		}
 		if (countSharedPlayers() <= 0) {
 			return;
 		}
-		long nowTick = overworld.getGameTime();
 		if (!menuExplanationActive && sharedLaunchRequiredBitcoins > 0 && getSharedLaunchPercent() >= MENU_EXPLANATION_UNLOCK_PERCENT
 				&& pendingMenuExplanationTick == Long.MIN_VALUE) {
 			pendingMenuExplanationTick = nowTick;
@@ -2326,6 +2436,9 @@ public final class SeasonStartSystem {
 		pendingMenuExplanationTick = Long.MIN_VALUE;
 		long nowTick = overworld.getGameTime();
 		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			if (!isSeasonStartEligiblePlayer(player)) {
+				continue;
+			}
 			PlayerSceneState state = PLAYER_STATES.get(player.getUUID());
 			if (state == null || state.phase != PlayerPhase.SHARED) {
 				continue;
@@ -2350,6 +2463,9 @@ public final class SeasonStartSystem {
 
 	private static void tickMenuExplanation(MinecraftServer server, long nowTick) {
 		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			if (!isSeasonStartEligiblePlayer(player)) {
+				continue;
+			}
 			PlayerSceneState state = PLAYER_STATES.get(player.getUUID());
 			if (state == null || state.phase != PlayerPhase.SHARED) {
 				continue;
@@ -2401,16 +2517,20 @@ public final class SeasonStartSystem {
 		if (server == null || overworld == null) {
 			return;
 		}
-		prepareWorldReveal(overworld);
+		long nowTick = overworld.getGameTime();
+		if (worldRevealPhase == WorldRevealPhase.CRACKING) {
+			tickWorldRevealAudioPrelude(overworld, nowTick);
+		}
+		if (!prepareWorldReveal(overworld)) {
+			return;
+		}
 		if (WORLD_REVEAL_SURFACE_Y.isEmpty()) {
 			forceCompleteWorldReveal(server);
 			return;
 		}
 		if (worldRevealPhaseStartTick == Long.MIN_VALUE) {
-			worldRevealPhaseStartTick = overworld.getGameTime();
+			worldRevealPhaseStartTick = nowTick;
 		}
-
-		long nowTick = overworld.getGameTime();
 		switch (worldRevealPhase) {
 			case CRACKING -> tickWorldRevealCracking(server, overworld, nowTick);
 			case BLACKOUT_FADE -> tickWorldRevealBlackoutFade(server, overworld, nowTick);
@@ -2420,23 +2540,46 @@ public final class SeasonStartSystem {
 		}
 	}
 
-	private static void prepareWorldReveal(ServerLevel level) {
-		if (level == null || serverAnchor == null) {
+	private static void tickWorldRevealAudioPrelude(ServerLevel level, long nowTick) {
+		if (level == null) {
 			return;
+		}
+		if (worldRevealCrackStartTick == Long.MIN_VALUE) {
+			if (worldRevealCrackNotBeforeTick != Long.MIN_VALUE && nowTick < worldRevealCrackNotBeforeTick) {
+				return;
+			}
+			worldRevealCrackStartTick = nowTick;
+			worldRevealCrackNotBeforeTick = Long.MIN_VALUE;
+		}
+		if (nowTick < worldRevealCrackStartTick) {
+			return;
+		}
+		if (!worldRevealEarthquakeSoundStarted) {
+			startWorldRevealEarthquakeSound(level);
+			worldRevealEarthquakeSoundStarted = true;
+			stateDirty = true;
+		}
+		maybeStartWorldRevealMusic(level, nowTick, nowTick - worldRevealCrackStartTick);
+	}
+
+	private static boolean prepareWorldReveal(ServerLevel level) {
+		if (level == null || serverAnchor == null) {
+			return false;
 		}
 		ensureWorldRevealSnapshotIndexes();
 		if (WORLD_REVEAL_SURFACE_Y.isEmpty() || WORLD_REVEAL_TARGET_STATES.isEmpty()) {
 			ensureSceneSnapshot(level);
 		}
-		if (shouldRebuildWorldRevealPlan()) {
-			resetWorldRevealPlanState();
+		if (shouldRebuildWorldRevealPlan() || (WORLD_REVEAL_EPISODES.isEmpty() && worldRevealPlanFuture == null)) {
+			beginWorldRevealPlanPreparation(level);
 		}
-		if (WORLD_REVEAL_EPISODES.isEmpty()) {
-			prepareWorldRevealGrowthPlan(level);
+		if (!installPreparedWorldRevealPlan()) {
+			return false;
 		}
 		if (worldRevealPhase == WorldRevealPhase.RELOCATE || worldRevealPhase == WorldRevealPhase.SETTLE) {
 			refreshWorldRevealTargets(level);
 		}
+		return true;
 	}
 
 	private static void ensureWorldRevealSnapshotIndexes() {
@@ -2511,7 +2654,9 @@ public final class SeasonStartSystem {
 		WORLD_REVEAL_BARRIER_COLLISION.clear();
 		WORLD_REVEAL_SURFACE_Y.clear();
 		WORLD_REVEAL_TARGET_STATES.clear();
+		WORLD_REVEAL_BOUNDARY_TARGET_STATES.clear();
 		WORLD_REVEAL_SAFE_TARGETS.clear();
+		captureBoundaryRestoreSnapshot(level, outerGeometry);
 
 		ChunkGenerator generator = generatorFallback ? level.getChunkSource().getGenerator() : null;
 		RandomState randomState = generatorFallback ? level.getChunkSource().randomState() : null;
@@ -2558,6 +2703,72 @@ public final class SeasonStartSystem {
 		}
 	}
 
+	private static void captureBoundaryRestoreSnapshot(ServerLevel level, BoxGeometry outerGeometry) {
+		if (level == null || outerGeometry == null) {
+			return;
+		}
+		for (int x = outerGeometry.minX - WORLD_REVEAL_BOUNDARY_RESTORE_RADIUS; x <= outerGeometry.maxX + WORLD_REVEAL_BOUNDARY_RESTORE_RADIUS; x++) {
+			for (int z = outerGeometry.minZ - WORLD_REVEAL_BOUNDARY_RESTORE_RADIUS; z <= outerGeometry.maxZ + WORLD_REVEAL_BOUNDARY_RESTORE_RADIUS; z++) {
+				for (int y = outerGeometry.floorY - WORLD_REVEAL_BOUNDARY_RESTORE_RADIUS; y <= outerGeometry.roofY + WORLD_REVEAL_BOUNDARY_RESTORE_RADIUS; y++) {
+					if (x >= outerGeometry.minX && x <= outerGeometry.maxX
+							&& y >= outerGeometry.floorY && y <= outerGeometry.roofY
+							&& z >= outerGeometry.minZ && z <= outerGeometry.maxZ) {
+						continue;
+					}
+					BlockPos pos = new BlockPos(x, y, z);
+					BlockState state = level.getBlockState(pos);
+					if (state == null || state.isAir()) {
+						continue;
+					}
+					WORLD_REVEAL_BOUNDARY_TARGET_STATES.put(pos.asLong(), state);
+				}
+			}
+		}
+	}
+
+	private static void captureSceneEntitySnapshot(ServerLevel level, BoxGeometry outerGeometry) {
+		if (level == null || outerGeometry == null) {
+			return;
+		}
+		WORLD_REVEAL_ENTITY_SNAPSHOTS.clear();
+		AABB sceneBounds = new AABB(
+				outerGeometry.minX,
+				outerGeometry.floorY,
+				outerGeometry.minZ,
+				outerGeometry.maxX + 1.0D,
+				outerGeometry.roofY + 1.0D,
+				outerGeometry.maxZ + 1.0D
+		);
+		for (Entity entity : level.getEntities((Entity) null, sceneBounds, SeasonStartSystem::shouldSnapshotSceneEntity)) {
+			if (entity == null || entity.isRemoved()) {
+				continue;
+			}
+			TagValueOutput output = TagValueOutput.createWithContext(ProblemReporter.DISCARDING, level.registryAccess());
+			if (!entity.saveAsPassenger(output)) {
+				continue;
+			}
+			CompoundTag tag = output.buildResult();
+			if (tag == null || tag.isEmpty()) {
+				continue;
+			}
+			WORLD_REVEAL_ENTITY_SNAPSHOTS.add(tag.copy());
+			entity.discard();
+		}
+	}
+
+	private static boolean shouldSnapshotSceneEntity(Entity entity) {
+		if (entity == null || !entity.isAlive() || entity.isRemoved() || entity instanceof ServerPlayer || entity.isPassenger()) {
+			return false;
+		}
+		if (entity instanceof ExperienceOrb) {
+			return false;
+		}
+		if (entity.getTags().contains(STARTUP_WORLDGEN_DISPLAY_TAG) || ServerStructureBreakSystem.isServerStructureDisplay(entity)) {
+			return false;
+		}
+		return true;
+	}
+
 	private static void rebuildWorldRevealSnapshotIndexesFromTerrain() {
 		if (serverAnchor == null || WORLD_REVEAL_TERRAIN.isEmpty()) {
 			return;
@@ -2566,6 +2777,7 @@ public final class SeasonStartSystem {
 		WORLD_REVEAL_BARRIER_COLLISION.clear();
 		WORLD_REVEAL_SURFACE_Y.clear();
 		WORLD_REVEAL_TARGET_STATES.clear();
+		WORLD_REVEAL_BOUNDARY_TARGET_STATES.clear();
 		WORLD_REVEAL_SAFE_TARGETS.clear();
 		Map<Long, Integer> topSolidByColumn = new HashMap<>();
 		Map<Long, Integer> topFilledByColumn = new HashMap<>();
@@ -2638,51 +2850,98 @@ public final class SeasonStartSystem {
 		return state != null && !state.isAir() && (state.blocksMotion() || !state.getFluidState().isEmpty());
 	}
 
-	private static void prepareWorldRevealGrowthPlan(ServerLevel level) {
-		if (level == null || serverAnchor == null || !WORLD_REVEAL_EPISODES.isEmpty()) {
+	/**
+	 * The reveal plan is pure data. Build it from a frozen scene snapshot on a
+	 * worker thread so reaching 100% can never monopolise the server tick.
+	 */
+	private static void beginWorldRevealPlanPreparation(ServerLevel level) {
+		if (level == null || serverAnchor == null) {
 			return;
 		}
-		BoxGeometry outerGeometry = computeOuterBoxGeometry(resolveServerAnchor(level));
-		BoxGeometry barrierGeometry = computeBarrierGeometry(resolveServerAnchor(level));
+		BlockPos anchor = resolveServerAnchor(level);
+		if (anchor == null) {
+			return;
+		}
+		BoxGeometry outer = computeOuterBoxGeometry(anchor);
+		BoxGeometry barrier = computeBarrierGeometry(anchor);
+		Set<Long> structureFootprint = new HashSet<>();
+		for (BlockPos pos : ServerStructureBreakSystem.getStructurePositions(anchor, serverStructureAxis)) {
+			structureFootprint.add(pos.asLong());
+		}
 		Set<Long> shellCandidates = new LinkedHashSet<>();
-		for (BlockPos pos : collectBlackShellBlocks(outerGeometry)) {
-			if (!isServerStructureFootprint(pos)) {
+		for (BlockPos pos : collectBlackShellBlocks(outer)) {
+			if (!structureFootprint.contains(pos.asLong())) {
 				shellCandidates.add(pos.asLong());
 			}
 		}
-		for (BlockPos pos : collectBarrierShellBlocks(barrierGeometry)) {
-			if (!isServerStructureFootprint(pos)) {
+		for (BlockPos pos : collectBarrierShellBlocks(barrier)) {
+			if (!structureFootprint.contains(pos.asLong())) {
 				shellCandidates.add(pos.asLong());
 			}
 		}
-		if (shellCandidates.isEmpty() && WORLD_REVEAL_TARGET_STATES.isEmpty()) {
-			return;
+		Map<Long, BlockState> terrainTargets = new HashMap<>(WORLD_REVEAL_TARGET_STATES);
+		Set<Long> requiredPositions = new LinkedHashSet<>(shellCandidates);
+		for (Map.Entry<Long, BlockState> entry : terrainTargets.entrySet()) {
+			if (entry.getValue() != null && !entry.getValue().isAir() && !structureFootprint.contains(entry.getKey())) {
+				requiredPositions.add(entry.getKey());
+			}
 		}
+		WorldRevealPlanInput input = new WorldRevealPlanInput(
+				anchor.immutable(),
+				outer,
+				level.getSeed() ^ anchor.asLong() ^ 0x6C6732777265616CL,
+				Set.copyOf(structureFootprint),
+				Set.copyOf(shellCandidates),
+				Map.copyOf(terrainTargets),
+				Map.copyOf(WORLD_REVEAL_SURFACE_Y),
+				Set.copyOf(requiredPositions)
+		);
+		resetWorldRevealPlanState();
+		worldRevealPlanReady = false;
+		worldRevealPlanFuture = CompletableFuture.supplyAsync(() -> buildWorldRevealPlan(input));
+	}
+
+	private static boolean installPreparedWorldRevealPlan() {
+		if (worldRevealPlanReady) {
+			return true;
+		}
+		if (worldRevealPlanFuture == null || !worldRevealPlanFuture.isDone()) {
+			return false;
+		}
+		WorldRevealPlan plan;
+		try {
+			plan = worldRevealPlanFuture.join();
+		} catch (RuntimeException exception) {
+			Lg2.LOGGER.error("Failed to prepare season-start world reveal plan", exception);
+			worldRevealPlanFuture = null;
+			return false;
+		}
+		WORLD_REVEAL_EPISODES.clear();
 		WORLD_REVEAL_REQUIRED_POSITIONS.clear();
 		WORLD_REVEAL_DEFERRED_POSITIONS.clear();
-		for (long key : shellCandidates) {
-			BlockPos pos = BlockPos.of(key);
-			if (!isServerStructureFootprint(pos)) {
-				WORLD_REVEAL_REQUIRED_POSITIONS.add(key);
-			}
+		WORLD_REVEAL_REVEALED_POSITIONS.clear();
+		if (plan != null) {
+			WORLD_REVEAL_EPISODES.addAll(plan.episodes());
+			WORLD_REVEAL_REQUIRED_POSITIONS.addAll(plan.requiredPositions());
 		}
-		for (Map.Entry<Long, BlockState> targetEntry : WORLD_REVEAL_TARGET_STATES.entrySet()) {
-			BlockState targetState = targetEntry.getValue();
-			if (targetState == null || targetState.isAir()) {
-				continue;
-			}
-			BlockPos pos = BlockPos.of(targetEntry.getKey());
-			if (!isServerStructureFootprint(pos)) {
-				WORLD_REVEAL_REQUIRED_POSITIONS.add(targetEntry.getKey());
-			}
+		if (WORLD_REVEAL_EPISODES.isEmpty() && !WORLD_REVEAL_REQUIRED_POSITIONS.isEmpty()) {
+			WORLD_REVEAL_EPISODES.addAll(buildFallbackWorldRevealEpisodes(WORLD_REVEAL_REQUIRED_POSITIONS));
 		}
+		worldRevealPlanReady = true;
+		stateDirty = true;
+		return true;
+	}
 
-		List<BlockPos> terrainAnchors = collectWorldRevealTerrainAnchors(randomForWorldReveal(level), 56);
+	private static WorldRevealPlan buildWorldRevealPlan(WorldRevealPlanInput input) {
+		if (input == null || (input.shellCandidates().isEmpty() && input.terrainTargets().isEmpty())) {
+			return WorldRevealPlan.empty();
+		}
+		Random random = new Random(input.randomSeed());
+		List<BlockPos> terrainAnchors = collectWorldRevealTerrainAnchors(input, random, 56);
 		if (terrainAnchors.isEmpty()) {
-			terrainAnchors.add(resolveServerAnchor(level));
+			terrainAnchors.add(input.anchor());
 		}
 
-		Random random = randomForWorldReveal(level);
 		Map<Integer, LinkedHashSet<Long>> revealByRound = new TreeMap<>();
 		Map<Integer, List<Vec3>> particlesByRound = new TreeMap<>();
 		List<WorldRevealSeed> seeds = new ArrayList<>();
@@ -2693,96 +2952,77 @@ public final class SeasonStartSystem {
 				default -> 4;
 			};
 			for (int primaryIndex = 0; primaryIndex < primaryCrackCount; primaryIndex++) {
-				BlockPos start = worldRevealShellPointForFace(outerGeometry, face, random);
-				BlockPos pivot = createWorldRevealFacePivot(outerGeometry, face, random);
+				BlockPos start = worldRevealShellPointForFace(input.outerGeometry(), face, random);
+				BlockPos pivot = createWorldRevealFacePivot(input.outerGeometry(), face, random);
 				for (int attempt = 0; attempt < 5 && start.distManhattan(pivot) < 6; attempt++) {
-					pivot = createWorldRevealFacePivot(outerGeometry, face, random);
+					pivot = createWorldRevealFacePivot(input.outerGeometry(), face, random);
 				}
-				BlockPos entry = createWorldRevealFaceEntry(outerGeometry, pivot, face, random);
+				BlockPos entry = createWorldRevealFaceEntry(input.outerGeometry(), pivot, face, random);
 				BlockPos target = terrainAnchors.get(random.nextInt(terrainAnchors.size()));
 				int startRound = face * 8 + primaryIndex * 2 + random.nextInt(4);
-				WorldRevealFaceConstraint faceConstraint = new WorldRevealFaceConstraint(faceAxis(face), facePlaneCenterCoordinate(outerGeometry, face));
+				WorldRevealFaceConstraint constraint = new WorldRevealFaceConstraint(
+						faceAxis(face), facePlaneCenterCoordinate(input.outerGeometry(), face)
+				);
 				List<Vec3> mainPolyline = new ArrayList<>();
-				appendWorldRevealLightningSegment(
-						mainPolyline,
-						blockCenter(start),
-						blockCenter(pivot),
-						outerGeometry,
-						faceConstraint,
-						random,
-						5,
-						WORLD_REVEAL_PRIMARY_CRACK_DISPLACEMENT
-				);
-				appendWorldRevealLightningSegment(
-						mainPolyline,
-						mainPolyline.get(mainPolyline.size() - 1),
-						blockCenter(entry),
-						outerGeometry,
-						null,
-						random,
-						4,
-						WORLD_REVEAL_PRIMARY_CRACK_DISPLACEMENT * 0.52D
-				);
-				appendWorldRevealLightningSegment(
-						mainPolyline,
-						mainPolyline.get(mainPolyline.size() - 1),
-						blockCenter(target),
-						outerGeometry,
-						null,
-						random,
-						5,
-						WORLD_REVEAL_PRIMARY_CRACK_DISPLACEMENT * 0.70D
-				);
-				stampWorldRevealCrack(
-						revealByRound,
-						particlesByRound,
-						seeds,
-						mainPolyline,
-						startRound,
-						54 + random.nextInt(24),
+				appendWorldRevealLightningSegment(mainPolyline, blockCenter(start), blockCenter(pivot), input.outerGeometry(), constraint, random, 5, WORLD_REVEAL_PRIMARY_CRACK_DISPLACEMENT);
+				appendWorldRevealLightningSegment(mainPolyline, mainPolyline.get(mainPolyline.size() - 1), blockCenter(entry), input.outerGeometry(), null, random, 4, WORLD_REVEAL_PRIMARY_CRACK_DISPLACEMENT * 0.52D);
+				appendWorldRevealLightningSegment(mainPolyline, mainPolyline.get(mainPolyline.size() - 1), blockCenter(target), input.outerGeometry(), null, random, 5, WORLD_REVEAL_PRIMARY_CRACK_DISPLACEMENT * 0.70D);
+				stampWorldRevealCrack(revealByRound, particlesByRound, seeds, mainPolyline, startRound, 54 + random.nextInt(24),
 						(face == 4 ? 2.45D : 1.95D) + random.nextDouble() * 0.75D,
-						shellCandidates,
-						WORLD_REVEAL_TARGET_STATES
-				);
+						input.shellCandidates(), input.terrainTargets(), input.structureFootprint());
 
 				int branchCount = 2 + random.nextInt(3);
-				for (int branchIndex = 0; branchIndex < branchCount; branchIndex++) {
-					if (mainPolyline.size() < 4) {
-						break;
-					}
+				for (int branchIndex = 0; branchIndex < branchCount && mainPolyline.size() >= 4; branchIndex++) {
 					int minIndex = Math.max(1, mainPolyline.size() / 4);
 					int maxIndex = Math.max(minIndex + 1, (mainPolyline.size() * 4) / 5);
-					int branchSourceIndex = nextIntInclusive(random, minIndex, maxIndex);
-					Vec3 branchSource = mainPolyline.get(branchSourceIndex);
+					Vec3 branchSource = mainPolyline.get(nextIntInclusive(random, minIndex, maxIndex));
 					BlockPos branchTarget = terrainAnchors.get(random.nextInt(terrainAnchors.size()));
 					List<Vec3> branchPolyline = new ArrayList<>();
-					appendWorldRevealLightningSegment(
-							branchPolyline,
-							branchSource,
-							blockCenter(branchTarget),
-							outerGeometry,
-							null,
-							random,
-							4,
-							WORLD_REVEAL_BRANCH_CRACK_DISPLACEMENT
-					);
-					stampWorldRevealCrack(
-							revealByRound,
-							particlesByRound,
-							seeds,
-							branchPolyline,
-							startRound + 8 + random.nextInt(14),
-							24 + random.nextInt(18),
-							1.55D + random.nextDouble() * 0.45D,
-							shellCandidates,
-							WORLD_REVEAL_TARGET_STATES
-					);
+					appendWorldRevealLightningSegment(branchPolyline, branchSource, blockCenter(branchTarget), input.outerGeometry(), null, random, 4, WORLD_REVEAL_BRANCH_CRACK_DISPLACEMENT);
+					stampWorldRevealCrack(revealByRound, particlesByRound, seeds, branchPolyline, startRound + 8 + random.nextInt(14),
+							24 + random.nextInt(18), 1.55D + random.nextDouble() * 0.45D,
+							input.shellCandidates(), input.terrainTargets(), input.structureFootprint());
 				}
 			}
 		}
-		backfillWorldRevealCoverage(revealByRound, particlesByRound, seeds, shellCandidates, WORLD_REVEAL_TARGET_STATES, WORLD_REVEAL_REQUIRED_POSITIONS, random);
+		backfillWorldRevealCoverage(
+				revealByRound,
+				particlesByRound,
+				selectWorldRevealCoverageSeeds(seeds, random, 64),
+				input.shellCandidates(),
+				input.terrainTargets(),
+				input.requiredPositions(),
+				random,
+				input.anchor(),
+				input.structureFootprint()
+		);
+		return new WorldRevealPlan(input.requiredPositions(), splitWorldRevealEpisodes(revealByRound, particlesByRound));
+	}
 
-		WORLD_REVEAL_EPISODES.clear();
+	private static List<WorldRevealSeed> selectWorldRevealCoverageSeeds(List<WorldRevealSeed> seeds, Random random, int limit) {
+		if (seeds == null || seeds.isEmpty() || limit <= 0 || seeds.size() <= limit) {
+			return seeds == null ? List.of() : new ArrayList<>(seeds);
+		}
+		List<WorldRevealSeed> selected = new ArrayList<>(limit);
+		for (int index = 0; index < seeds.size(); index++) {
+			WorldRevealSeed seed = seeds.get(index);
+			if (index < limit) {
+				selected.add(seed);
+				continue;
+			}
+			int replacement = random.nextInt(index + 1);
+			if (replacement < limit) {
+				selected.set(replacement, seed);
+			}
+		}
+		return selected;
+	}
+
+	private static List<WorldRevealEpisode> splitWorldRevealEpisodes(
+			Map<Integer, LinkedHashSet<Long>> revealByRound,
+			Map<Integer, List<Vec3>> particlesByRound
+	) {
+		List<WorldRevealEpisode> episodes = new ArrayList<>();
 		for (Map.Entry<Integer, LinkedHashSet<Long>> entry : revealByRound.entrySet()) {
 			LinkedHashSet<Long> roundPositions = entry.getValue();
 			List<Vec3> crackPoints = particlesByRound.get(entry.getKey());
@@ -2796,30 +3036,57 @@ public final class SeasonStartSystem {
 				}
 			}
 			List<Vec3> particlePoints = crackPoints == null ? List.of() : new ArrayList<>(crackPoints);
-			int chunkCount = Math.max(
-					1,
-					Math.max(
-							(int) Math.ceil(revealPositions.size() / (double) WORLD_REVEAL_EPISODE_MAX_REVEAL_POSITIONS),
-							(int) Math.ceil(particlePoints.size() / (double) WORLD_REVEAL_EPISODE_MAX_PARTICLE_POINTS)
-					)
-			);
+			int chunkCount = Math.max(1, Math.max(
+					(int) Math.ceil(revealPositions.size() / (double) WORLD_REVEAL_EPISODE_MAX_REVEAL_POSITIONS),
+					(int) Math.ceil(particlePoints.size() / (double) WORLD_REVEAL_EPISODE_MAX_PARTICLE_POINTS)
+			));
 			for (int chunkIndex = 0; chunkIndex < chunkCount; chunkIndex++) {
 				int revealStart = (int) Math.floor(revealPositions.size() * (double) chunkIndex / chunkCount);
 				int revealEnd = (int) Math.floor(revealPositions.size() * (double) (chunkIndex + 1) / chunkCount);
 				int particleStart = (int) Math.floor(particlePoints.size() * (double) chunkIndex / chunkCount);
 				int particleEnd = (int) Math.floor(particlePoints.size() * (double) (chunkIndex + 1) / chunkCount);
-				List<BlockPos> revealChunk = revealStart >= revealEnd
-						? List.of()
-						: new ArrayList<>(revealPositions.subList(revealStart, revealEnd));
-				List<Vec3> particleChunk = particleStart >= particleEnd
-						? List.of()
-						: new ArrayList<>(particlePoints.subList(particleStart, particleEnd));
+				List<BlockPos> revealChunk = revealStart >= revealEnd ? List.of() : new ArrayList<>(revealPositions.subList(revealStart, revealEnd));
+				List<Vec3> particleChunk = particleStart >= particleEnd ? List.of() : new ArrayList<>(particlePoints.subList(particleStart, particleEnd));
 				if (!revealChunk.isEmpty() || !particleChunk.isEmpty()) {
-					WORLD_REVEAL_EPISODES.add(new WorldRevealEpisode(revealChunk, particleChunk));
+					episodes.add(new WorldRevealEpisode(revealChunk, particleChunk));
 				}
 			}
 		}
+		return episodes;
 	}
+
+	private static List<WorldRevealEpisode> buildFallbackWorldRevealEpisodes(Set<Long> requiredPositions) {
+		List<WorldRevealEpisode> episodes = new ArrayList<>();
+		if (requiredPositions == null || requiredPositions.isEmpty()) {
+			return episodes;
+		}
+		List<BlockPos> ordered = new ArrayList<>(requiredPositions.size());
+		for (long key : requiredPositions) {
+			ordered.add(BlockPos.of(key));
+		}
+		ordered.sort((left, right) -> {
+			int byY = Integer.compare(left.getY(), right.getY());
+			if (byY != 0) {
+				return byY;
+			}
+			int byX = Integer.compare(left.getX(), right.getX());
+			if (byX != 0) {
+				return byX;
+			}
+			return Integer.compare(left.getZ(), right.getZ());
+		});
+		for (int start = 0; start < ordered.size(); start += WORLD_REVEAL_EPISODE_MAX_REVEAL_POSITIONS) {
+			int end = Math.min(ordered.size(), start + WORLD_REVEAL_EPISODE_MAX_REVEAL_POSITIONS);
+			List<BlockPos> revealChunk = new ArrayList<>(ordered.subList(start, end));
+			List<Vec3> particleChunk = new ArrayList<>();
+			for (int index = 0; index < revealChunk.size(); index += 4) {
+				particleChunk.add(blockCenter(revealChunk.get(index)));
+			}
+			episodes.add(new WorldRevealEpisode(revealChunk, particleChunk));
+		}
+		return episodes;
+	}
+
 
 	private static Random randomForWorldReveal(ServerLevel level) {
 		long seed = level == null || serverAnchor == null
@@ -2828,15 +3095,15 @@ public final class SeasonStartSystem {
 		return new Random(seed);
 	}
 
-	private static List<BlockPos> collectWorldRevealTerrainAnchors(Random random, int limit) {
+	private static List<BlockPos> collectWorldRevealTerrainAnchors(WorldRevealPlanInput input, Random random, int limit) {
 		List<BlockPos> anchors = new ArrayList<>();
-		if (random == null || limit <= 0) {
+		if (input == null || random == null || limit <= 0) {
 			return anchors;
 		}
 		List<BlockPos> surfaceCandidates = new ArrayList<>();
-		for (Map.Entry<Long, Integer> entry : WORLD_REVEAL_SURFACE_Y.entrySet()) {
+		for (Map.Entry<Long, Integer> entry : input.surfaceY().entrySet()) {
 			BlockPos column = BlockPos.of(entry.getKey());
-			BlockPos anchor = resolveWorldRevealSurfaceAnchor(column.getX(), column.getZ(), entry.getValue());
+			BlockPos anchor = resolveWorldRevealSurfaceAnchor(input, column.getX(), column.getZ(), entry.getValue());
 			if (anchor != null) {
 				surfaceCandidates.add(anchor);
 			}
@@ -2862,40 +3129,40 @@ public final class SeasonStartSystem {
 		return anchors;
 	}
 
-	private static BlockPos resolveWorldRevealSurfaceAnchor(int x, int z, int surfaceY) {
-		if (serverAnchor == null) {
+	private static BlockPos resolveWorldRevealSurfaceAnchor(WorldRevealPlanInput input, int x, int z, int surfaceY) {
+		if (input == null) {
 			return null;
 		}
-		BoxGeometry outerGeometry = computeOuterBoxGeometry(serverAnchor);
+		BoxGeometry outerGeometry = input.outerGeometry();
 		int minY = outerGeometry.floorY;
 		int maxY = outerGeometry.roofY;
 		for (int y = maxY; y >= minY; y--) {
 			BlockPos pos = new BlockPos(x, y, z);
-			BlockState state = WORLD_REVEAL_TARGET_STATES.get(pos.asLong());
-			if (state == null || state.isAir() || isServerStructureFootprint(pos)) {
+			BlockState state = input.terrainTargets().get(pos.asLong());
+			if (state == null || state.isAir() || input.structureFootprint().contains(pos.asLong())) {
 				continue;
 			}
-			if (hasWorldRevealExposedFace(pos)) {
+			if (hasWorldRevealExposedFace(input.terrainTargets(), pos)) {
 				return pos.immutable();
 			}
 		}
 		for (int y = Mth.clamp(surfaceY, minY, maxY); y >= minY; y--) {
 			BlockPos pos = new BlockPos(x, y, z);
-			BlockState state = WORLD_REVEAL_TARGET_STATES.get(pos.asLong());
-			if (state != null && !state.isAir() && !isServerStructureFootprint(pos)) {
+			BlockState state = input.terrainTargets().get(pos.asLong());
+			if (state != null && !state.isAir() && !input.structureFootprint().contains(pos.asLong())) {
 				return pos.immutable();
 			}
 		}
 		return null;
 	}
 
-	private static boolean hasWorldRevealExposedFace(BlockPos pos) {
-		if (pos == null) {
+	private static boolean hasWorldRevealExposedFace(Map<Long, BlockState> terrainTargets, BlockPos pos) {
+		if (terrainTargets == null || pos == null) {
 			return false;
 		}
 		for (Direction direction : Direction.values()) {
 			BlockPos adjacent = pos.relative(direction);
-			BlockState adjacentState = WORLD_REVEAL_TARGET_STATES.get(adjacent.asLong());
+			BlockState adjacentState = terrainTargets.get(adjacent.asLong());
 			if (adjacentState == null || adjacentState.isAir()) {
 				return true;
 			}
@@ -2912,7 +3179,8 @@ public final class SeasonStartSystem {
 			int roundSpan,
 			double baseFillRadius,
 			Set<Long> shellCandidates,
-			Map<Long, BlockState> terrainTargets
+			Map<Long, BlockState> terrainTargets,
+			Set<Long> structureFootprint
 	) {
 		if (revealByRound == null
 				|| particlesByRound == null
@@ -2933,7 +3201,7 @@ public final class SeasonStartSystem {
 			int round = startRound + (int) Math.floor(progress * roundSpan);
 			particlesByRound.computeIfAbsent(round, ignored -> new ArrayList<>()).add(sample);
 			BlockPos linePos = BlockPos.containing(sample);
-			addWorldRevealRevealCell(revealByRound, round, linePos, shellCandidates, terrainTargets);
+			addWorldRevealRevealCell(revealByRound, round, linePos, shellCandidates, terrainTargets, structureFootprint);
 			double crackRadius = progress < 0.05D
 					? 0.0D
 					: Math.min(2.15D, 0.42D + baseFillRadius * 0.34D + progress * 0.88D);
@@ -2945,7 +3213,7 @@ public final class SeasonStartSystem {
 					);
 			seeds.add(new WorldRevealSeed(sample, round, crackRadius, fillRadius));
 			if (crackRadius > 0.01D || fillRadius > 0.01D) {
-				growWorldRevealCellsAroundSample(revealByRound, particlesByRound, round, sample, crackRadius, fillRadius, shellCandidates, terrainTargets);
+				growWorldRevealCellsAroundSample(revealByRound, particlesByRound, round, sample, crackRadius, fillRadius, shellCandidates, terrainTargets, structureFootprint);
 			}
 		}
 	}
@@ -2955,9 +3223,11 @@ public final class SeasonStartSystem {
 			int round,
 			BlockPos pos,
 			Set<Long> shellCandidates,
-			Map<Long, BlockState> terrainTargets
+			Map<Long, BlockState> terrainTargets,
+			Set<Long> structureFootprint
 	) {
-		if (revealByRound == null || pos == null || shellCandidates == null || terrainTargets == null || isServerStructureFootprint(pos)) {
+		if (revealByRound == null || pos == null || shellCandidates == null || terrainTargets == null
+				|| (structureFootprint != null && structureFootprint.contains(pos.asLong()))) {
 			return;
 		}
 		long key = pos.asLong();
@@ -2976,7 +3246,8 @@ public final class SeasonStartSystem {
 			double crackRadius,
 			double fillRadius,
 			Set<Long> shellCandidates,
-			Map<Long, BlockState> terrainTargets
+			Map<Long, BlockState> terrainTargets,
+			Set<Long> structureFootprint
 	) {
 		if (revealByRound == null
 				|| particlesByRound == null
@@ -2992,7 +3263,7 @@ public final class SeasonStartSystem {
 			for (int dy = -radiusBlocks; dy <= radiusBlocks; dy++) {
 				for (int dz = -radiusBlocks; dz <= radiusBlocks; dz++) {
 					BlockPos candidate = origin.offset(dx, dy, dz);
-					if (isServerStructureFootprint(candidate)) {
+					if (structureFootprint != null && structureFootprint.contains(candidate.asLong())) {
 						continue;
 					}
 					long key = candidate.asLong();
@@ -3006,14 +3277,14 @@ public final class SeasonStartSystem {
 					double distance = candidateCenter.distanceTo(sample);
 					if (shellCandidate && crackRadius > 0.0D && distance <= crackRadius + 0.26D) {
 						int delay = (int) Math.floor(distance * 1.55D + Math.abs(dy) * 0.18D);
-						addWorldRevealRevealCell(revealByRound, round + delay, candidate, shellCandidates, terrainTargets);
+						addWorldRevealRevealCell(revealByRound, round + delay, candidate, shellCandidates, terrainTargets, structureFootprint);
 						if (((dx + dz) & 1) == 0) {
 							particlesByRound.computeIfAbsent(round + delay, ignored -> new ArrayList<>()).add(candidateCenter);
 						}
 					}
 					if (terrainCandidate && fillRadius > 0.0D && distance <= fillRadius + 0.42D) {
 						int delay = (int) Math.floor(distance * 2.05D + Math.max(0, dy) * 0.25D);
-						addWorldRevealRevealCell(revealByRound, round + delay, candidate, shellCandidates, terrainTargets);
+						addWorldRevealRevealCell(revealByRound, round + delay, candidate, shellCandidates, terrainTargets, structureFootprint);
 						if (((dx + dy + dz) & 1) == 0 && distance <= fillRadius * 0.72D) {
 							particlesByRound.computeIfAbsent(round + delay, ignored -> new ArrayList<>()).add(candidateCenter);
 						}
@@ -3030,7 +3301,9 @@ public final class SeasonStartSystem {
 			Set<Long> shellCandidates,
 			Map<Long, BlockState> terrainTargets,
 			Set<Long> requiredPositions,
-			Random random
+			Random random,
+			BlockPos fallbackAnchor,
+			Set<Long> structureFootprint
 	) {
 		if (revealByRound == null
 				|| particlesByRound == null
@@ -3040,7 +3313,7 @@ public final class SeasonStartSystem {
 			return;
 		}
 		if (seeds == null || seeds.isEmpty()) {
-			BlockPos anchor = serverAnchor == null ? BlockPos.ZERO : serverAnchor;
+			BlockPos anchor = fallbackAnchor == null ? BlockPos.ZERO : fallbackAnchor;
 			seeds = new ArrayList<>(List.of(new WorldRevealSeed(blockCenter(anchor), 0, 0.9D, 1.2D)));
 		}
 		Set<Long> scheduled = new HashSet<>();
@@ -3054,7 +3327,7 @@ public final class SeasonStartSystem {
 				continue;
 			}
 			BlockPos pos = BlockPos.of(key);
-			if (isServerStructureFootprint(pos)) {
+			if (structureFootprint != null && structureFootprint.contains(pos.asLong())) {
 				continue;
 			}
 			BlockState targetState = terrainTargets.get(key);
@@ -3074,7 +3347,7 @@ public final class SeasonStartSystem {
 					? (int) Math.floor(uncovered * 3.65D + Math.max(0.0D, center.y - seed.point().y) * 0.35D)
 					: (int) Math.floor(uncovered * 2.75D + Math.abs(center.y - seed.point().y) * 0.12D);
 			int round = seed.round() + jitter + delay;
-			addWorldRevealRevealCell(revealByRound, round, pos, shellCandidates, terrainTargets);
+			addWorldRevealRevealCell(revealByRound, round, pos, shellCandidates, terrainTargets, structureFootprint);
 			scheduled.add(key);
 			if (((pos.getX() * 31 + pos.getY() * 17 + pos.getZ() * 13) & (terrain ? 1 : 3)) == 0) {
 				particlesByRound.computeIfAbsent(round, ignored -> new ArrayList<>()).add(center);
@@ -3400,12 +3673,12 @@ public final class SeasonStartSystem {
 		if (server == null || level == null) {
 			return;
 		}
-		if (WORLD_REVEAL_EPISODES.isEmpty()) {
-			finalizeWorldRevealCracking(server, level);
-			return;
-		}
 		if (worldRevealCrackStartTick == Long.MIN_VALUE) {
+			if (worldRevealCrackNotBeforeTick != Long.MIN_VALUE && nowTick < worldRevealCrackNotBeforeTick) {
+				return;
+			}
 			worldRevealCrackStartTick = nowTick;
+			worldRevealCrackNotBeforeTick = Long.MIN_VALUE;
 		}
 		if (nowTick < worldRevealCrackStartTick) {
 			return;
@@ -3417,6 +3690,10 @@ public final class SeasonStartSystem {
 		}
 		long elapsedTicks = nowTick - worldRevealCrackStartTick;
 		maybeStartWorldRevealMusic(level, nowTick, elapsedTicks);
+		if (WORLD_REVEAL_EPISODES.isEmpty()) {
+			finalizeWorldRevealCracking(server, level);
+			return;
+		}
 		int visibleThreshold = resolveWorldRevealVisibleEpisodeThreshold();
 		while (worldRevealBurstCursor < WORLD_REVEAL_CRACK_BURSTS.length
 				&& elapsedTicks >= WORLD_REVEAL_CRACK_BURSTS[worldRevealBurstCursor].offsetTicks()) {
@@ -3626,21 +3903,19 @@ public final class SeasonStartSystem {
 			return;
 		}
 		BoxGeometry outerGeometry = computeOuterBoxGeometry(resolveServerAnchor(level));
-		double x = serverAnchor.getX() + 0.5D;
-		double y = serverAnchor.getY() + 0.5D;
-		double z = serverAnchor.getZ() + 0.5D;
 		for (ServerPlayer player : level.players()) {
-			if (player == null || player.connection == null || !isInsideFootprint(outerGeometry, player.blockPosition())) {
+			boolean participant = PLAYER_STATES.containsKey(player.getUUID());
+			if (!isSeasonStartEligiblePlayer(player)
+					|| player.connection == null
+					|| (!participant && !isInsideFootprint(outerGeometry, player.blockPosition()))) {
 				continue;
 			}
 			player.connection.send(new ClientboundStopSoundPacket(WORLD_REVEAL_EARTHQUAKE_SOUND_ID, SoundSource.AMBIENT));
 			player.connection.send(
-					new ClientboundSoundPacket(
+					new ClientboundSoundEntityPacket(
 							WORLD_REVEAL_EARTHQUAKE_SOUND,
 							SoundSource.AMBIENT,
-							x,
-							y,
-							z,
+							player,
 							WORLD_REVEAL_EARTHQUAKE_VOLUME,
 							1.0F,
 							level.random.nextLong()
@@ -3654,7 +3929,7 @@ public final class SeasonStartSystem {
 			return;
 		}
 		for (ServerPlayer player : level.players()) {
-			if (player == null || player.connection == null) {
+			if (!isSeasonStartEligiblePlayer(player) || player.connection == null) {
 				continue;
 			}
 			player.connection.send(new ClientboundStopSoundPacket(WORLD_REVEAL_EARTHQUAKE_SOUND_ID, SoundSource.AMBIENT));
@@ -3667,7 +3942,7 @@ public final class SeasonStartSystem {
 		}
 		BoxGeometry outerGeometry = computeOuterBoxGeometry(resolveServerAnchor(level));
 		for (ServerPlayer player : level.players()) {
-			if (player == null || !isInsideFootprint(outerGeometry, player.blockPosition())) {
+			if (!isSeasonStartEligiblePlayer(player) || !isInsideFootprint(outerGeometry, player.blockPosition())) {
 				continue;
 			}
 			BlockPos playerPos = player.blockPosition();
@@ -3697,7 +3972,7 @@ public final class SeasonStartSystem {
 		clearStartupWorldgenDisplay(level);
 		long initialDarknessTicks = 20L * 6L;
 		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-			if (player != null && player.level() == level) {
+			if (isSeasonStartEligiblePlayer(player) && player.level() == level) {
 				applyWorldRevealDarkness(player, initialDarknessTicks);
 			}
 		}
@@ -3745,7 +4020,7 @@ public final class SeasonStartSystem {
 			return;
 		}
 		for (ServerPlayer player : level.players()) {
-			if (player != null) {
+			if (isSeasonStartEligiblePlayer(player)) {
 				player.removeEffect(MobEffects.DARKNESS);
 			}
 		}
@@ -3807,7 +4082,7 @@ public final class SeasonStartSystem {
 		}
 		BoxGeometry outerGeometry = computeOuterBoxGeometry(resolveServerAnchor(level));
 		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-			if (player == null || player.level() != level || !isInsideFootprint(outerGeometry, player.blockPosition())) {
+			if (!isSeasonStartEligiblePlayer(player) || player.level() != level || !isInsideFootprint(outerGeometry, player.blockPosition())) {
 				continue;
 			}
 			Vec3 target = WORLD_REVEAL_SAFE_TARGETS.get(player.getUUID());
@@ -3831,7 +4106,7 @@ public final class SeasonStartSystem {
 				|| level.getServer().getPlayerList().getPlayer(entry.getKey()) == null
 				|| level.getServer().getPlayerList().getPlayer(entry.getKey()).level() != level);
 		for (ServerPlayer player : level.players()) {
-			if (!isInsideFootprint(outerGeometry, player.blockPosition())) {
+			if (!isSeasonStartEligiblePlayer(player) || !isInsideFootprint(outerGeometry, player.blockPosition())) {
 				continue;
 			}
 			WORLD_REVEAL_SAFE_TARGETS.computeIfAbsent(player.getUUID(), ignored -> resolveNearestWorldRevealTarget(player, barrierGeometry));
@@ -3914,7 +4189,8 @@ public final class SeasonStartSystem {
 		if (server == null || level == null) {
 			return;
 		}
-		prepareWorldReveal(level);
+		ensureWorldRevealSnapshotIndexes();
+		ensureSceneSnapshot(level);
 		materializeCompletedWorldRevealTerrain(level);
 		completeWorldReveal(server, level);
 	}
@@ -3926,6 +4202,9 @@ public final class SeasonStartSystem {
 		clearStartupWorldgenDisplay(level);
 		restorePostStartMorning(level);
 		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			if (!isSeasonStartEligiblePlayer(player)) {
+				continue;
+			}
 			clearPostStartPlayerInventory(player);
 			applyFreeState(player);
 			player.fallDistance = 0.0F;
@@ -3933,10 +4212,13 @@ public final class SeasonStartSystem {
 		if (serverAnchor != null) {
 			ServerBlock.ensureServerStructureDisplay(level, serverAnchor, serverStructureAxis);
 		}
+		restoreSceneEntities(level);
+		sceneBoundaryPhysicsFrozen = false;
 		worldRevealActive = false;
 		worldRevealBarriersPlaced = false;
 		worldRevealPhaseStartTick = Long.MIN_VALUE;
 		worldRevealCrackStartTick = Long.MIN_VALUE;
+		worldRevealCrackNotBeforeTick = Long.MIN_VALUE;
 		worldRevealMusicEndTick = Long.MIN_VALUE;
 		worldRevealDarknessClearTick = Long.MIN_VALUE;
 		worldRevealVisibleEpisodeCursor = 0;
@@ -3954,12 +4236,16 @@ public final class SeasonStartSystem {
 		WORLD_REVEAL_TERRAIN.clear();
 		WORLD_REVEAL_BARRIER_COLLISION.clear();
 		WORLD_REVEAL_EPISODES.clear();
+		WORLD_REVEAL_ENTITY_SNAPSHOTS.clear();
 		WORLD_REVEAL_SURFACE_Y.clear();
 		WORLD_REVEAL_TARGET_STATES.clear();
+		WORLD_REVEAL_BOUNDARY_TARGET_STATES.clear();
 		WORLD_REVEAL_SAFE_TARGETS.clear();
 		WORLD_REVEAL_REQUIRED_POSITIONS.clear();
 		WORLD_REVEAL_DEFERRED_POSITIONS.clear();
 		WORLD_REVEAL_REVEALED_POSITIONS.clear();
+		worldRevealPlanFuture = null;
+		worldRevealPlanReady = false;
 		clearSharedLaunchBossBar();
 		restoreSeasonStartDifficulty(server);
 		stateDirty = true;
@@ -3978,9 +4264,44 @@ public final class SeasonStartSystem {
 			}
 			setSceneBlockSilently(level, placement.pos(), placement.state());
 		}
+		restoreWorldRevealBoundaryStates(level);
 		refreshWorldRevealBoundaryPhysics(level, anchor);
 		ServerBlock.ensureServerStructureDisplay(level, anchor, serverStructureAxis);
+		sceneBoundaryPhysicsFrozen = false;
 		scenePrepared = false;
+	}
+
+	private static void restoreWorldRevealBoundaryStates(ServerLevel level) {
+		if (level == null || WORLD_REVEAL_BOUNDARY_TARGET_STATES.isEmpty()) {
+			return;
+		}
+		for (Map.Entry<Long, BlockState> entry : WORLD_REVEAL_BOUNDARY_TARGET_STATES.entrySet()) {
+			BlockState state = entry.getValue();
+			if (state == null || state.isAir()) {
+				continue;
+			}
+			BlockPos pos = BlockPos.of(entry.getKey());
+			if (isServerStructureFootprint(pos)) {
+				continue;
+			}
+			setSceneBlockSilently(level, pos, state);
+		}
+	}
+
+	private static void restoreSceneEntities(ServerLevel level) {
+		if (level == null || WORLD_REVEAL_ENTITY_SNAPSHOTS.isEmpty()) {
+			return;
+		}
+		for (CompoundTag tag : new ArrayList<>(WORLD_REVEAL_ENTITY_SNAPSHOTS)) {
+			if (tag == null || tag.isEmpty()) {
+				continue;
+			}
+			Entity restored = EntityType.loadEntityRecursive(tag.copy(), level, EntitySpawnReason.LOAD, entity -> entity);
+			if (restored == null || !shouldSnapshotSceneEntity(restored)) {
+				continue;
+			}
+			level.addFreshEntity(restored);
+		}
 	}
 
 	private static void refreshWorldRevealBoundaryPhysics(ServerLevel level, BlockPos anchor) {
@@ -3994,6 +4315,15 @@ public final class SeasonStartSystem {
 				continue;
 			}
 			refreshPositions.add(pos.immutable());
+			for (Direction direction : Direction.values()) {
+				for (int step = 1; step <= WORLD_REVEAL_BOUNDARY_RESTORE_RADIUS; step++) {
+					refreshPositions.add(pos.relative(direction, step).immutable());
+				}
+			}
+		}
+		for (long key : WORLD_REVEAL_BOUNDARY_TARGET_STATES.keySet()) {
+			BlockPos pos = BlockPos.of(key);
+			refreshPositions.add(pos);
 			for (Direction direction : Direction.values()) {
 				refreshPositions.add(pos.relative(direction).immutable());
 			}
@@ -4035,95 +4365,272 @@ public final class SeasonStartSystem {
 	}
 
 	private static void ensureSceneBuilt(ServerLevel level) {
-		if (level == null || serverAnchor == null || scenePrepared) {
+		if (level == null || scenePrepared) {
 			return;
 		}
-		ensureSceneSnapshot(level);
-		clearStaleSceneShellVolume(level);
-		preparePlatformFloor(level);
-		buildSceneShell(level);
+		BlockPos anchor = resolveServerAnchor(level);
+		if (anchor == null) {
+			return;
+		}
+		if (sceneBuildTask == null || !sceneBuildTask.anchor.equals(anchor)) {
+			sceneBuildTask = createSceneBuildTask(level, anchor);
+		}
+	}
+
+	private static void protectPlayersDuringSceneBuild(ServerLevel level, Iterable<ServerPlayer> players) {
+		if (level == null || players == null || serverAnchor == null) {
+			return;
+		}
+		BoxGeometry outerGeometry = computeOuterBoxGeometry(resolveServerAnchor(level));
+		for (ServerPlayer player : players) {
+			if (!isSeasonStartEligiblePlayer(player)
+					|| player.level() != level
+					|| !isInsideFootprint(outerGeometry, player.blockPosition())
+					|| player.isNoGravity()) {
+				continue;
+			}
+			player.setNoGravity(true);
+			player.setDeltaMovement(Vec3.ZERO);
+			player.fallDistance = 0.0F;
+			SCENE_BUILD_FLOATING_PLAYERS.add(player.getUUID());
+		}
+	}
+
+	private static void releaseSceneBuildFlight(MinecraftServer server) {
+		if (server == null || SCENE_BUILD_FLOATING_PLAYERS.isEmpty()) {
+			return;
+		}
+		for (UUID playerId : new ArrayList<>(SCENE_BUILD_FLOATING_PLAYERS)) {
+			ServerPlayer player = server.getPlayerList().getPlayer(playerId);
+			if (player != null) {
+				player.setNoGravity(false);
+				player.fallDistance = 0.0F;
+			}
+		}
+		SCENE_BUILD_FLOATING_PLAYERS.clear();
+	}
+
+	private static SceneBuildTask createSceneBuildTask(ServerLevel level, BlockPos anchor) {
+		BoxGeometry outer = computeOuterBoxGeometry(anchor);
+		BoxGeometry barrier = computeBarrierGeometry(anchor);
+		int legacyFloorY = (anchor.getY() - 1) - BARRIER_FLOOR_DEPTH;
+		int legacyRoofY = legacyFloorY + (Math.max(get().boxHalfWidth, get().boxHalfDepth) * 2 + 1) - 1;
+		BoxGeometry stale = new BoxGeometry(
+				Math.min(outer.minX, barrier.minX) - 1,
+				Math.max(outer.maxX, barrier.maxX) + 1,
+				Math.min(outer.minZ, barrier.minZ) - 1,
+				Math.max(outer.maxZ, barrier.maxZ) + 1,
+				Math.min(outer.floorY, Math.min(barrier.floorY - (BARRIER_FLOOR_DEPTH - 1), legacyFloorY)),
+				Math.max(outer.roofY, Math.max(barrier.roofY, legacyRoofY)) + 1
+		);
+		Set<Long> structureFootprint = new HashSet<>();
+		for (BlockPos pos : ServerStructureBreakSystem.getStructurePositions(anchor, serverStructureAxis)) {
+			structureFootprint.add(pos.asLong());
+		}
+		WORLD_REVEAL_TERRAIN.clear();
+		WORLD_REVEAL_BARRIER_COLLISION.clear();
+		WORLD_REVEAL_SURFACE_Y.clear();
+		WORLD_REVEAL_TARGET_STATES.clear();
+		WORLD_REVEAL_BOUNDARY_TARGET_STATES.clear();
+		WORLD_REVEAL_SAFE_TARGETS.clear();
+		captureBoundaryRestoreSnapshot(level, outer);
+		captureSceneEntitySnapshot(level, outer);
+		protectPlayersDuringSceneBuild(level, level.players());
+		boolean hadExistingShell = isSceneShellAlreadyBuilt(level);
+		return new SceneBuildTask(anchor.immutable(), outer, barrier, stale, hadExistingShell, structureFootprint);
+	}
+
+	private static boolean tickSceneBuild(MinecraftServer server, ServerLevel level) {
+		if (scenePrepared) {
+			return true;
+		}
+		ensureSceneBuilt(level);
+		SceneBuildTask task = sceneBuildTask;
+		if (task == null) {
+			return false;
+		}
+		SceneBuildPhase budgetPhase = task.phase;
+		int remainingBudget = budgetPhase == SceneBuildPhase.SNAPSHOT
+				? SCENE_SNAPSHOT_BATCH_BLOCKS
+				: SCENE_BUILD_BATCH_BLOCKS;
+		while (remainingBudget > 0 && task.phase == budgetPhase && task.phase != SceneBuildPhase.FINALIZE) {
+			long total = task.phase == SceneBuildPhase.BUILD_BARRIER
+					? task.barrierShellBlocks.size()
+					: volumeOf(task.currentGeometry());
+			if (task.cursor >= total) {
+				advanceSceneBuildPhase(task);
+				continue;
+			}
+			BlockPos pos = task.phase == SceneBuildPhase.BUILD_BARRIER
+					? task.barrierShellBlocks.get((int) task.cursor++)
+					: positionAtColumnMajor(task.currentGeometry(), task.cursor++);
+			switch (task.phase) {
+				case SNAPSHOT -> captureSceneSnapshotCell(level, task, pos);
+				case CLEAR_STALE -> clearStaleSceneBlock(level, pos);
+				case BUILD_OUTER -> buildOuterSceneBlock(level, task, pos);
+				case BUILD_BARRIER -> buildBarrierSceneBlock(level, task, pos);
+				default -> {
+				}
+			}
+			remainingBudget--;
+		}
+		if (task.phase != SceneBuildPhase.FINALIZE) {
+			return false;
+		}
+		finishSceneBuild(server, level, task);
+		return true;
+	}
+
+	private static void captureSceneSnapshotCell(ServerLevel level, SceneBuildTask task, BlockPos pos) {
+		if (task.structureFootprint.contains(pos.asLong())) {
+			return;
+		}
+		BlockState state;
+		if (task.generatorFallback) {
+			if (task.noiseColumn == null || task.noiseColumnX != pos.getX() || task.noiseColumnZ != pos.getZ()) {
+				task.noiseColumn = level.getChunkSource().getGenerator().getBaseColumn(
+						pos.getX(), pos.getZ(), level, level.getChunkSource().randomState()
+				);
+				task.noiseColumnX = pos.getX();
+				task.noiseColumnZ = pos.getZ();
+			}
+			state = task.noiseColumn.getBlock(pos.getY());
+		} else {
+			state = level.getBlockState(pos);
+		}
+		if (shouldIgnoreSceneSnapshotState(pos, state, task.outer, task.barrier) || state == null || state.isAir()) {
+			return;
+		}
+		WORLD_REVEAL_TERRAIN.add(new TerrainPlacement(pos.immutable(), state));
+		WORLD_REVEAL_TARGET_STATES.put(pos.asLong(), state);
+		if (!isInsideBarrierInterior(task.barrier, pos)) {
+			return;
+		}
+		long columnKey = surfaceColumnKey(pos.getX(), pos.getZ());
+		WORLD_REVEAL_SURFACE_Y.put(columnKey, pos.getY());
+		if (isWorldRevealCollisionState(state)) {
+			WORLD_REVEAL_BARRIER_COLLISION.add(pos.immutable());
+			task.topSolidSurfaceY.put(columnKey, pos.getY());
+		}
+	}
+
+	private static void clearStaleSceneBlock(ServerLevel level, BlockPos pos) {
+		BlockState state = level.getBlockState(pos);
+		if (state.is(Blocks.BLACK_CONCRETE) || state.is(Blocks.BARRIER)) {
+			setSceneBlockSilently(level, pos, Blocks.AIR.defaultBlockState());
+		}
+	}
+
+	private static void buildOuterSceneBlock(ServerLevel level, SceneBuildTask task, BlockPos pos) {
+		boolean outerShell = pos.getY() == task.outer.floorY
+				|| pos.getY() == task.outer.roofY
+				|| pos.getX() == task.outer.minX
+				|| pos.getX() == task.outer.maxX
+				|| pos.getZ() == task.outer.minZ
+				|| pos.getZ() == task.outer.maxZ;
+		if (outerShell) {
+			setSceneBlockSilently(level, pos, Blocks.BLACK_CONCRETE.defaultBlockState());
+			return;
+		}
+		if (!task.structureFootprint.contains(pos.asLong()) && !level.getBlockState(pos).isAir()) {
+			setSceneBlockSilently(level, pos, Blocks.AIR.defaultBlockState());
+		}
+	}
+
+	private static void buildBarrierSceneBlock(ServerLevel level, SceneBuildTask task, BlockPos pos) {
+		setSceneBlockSilently(level, pos, Blocks.BARRIER.defaultBlockState());
+	}
+
+	private static void advanceSceneBuildPhase(SceneBuildTask task) {
+		if (task.phase == SceneBuildPhase.SNAPSHOT) {
+			finalizeSceneSnapshot(task);
+		}
+		task.phase = switch (task.phase) {
+			case SNAPSHOT -> task.generatorFallback ? SceneBuildPhase.CLEAR_STALE : SceneBuildPhase.BUILD_OUTER;
+			case CLEAR_STALE -> SceneBuildPhase.BUILD_OUTER;
+			case BUILD_OUTER -> SceneBuildPhase.BUILD_BARRIER;
+			case BUILD_BARRIER, FINALIZE -> SceneBuildPhase.FINALIZE;
+		};
+		task.cursor = 0L;
+	}
+
+	private static void finalizeSceneSnapshot(SceneBuildTask task) {
+		for (int x = task.barrier.minX + 1; x <= task.barrier.maxX - 1; x++) {
+			for (int z = task.barrier.minZ + 1; z <= task.barrier.maxZ - 1; z++) {
+				long columnKey = surfaceColumnKey(x, z);
+				int topSolidY = task.topSolidSurfaceY.getOrDefault(columnKey, Integer.MIN_VALUE);
+				int topFilledY = WORLD_REVEAL_SURFACE_Y.getOrDefault(columnKey, Integer.MIN_VALUE);
+				int surfaceY = topSolidY != Integer.MIN_VALUE
+						? topSolidY
+						: (topFilledY != Integer.MIN_VALUE ? topFilledY : task.barrier.floorY);
+				WORLD_REVEAL_SURFACE_Y.put(columnKey, surfaceY);
+			}
+		}
+	}
+
+	private static void finishSceneBuild(MinecraftServer server, ServerLevel level, SceneBuildTask task) {
+		if (server == null || level == null || task == null) {
+			return;
+		}
+		if (!isServerStructurePresent(level, task.anchor)) {
+			ServerBlock.placeServerStructure(level, task.anchor, Direction.NORTH);
+		}
+		ServerBlock.ensureServerStructureDisplay(level, task.anchor, serverStructureAxis);
+		beginWorldRevealPlanPreparation(level);
 		ensureStartupWorldgenDisplay(level);
 		clearSceneMobs(level);
-		if (!isServerStructurePresent(level, serverAnchor)) {
-			ServerBlock.placeServerStructure(level, serverAnchor, Direction.NORTH);
-		}
-		ServerBlock.ensureServerStructureDisplay(level, serverAnchor, serverStructureAxis);
+		clearSceneExperienceOrbs(level);
 		scenePrepared = true;
-	}
+		sceneBuildTask = null;
+		releaseSceneBuildFlight(server);
 
-	private static void clearStaleSceneShellVolume(ServerLevel level) {
-		if (level == null || serverAnchor == null) {
-			return;
-		}
-		BoxGeometry outerGeometry = computeOuterBoxGeometry(serverAnchor);
-		BoxGeometry barrierGeometry = computeBarrierGeometry(serverAnchor);
-		int minX = Math.min(outerGeometry.minX, barrierGeometry.minX) - 1;
-		int maxX = Math.max(outerGeometry.maxX, barrierGeometry.maxX) + 1;
-		int minZ = Math.min(outerGeometry.minZ, barrierGeometry.minZ) - 1;
-		int maxZ = Math.max(outerGeometry.maxZ, barrierGeometry.maxZ) + 1;
-		int legacyFloorY = (serverAnchor.getY() - 1) - BARRIER_FLOOR_DEPTH;
-		int legacyRoofY = legacyFloorY + (Math.max(get().boxHalfWidth, get().boxHalfDepth) * 2 + 1) - 1;
-		int minY = Math.min(outerGeometry.floorY, Math.min(barrierGeometry.floorY - (BARRIER_FLOOR_DEPTH - 1), legacyFloorY));
-		int maxY = Math.max(outerGeometry.roofY, Math.max(barrierGeometry.roofY, legacyRoofY)) + 1;
-		for (int x = minX; x <= maxX; x++) {
-			for (int z = minZ; z <= maxZ; z++) {
-				for (int y = minY; y <= maxY; y++) {
-					BlockPos pos = new BlockPos(x, y, z);
-					BlockState state = level.getBlockState(pos);
-					if (state.is(Blocks.BLACK_CONCRETE) || state.is(Blocks.BARRIER)) {
-						setSceneBlockSilently(level, pos, Blocks.AIR.defaultBlockState());
-					}
-				}
+		clearSharedBitcoins(level, true);
+		for (Map.Entry<UUID, PlayerSceneState> entry : PLAYER_STATES.entrySet()) {
+			PlayerSceneState state = entry.getValue();
+			if (state == null || state.phase == PlayerPhase.WAITING_START || state.phase == PlayerPhase.SHARED || state.phase == PlayerPhase.RESTORING) {
+				continue;
+			}
+			SlotDefinition slot = resolveSlotDefinition(task.barrier, state.slotIndex);
+			if (slot != null) {
+				placeIntroOre(level, slot);
 			}
 		}
-	}
-
-	private static void preparePlatformFloor(ServerLevel level) {
-		BoxGeometry geometry = computeOuterBoxGeometry(resolveServerAnchor(level));
-		for (int x = geometry.minX; x <= geometry.maxX; x++) {
-			for (int z = geometry.minZ; z <= geometry.maxZ; z++) {
-				BlockPos floorPos = new BlockPos(x, geometry.floorY, z);
-				setSceneBlockSilently(level, floorPos, Blocks.BLACK_CONCRETE.defaultBlockState());
-				for (int y = geometry.floorY + 1; y <= geometry.roofY - 1; y++) {
-					BlockPos clearPos = new BlockPos(x, y, z);
-					if (isServerStructureFootprint(clearPos)) {
-						continue;
-					}
-					if (!level.getBlockState(clearPos).isAir()) {
-						setSceneBlockSilently(level, clearPos, Blocks.AIR.defaultBlockState());
-					}
-				}
+		ServerRaceSystem.beginSeasonStartRaces(server, get().startupRaceId);
+		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			if (isSeasonStartEligiblePlayer(player)) {
+				assignOrRestorePlayer(server, player, true);
 			}
 		}
+		if (sharedLaunchCollectedBitcoins < sharedLaunchRequiredBitcoins) {
+			ensureSharedBitcoinPopulation(level);
+		}
+		if (countSharedPlayers() > 0 && nextSharedReminderTick == Long.MIN_VALUE) {
+			nextSharedReminderTick = level.getGameTime() + SHARED_IDLE_REMINDER_TICKS;
+		}
+		syncPrivatePlayerProfiles(server);
+		stateDirty = true;
 	}
 
-	private static void buildSceneShell(ServerLevel level) {
-		BoxGeometry outerGeometry = computeOuterBoxGeometry(resolveServerAnchor(level));
-		for (BlockPos pos : collectBlackShellBlocks(outerGeometry)) {
-			setSceneBlockSilently(level, pos, Blocks.BLACK_CONCRETE.defaultBlockState());
-		}
-		BoxGeometry barrierGeometry = computeBarrierGeometry(resolveServerAnchor(level));
-		for (BlockPos pos : collectBarrierShellBlocks(barrierGeometry)) {
-			setSceneBlockSilently(level, pos, Blocks.BARRIER.defaultBlockState());
-		}
-		sealSceneShellCaps(level, outerGeometry, barrierGeometry);
+	private static long volumeOf(BoxGeometry geometry) {
+		return (long) (geometry.maxX - geometry.minX + 1)
+				* (long) (geometry.maxZ - geometry.minZ + 1)
+				* (long) (geometry.roofY - geometry.floorY + 1);
 	}
 
-	private static void sealSceneShellCaps(ServerLevel level, BoxGeometry outerGeometry, BoxGeometry barrierGeometry) {
-		if (level == null || outerGeometry == null || barrierGeometry == null) {
-			return;
-		}
-		fillHorizontalSlice(level, outerGeometry.minX, outerGeometry.maxX, outerGeometry.minZ, outerGeometry.maxZ, outerGeometry.floorY, Blocks.BLACK_CONCRETE.defaultBlockState());
-		fillHorizontalSlice(level, outerGeometry.minX, outerGeometry.maxX, outerGeometry.minZ, outerGeometry.maxZ, outerGeometry.roofY, Blocks.BLACK_CONCRETE.defaultBlockState());
-		fillHorizontalSlice(level, barrierGeometry.minX, barrierGeometry.maxX, barrierGeometry.minZ, barrierGeometry.maxZ, barrierGeometry.roofY, Blocks.BARRIER.defaultBlockState());
+	private static BlockPos positionAtColumnMajor(BoxGeometry geometry, long index) {
+		int height = geometry.roofY - geometry.floorY + 1;
+		int depth = geometry.maxZ - geometry.minZ + 1;
+		long columnIndex = index / height;
+		int y = geometry.floorY + (int) (index % height);
+		int x = geometry.minX + (int) (columnIndex / depth);
+		int z = geometry.minZ + (int) (columnIndex % depth);
+		return new BlockPos(x, y, z);
 	}
 
-	private static void fillHorizontalSlice(ServerLevel level, int minX, int maxX, int minZ, int maxZ, int y, BlockState state) {
-		for (int x = minX; x <= maxX; x++) {
-			for (int z = minZ; z <= maxZ; z++) {
-				setSceneBlockSilently(level, new BlockPos(x, y, z), state);
-			}
-		}
+	private static boolean isInsideBarrierInterior(BoxGeometry barrier, BlockPos pos) {
+		return barrier != null && pos != null
+				&& pos.getX() >= barrier.minX + 1 && pos.getX() <= barrier.maxX - 1
+				&& pos.getZ() >= barrier.minZ + 1 && pos.getZ() <= barrier.maxZ - 1;
 	}
 
 	private static void removeSceneShellNow(ServerLevel level) {
@@ -4137,6 +4644,7 @@ public final class SeasonStartSystem {
 			}
 		}
 		scenePrepared = false;
+		sceneBuildTask = null;
 	}
 
 	private static List<BlockPos> collectSceneShellBlocks(BlockPos anchor) {
@@ -4354,18 +4862,35 @@ public final class SeasonStartSystem {
 		sharedLaunchCollectedBitcoins = Math.min(sharedLaunchRequiredBitcoins, sharedLaunchCollectedBitcoins + bitcoins);
 		lastSharedLaunchProgressTick = nowTick;
 		nextSharedReminderTick = nowTick + SHARED_IDLE_REMINDER_TICKS;
+		String newestMilestoneTrigger = null;
 		while (sharedLaunchMilestoneCursor < SHARED_LAUNCH_MILESTONES.length
 				&& getSharedLaunchPercent() >= SHARED_LAUNCH_MILESTONES[sharedLaunchMilestoneCursor]) {
-			String trigger = resolveSharedLaunchMilestoneTrigger(SHARED_LAUNCH_MILESTONES[sharedLaunchMilestoneCursor]);
-			if (trigger != null) {
-				SeasonStartVoiceSystem.fireTrigger(server, trigger, null);
-			}
+			newestMilestoneTrigger = resolveSharedLaunchMilestoneTrigger(
+					SHARED_LAUNCH_MILESTONES[sharedLaunchMilestoneCursor]
+			);
 			sharedLaunchMilestoneCursor++;
+		}
+		if (sharedLaunchCollectedBitcoins >= sharedLaunchRequiredBitcoins) {
+			// The finale takes exclusive ownership of narration. This prevents an
+			// unfinished personal menu line or an old percentage from leaking into it.
+			menuExplanationActive = false;
+			pendingMenuExplanationTick = Long.MIN_VALUE;
+			SeasonStartVoiceSystem.resetSceneState();
+			if (newestMilestoneTrigger != null) {
+				SeasonStartVoiceSystem.fireTrigger(server, newestMilestoneTrigger, null);
+			}
+		} else if (newestMilestoneTrigger != null) {
+			SeasonStartVoiceSystem.replaceSharedLaunchProgressNarration(server, newestMilestoneTrigger);
 		}
 		if (!menuExplanationActive
 				&& getSharedLaunchPercent() >= MENU_EXPLANATION_UNLOCK_PERCENT
 				&& pendingMenuExplanationTick == Long.MIN_VALUE) {
 			pendingMenuExplanationTick = nowTick;
+		}
+		if (sharedLaunchCollectedBitcoins >= sharedLaunchRequiredBitcoins && pendingSharedFinishTick == Long.MIN_VALUE) {
+			pendingSharedFinishTick = nowTick
+					+ resolveTriggerSequenceDurationTicks("shared_launch_complete")
+					+ SHARED_FINISH_DELAY_TICKS;
 		}
 		refreshSharedLaunchBossBar(server);
 		stateDirty = true;
@@ -4647,8 +5172,9 @@ public final class SeasonStartSystem {
 			return;
 		}
 		ResolvedServerStructure canonical = keeper;
+		BlockPos preferred = resolveBootstrapAnchor(level);
 		for (ResolvedServerStructure candidate : stacked.values()) {
-			if (candidate.anchor().getY() > canonical.anchor().getY()) {
+			if (isPreferredServerStructureCandidate(level, preferred, candidate, canonical)) {
 				canonical = candidate;
 			}
 		}
@@ -4658,6 +5184,109 @@ public final class SeasonStartSystem {
 			}
 		}
 		rememberServerStructure(canonical.anchor(), canonical.axis());
+	}
+
+	private static boolean isPreferredServerStructureCandidate(
+			ServerLevel level,
+			BlockPos preferred,
+			ResolvedServerStructure candidate,
+			ResolvedServerStructure currentBest
+	) {
+		if (candidate == null) {
+			return false;
+		}
+		if (currentBest == null) {
+			return true;
+		}
+		int candidateMaxGap = resolveServerStructureMaxSupportGap(level, candidate);
+		int bestMaxGap = resolveServerStructureMaxSupportGap(level, currentBest);
+		if (candidateMaxGap != bestMaxGap) {
+			return candidateMaxGap < bestMaxGap;
+		}
+		long candidateTotalGap = resolveServerStructureTotalSupportGap(level, candidate);
+		long bestTotalGap = resolveServerStructureTotalSupportGap(level, currentBest);
+		if (candidateTotalGap != bestTotalGap) {
+			return candidateTotalGap < bestTotalGap;
+		}
+		if (preferred != null) {
+			double candidateDistance = candidate.anchor().distSqr(preferred);
+			double bestDistance = currentBest.anchor().distSqr(preferred);
+			if (candidateDistance != bestDistance) {
+				return candidateDistance < bestDistance;
+			}
+		}
+		if (candidate.anchor().getY() != currentBest.anchor().getY()) {
+			return candidate.anchor().getY() < currentBest.anchor().getY();
+		}
+		if (candidate.anchor().getX() != currentBest.anchor().getX()) {
+			return candidate.anchor().getX() < currentBest.anchor().getX();
+		}
+		return candidate.anchor().getZ() < currentBest.anchor().getZ();
+	}
+
+	private static int resolveServerStructureMaxSupportGap(ServerLevel level, ResolvedServerStructure structure) {
+		if (level == null || structure == null) {
+			return Integer.MAX_VALUE;
+		}
+		int maxGap = 0;
+		for (BlockPos pos : ServerStructureBreakSystem.getStructurePositions(structure.anchor(), structure.axis())) {
+			if (pos.getY() != structure.anchor().getY()) {
+				continue;
+			}
+			int supportY = resolveBootstrapSupportY(level, pos.getX(), pos.getZ());
+			if (supportY == Integer.MIN_VALUE) {
+				return Integer.MAX_VALUE;
+			}
+			maxGap = Math.max(maxGap, Math.max(0, pos.getY() - (supportY + 1)));
+		}
+		return maxGap;
+	}
+
+	private static long resolveServerStructureTotalSupportGap(ServerLevel level, ResolvedServerStructure structure) {
+		if (level == null || structure == null) {
+			return Long.MAX_VALUE;
+		}
+		long totalGap = 0L;
+		for (BlockPos pos : ServerStructureBreakSystem.getStructurePositions(structure.anchor(), structure.axis())) {
+			if (pos.getY() != structure.anchor().getY()) {
+				continue;
+			}
+			int supportY = resolveBootstrapSupportY(level, pos.getX(), pos.getZ());
+			if (supportY == Integer.MIN_VALUE) {
+				return Long.MAX_VALUE;
+			}
+			totalGap += Math.max(0, pos.getY() - (supportY + 1));
+		}
+		return totalGap;
+	}
+
+	private static boolean shouldRepairFloatingBootstrapServer(
+			ServerLevel level,
+			ResolvedServerStructure currentStructure,
+			BlockPos bootstrapAnchor
+	) {
+		if (level == null || currentStructure == null || bootstrapAnchor == null) {
+			return false;
+		}
+		if (currentStructure.anchor().equals(bootstrapAnchor)) {
+			return false;
+		}
+		int currentMaxGap = resolveServerStructureMaxSupportGap(level, currentStructure);
+		if (currentMaxGap < LEGACY_FLOATING_SERVER_REPAIR_MIN_GAP) {
+			return false;
+		}
+		int verticalDrop = currentStructure.anchor().getY() - bootstrapAnchor.getY();
+		if (verticalDrop < LEGACY_FLOATING_SERVER_REPAIR_MIN_DROP) {
+			return false;
+		}
+		ResolvedServerStructure targetPlacement = new ResolvedServerStructure(bootstrapAnchor.immutable(), currentStructure.axis());
+		int targetMaxGap = resolveServerStructureMaxSupportGap(level, targetPlacement);
+		if (targetMaxGap == Integer.MAX_VALUE || targetMaxGap >= currentMaxGap) {
+			return false;
+		}
+		long currentTotalGap = resolveServerStructureTotalSupportGap(level, currentStructure);
+		long targetTotalGap = resolveServerStructureTotalSupportGap(level, targetPlacement);
+		return targetTotalGap < currentTotalGap;
 	}
 
 	private static Direction.Axis parseServerAxis(String value) {
@@ -4825,10 +5454,33 @@ public final class SeasonStartSystem {
 			return;
 		}
 		BoxGeometry geometry = computeOuterBoxGeometry(serverAnchor);
-		for (Entity entity : level.getAllEntities()) {
-			if (entity instanceof Mob && isInsideFootprint(geometry, entity.blockPosition())) {
-				entity.discard();
-			}
+		AABB sceneBounds = new AABB(
+				geometry.minX,
+				geometry.floorY,
+				geometry.minZ,
+				geometry.maxX + 1.0D,
+				geometry.roofY + 1.0D,
+				geometry.maxZ + 1.0D
+		);
+		for (Mob mob : level.getEntitiesOfClass(Mob.class, sceneBounds)) {
+			mob.discard();
+		}
+	}
+
+	private static void clearSceneExperienceOrbs(ServerLevel level) {
+		if (level == null || serverAnchor == null) {
+			return;
+		}
+		BoxGeometry geometry = computeOuterBoxGeometry(serverAnchor);
+		for (ExperienceOrb orb : level.getEntitiesOfClass(ExperienceOrb.class, new AABB(
+				geometry.minX,
+				geometry.floorY,
+				geometry.minZ,
+				geometry.maxX + 1.0D,
+				geometry.roofY + 1.0D,
+				geometry.maxZ + 1.0D
+		))) {
+			orb.discard();
 		}
 	}
 
@@ -4978,17 +5630,17 @@ public final class SeasonStartSystem {
 		List<ServerPlayer> players = server.getPlayerList().getPlayers();
 		Set<UUID> onlineIds = new HashSet<>();
 		for (ServerPlayer player : players) {
-			if (player != null) {
+			if (isSeasonStartEligiblePlayer(player)) {
 				onlineIds.add(player.getUUID());
 			}
 		}
 		HIDDEN_PLAYER_PROFILE_PAIRS.removeIf(pair -> !onlineIds.contains(pair.viewerId) || !onlineIds.contains(pair.subjectId));
 		for (ServerPlayer viewer : players) {
-			if (viewer == null) {
+			if (!isSeasonStartEligiblePlayer(viewer)) {
 				continue;
 			}
 			for (ServerPlayer subject : players) {
-				if (subject == null || viewer == subject) {
+				if (!isSeasonStartEligiblePlayer(subject) || viewer == subject) {
 					continue;
 				}
 				PlayerVisibilityPair pair = new PlayerVisibilityPair(viewer.getUUID(), subject.getUUID());
@@ -5083,25 +5735,18 @@ public final class SeasonStartSystem {
 		return resolveKnownServerStructureAxis(level, anchor) != null;
 	}
 
-	private static boolean shouldRelocateBuriedBootstrapServer(BlockPos currentAnchor, BlockPos bootstrapAnchor) {
-		if (currentAnchor == null || bootstrapAnchor == null) {
-			return false;
-		}
-		return currentAnchor.getX() == 0
-				&& currentAnchor.getZ() == 0
-				&& bootstrapAnchor.getX() == 0
-				&& bootstrapAnchor.getZ() == 0
-				&& bootstrapAnchor.getY() > currentAnchor.getY();
-	}
-
 	private static BlockPos resolveBootstrapAnchor(ServerLevel level) {
 		if (level == null) {
 			return new BlockPos(0, 64, 0);
 		}
+		LevelData.RespawnData respawnData = level.getRespawnData();
+		BlockPos sharedSpawn = respawnData == null ? null : respawnData.pos();
+		int centerX = sharedSpawn == null ? 0 : sharedSpawn.getX();
+		int centerZ = sharedSpawn == null ? 0 : sharedSpawn.getZ();
 		int maxSupportY = Integer.MIN_VALUE;
 		for (int x = -ServerStructureBreakSystem.STRUCTURE_HALF_WIDTH; x <= ServerStructureBreakSystem.STRUCTURE_HALF_WIDTH; x++) {
 			for (int z = -ServerStructureBreakSystem.STRUCTURE_HALF_DEPTH; z <= ServerStructureBreakSystem.STRUCTURE_HALF_DEPTH; z++) {
-				maxSupportY = Math.max(maxSupportY, resolveBootstrapSupportY(level, x, z));
+				maxSupportY = Math.max(maxSupportY, resolveBootstrapSupportY(level, centerX + x, centerZ + z));
 			}
 		}
 		int anchorY = maxSupportY == Integer.MIN_VALUE ? 64 : maxSupportY + 1;
@@ -5112,11 +5757,9 @@ public final class SeasonStartSystem {
 		if (anchorY > maxAnchorY) {
 			anchorY = maxAnchorY;
 		}
-		BlockPos candidate = new BlockPos(0, anchorY, 0);
-		while (candidate.getY() < maxAnchorY && !isBootstrapVolumeClear(level, candidate, Direction.Axis.Z)) {
-			candidate = candidate.above();
-		}
-		return candidate;
+		// Bootstrap follows the world's chosen spawn column and then lifts the
+		// whole server footprint onto the supporting surface around that spawn.
+		return new BlockPos(centerX, anchorY, centerZ);
 	}
 
 	private static int resolveBootstrapSupportY(ServerLevel level, int x, int z) {
@@ -5124,11 +5767,23 @@ public final class SeasonStartSystem {
 			return Integer.MIN_VALUE;
 		}
 		int surfaceTop = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z);
-		int solidY = Math.max(level.getMinY(), surfaceTop - 1);
-		while (solidY > level.getMinY() && !level.getBlockState(new BlockPos(x, solidY, z)).blocksMotion()) {
+		int solidY = Math.min(level.getMaxY() - 1, Math.max(level.getMinY(), surfaceTop - 1));
+		while (solidY > level.getMinY()) {
+			BlockState state = level.getBlockState(new BlockPos(x, solidY, z));
+			if (state.blocksMotion() && !isBootstrapTransientSupportState(state)) {
+				break;
+			}
 			solidY--;
 		}
-		return level.getBlockState(new BlockPos(x, solidY, z)).blocksMotion() ? solidY : Integer.MIN_VALUE;
+		BlockState supportState = level.getBlockState(new BlockPos(x, solidY, z));
+		return supportState.blocksMotion() && !isBootstrapTransientSupportState(supportState) ? solidY : Integer.MIN_VALUE;
+	}
+
+	private static boolean isBootstrapTransientSupportState(BlockState state) {
+		return state != null
+				&& (state.is(ModBlocks.SERVER)
+				|| state.is(Blocks.BARRIER)
+				|| state.is(Blocks.BLACK_CONCRETE));
 	}
 
 	private static boolean isBootstrapVolumeClear(ServerLevel level, BlockPos anchor, Direction.Axis axis) {
@@ -5190,7 +5845,7 @@ public final class SeasonStartSystem {
 			double distance = candidate.anchor().distSqr(preferred);
 			if (best == null
 					|| distance < bestDistance
-					|| (distance == bestDistance && candidate.anchor().getY() > best.anchor().getY())) {
+					|| (distance == bestDistance && isPreferredServerStructureCandidate(level, preferred, candidate, best))) {
 				best = candidate;
 				bestDistance = distance;
 			}
@@ -5254,7 +5909,7 @@ public final class SeasonStartSystem {
 					double distance = candidate.anchor().distSqr(center);
 					if (best == null
 							|| distance < bestDistance
-							|| (distance == bestDistance && candidate.anchor().getY() > best.anchor().getY())) {
+							|| (distance == bestDistance && isPreferredServerStructureCandidate(level, center, candidate, best))) {
 						best = candidate;
 						bestDistance = distance;
 					}
@@ -5361,7 +6016,11 @@ public final class SeasonStartSystem {
 	}
 
 	private static int resolveBarrierBoxHeight() {
-		return Math.max(get().barrierHeight, Math.max(get().barrierHalfWidth, get().barrierHalfDepth) * 2);
+		// The barrier room must remain entirely inside the black cube. Its old
+		// width-derived height let the roof pierce the outer shell as a square ring.
+		int clearanceToOuterRoof = 5;
+		int maximumContainedHeight = Math.max(1, get().boxHeight - clearanceToOuterRoof);
+		return Mth.clamp(get().barrierHeight, 1, maximumContainedHeight);
 	}
 
 	private static Path getStatePath(MinecraftServer server) {
@@ -5377,6 +6036,7 @@ public final class SeasonStartSystem {
 		stateLoaded = true;
 		stateDirty = false;
 		scenePrepared = false;
+		sceneBuildTask = null;
 		shellDissolving = false;
 		worldRevealActive = false;
 		worldRevealBarriersPlaced = false;
@@ -5385,6 +6045,7 @@ public final class SeasonStartSystem {
 		pendingMenuExplanationTick = Long.MIN_VALUE;
 		worldRevealPhaseStartTick = Long.MIN_VALUE;
 		worldRevealCrackStartTick = Long.MIN_VALUE;
+		worldRevealCrackNotBeforeTick = Long.MIN_VALUE;
 		worldRevealMusicEndTick = Long.MIN_VALUE;
 		worldRevealDarknessClearTick = Long.MIN_VALUE;
 		sharedLaunchCollectedBitcoins = 0;
@@ -5405,10 +6066,13 @@ public final class SeasonStartSystem {
 		WORLD_REVEAL_EPISODES.clear();
 		WORLD_REVEAL_SURFACE_Y.clear();
 		WORLD_REVEAL_TARGET_STATES.clear();
+		WORLD_REVEAL_BOUNDARY_TARGET_STATES.clear();
 		WORLD_REVEAL_SAFE_TARGETS.clear();
 		WORLD_REVEAL_REQUIRED_POSITIONS.clear();
 		WORLD_REVEAL_DEFERRED_POSITIONS.clear();
 		WORLD_REVEAL_REVEALED_POSITIONS.clear();
+		worldRevealPlanFuture = null;
+		worldRevealPlanReady = false;
 		if (!Files.exists(path)) {
 			return;
 		}
@@ -5916,6 +6580,56 @@ public final class SeasonStartSystem {
 	private record BoxGeometry(int minX, int maxX, int minZ, int maxZ, int floorY, int roofY) {
 	}
 
+	private enum SceneBuildPhase {
+		SNAPSHOT,
+		CLEAR_STALE,
+		BUILD_OUTER,
+		BUILD_BARRIER,
+		FINALIZE
+	}
+
+	private static final class SceneBuildTask {
+		private final BlockPos anchor;
+		private final BoxGeometry outer;
+		private final BoxGeometry barrier;
+		private final BoxGeometry stale;
+		private final boolean generatorFallback;
+		private final Set<Long> structureFootprint;
+		private final List<BlockPos> barrierShellBlocks;
+		private final Map<Long, Integer> topSolidSurfaceY = new HashMap<>();
+		private SceneBuildPhase phase = SceneBuildPhase.SNAPSHOT;
+		private long cursor;
+		private NoiseColumn noiseColumn;
+		private int noiseColumnX = Integer.MIN_VALUE;
+		private int noiseColumnZ = Integer.MIN_VALUE;
+
+		private SceneBuildTask(
+				BlockPos anchor,
+				BoxGeometry outer,
+				BoxGeometry barrier,
+				BoxGeometry stale,
+				boolean generatorFallback,
+				Set<Long> structureFootprint
+		) {
+			this.anchor = anchor;
+			this.outer = outer;
+			this.barrier = barrier;
+			this.stale = stale;
+			this.generatorFallback = generatorFallback;
+			this.structureFootprint = structureFootprint;
+			this.barrierShellBlocks = collectBarrierShellBlocks(barrier);
+		}
+
+		private BoxGeometry currentGeometry() {
+			return switch (this.phase) {
+				case SNAPSHOT, BUILD_OUTER -> this.outer;
+				case CLEAR_STALE -> this.stale;
+				case BUILD_BARRIER -> this.barrier;
+				case FINALIZE -> this.outer;
+			};
+		}
+	}
+
 	private record SlotDefinition(BlockPos spawnFloorPos, BlockPos oreSupportPos, BlockPos orePos, Vec3 spawnPos, float yaw) {
 	}
 
@@ -5938,6 +6652,24 @@ public final class SeasonStartSystem {
 	}
 
 	private record WorldRevealSeed(Vec3 point, int round, double crackRadius, double terrainRadius) {
+	}
+
+	private record WorldRevealPlanInput(
+			BlockPos anchor,
+			BoxGeometry outerGeometry,
+			long randomSeed,
+			Set<Long> structureFootprint,
+			Set<Long> shellCandidates,
+			Map<Long, BlockState> terrainTargets,
+			Map<Long, Integer> surfaceY,
+			Set<Long> requiredPositions
+	) {
+	}
+
+	private record WorldRevealPlan(Set<Long> requiredPositions, List<WorldRevealEpisode> episodes) {
+		private static WorldRevealPlan empty() {
+			return new WorldRevealPlan(Set.of(), List.of());
+		}
 	}
 
 	private record WorldRevealEpisode(List<BlockPos> revealPositions, List<Vec3> crackPoints) {

@@ -88,6 +88,7 @@ public class ServerBlock extends SimplePolymerBlock {
 		if (level == null || pos == null) {
 			return;
 		}
+		ServerStructureBreakSystem.pruneStructureDisplays(level);
 		Direction safeForward = forward != null && forward.getAxis().isHorizontal() ? forward : Direction.NORTH;
 		Direction.Axis axis = safeForward.getAxis();
 		List<BlockPos> structurePositions = ServerStructureBreakSystem.getStructurePositions(pos, axis);
@@ -106,6 +107,13 @@ public class ServerBlock extends SimplePolymerBlock {
 	public static void ensureServerStructureDisplay(ServerLevel level, BlockPos pos, Direction.Axis axis) {
 		if (level == null || pos == null || axis == null) {
 			return;
+		}
+		ServerStructureBreakSystem.pruneStructureDisplays(level);
+		List<BlockPos> structurePositions = ServerStructureBreakSystem.getStructurePositions(pos, axis);
+		for (BlockPos structurePos : structurePositions) {
+			if (!level.getBlockState(structurePos).is(ModBlocks.SERVER)) {
+				return;
+			}
 		}
 		Direction forward = axis == Direction.Axis.X ? Direction.EAST : Direction.NORTH;
 		spawnServerDisplay(level, pos, forward, axis);

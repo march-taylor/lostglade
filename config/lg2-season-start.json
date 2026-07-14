@@ -1741,7 +1741,7 @@
       "audioFile": "voice/shared_launch_complete.wav",
       "scriptText": "Сто процентов. Сейчас разберусь что делаем дальше.",
       "delayTicks": 0,
-      "durationTicks": 108,
+      "durationTicks": 76,
       "onceGlobal": true,
       "oncePerPlayer": false,
       "interruptCurrent": false,

@@ -2,6 +2,7 @@ package com.lostglade.block;
 
 import com.lostglade.config.Lg2Config;
 import com.lostglade.item.ModItems;
+import com.lostglade.server.SeasonStartSystem;
 import eu.pb4.polymer.blocks.api.BlockModelType;
 import eu.pb4.polymer.blocks.api.BlockResourceCreator;
 import eu.pb4.polymer.blocks.api.PolymerBlockModel;
@@ -75,7 +76,8 @@ public class BitcoinOreBlock extends SimplePolymerBlock implements PolymerTextur
 	@Override
 	protected void spawnAfterBreak(BlockState state, ServerLevel level, BlockPos pos, ItemStack tool, boolean dropExperience) {
 		super.spawnAfterBreak(state, level, pos, tool, dropExperience);
-		if (!dropExperience) {
+		// Tutorial ore is currency only; XP orbs briefly overwrite the HUD level while they are collected.
+		if (!dropExperience || SeasonStartSystem.isExperienceSuppressed(level)) {
 			return;
 		}
 

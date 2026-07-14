@@ -31,6 +31,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -130,11 +131,47 @@ public final class ServerStructureBreakSystem {
 		return parseAnchorTag(entity);
 	}
 
+	public static void pruneStructureDisplays(ServerLevel level) {
+		if (level == null) {
+			return;
+		}
+		Map<DisplayStructureKey, Display.ItemDisplay> keepers = new LinkedHashMap<>();
+		for (Entity entity : level.getAllEntities()) {
+			if (!(entity instanceof Display.ItemDisplay itemDisplay) || !itemDisplay.getTags().contains(DISPLAY_ROOT_TAG)) {
+				continue;
+			}
+			ItemDisplayHitboxHelper.clear(itemDisplay);
+			Optional<BlockPos> taggedAnchor = parseAnchorTag(itemDisplay);
+			Optional<Direction.Axis> taggedAxis = parseAxisTag(itemDisplay);
+			if (taggedAnchor.isEmpty() || taggedAxis.isEmpty()) {
+				itemDisplay.discard();
+				continue;
+			}
+			List<BlockPos> positions = getStructurePositions(taggedAnchor.get(), taggedAxis.get());
+			if (!isWholeStructurePresent(level, positions)) {
+				itemDisplay.discard();
+				continue;
+			}
+			DisplayStructureKey key = new DisplayStructureKey(taggedAnchor.get().immutable(), taggedAxis.get());
+			Display.ItemDisplay previous = keepers.putIfAbsent(key, itemDisplay);
+			if (previous != null && previous != itemDisplay) {
+				itemDisplay.discard();
+			}
+		}
+	}
+
 	public static Display.ItemDisplay resolveSingleStructureDisplay(ServerLevel level, BlockPos anchor, Direction.Axis axis) {
 		if (level == null || anchor == null || axis == null) {
 			return null;
 		}
-		AABB searchBox = new AABB(anchor).inflate(8.0D, 6.0D, 8.0D);
+		AABB searchBox = new AABB(
+				anchor.getX() - 8.0D,
+				level.getMinY(),
+				anchor.getZ() - 8.0D,
+				anchor.getX() + 9.0D,
+				level.getMaxY(),
+				anchor.getZ() + 9.0D
+		);
 		double expectedX = anchor.getX() + 0.5D;
 		double expectedY = anchor.getY() + 1.5D;
 		double expectedZ = anchor.getZ() + 0.5D;
@@ -622,5 +659,8 @@ public final class ServerStructureBreakSystem {
 		private Direction.Axis axis() {
 			return this.axis;
 		}
+	}
+
+	private record DisplayStructureKey(BlockPos anchor, Direction.Axis axis) {
 	}
 }
