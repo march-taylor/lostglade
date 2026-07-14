@@ -71,8 +71,10 @@ public final class StartupRaceAbilitySystem {
 	private static final int JACK_LIFETIME_TICKS = 20 * 75;
 	private static final int JACK_OPEN_TICKS = 12;
 	private static final int JACK_VISIBLE_TICKS = 36;
-	private static final int[] BUBBLE_MODEL_SIZES = {4, 6, 8};
+	private static final float BUBBLE_SPRITE_BASE_SIZE = 7.0F;
 	private static final float BUBBLE_DISPLAY_SCALE = 1.10F;
+	private static final float BUBBLE_MIN_SCALE_VARIATION = 0.92F;
+	private static final float BUBBLE_MAX_SCALE_VARIATION = 1.34F;
 	private static final double JACK_ARM_DISTANCE_SQR = 3.5D * 3.5D;
 	private static final double JACK_TRIGGER_DISTANCE_SQR = 1.45D * 1.45D;
 	private static final Map<UUID, BubbleState> BUBBLES = new HashMap<>();
@@ -246,14 +248,16 @@ public final class StartupRaceAbilitySystem {
 		}
 		direction = direction.normalize();
 		Vec3 position = player.getEyePosition().add(direction.scale(0.74D));
-		int modelSize = BUBBLE_MODEL_SIZES[random.nextInt(BUBBLE_MODEL_SIZES.length)];
-		float hitRadius = Math.max(0.16F, modelSize / 16.0F * BUBBLE_DISPLAY_SCALE);
+		float scaleVariation = BUBBLE_MIN_SCALE_VARIATION
+				+ random.nextFloat() * (BUBBLE_MAX_SCALE_VARIATION - BUBBLE_MIN_SCALE_VARIATION);
+		float displayScale = BUBBLE_DISPLAY_SCALE * scaleVariation;
+		float hitRadius = Math.max(0.16F, BUBBLE_SPRITE_BASE_SIZE / 16.0F * displayScale);
 		Display.ItemDisplay display = createDisplay(
 				level,
-				createSoapBubbleDisplayStack(modelSize),
+				createSoapBubbleDisplayStack(),
 				position,
-				Display.BillboardConstraints.FIXED,
-				BUBBLE_DISPLAY_SCALE
+				Display.BillboardConstraints.CENTER,
+				displayScale
 		);
 		if (display == null) {
 			return false;
@@ -420,9 +424,6 @@ public final class StartupRaceAbilitySystem {
 			state.position = next;
 			display.setPos(next.x, next.y, next.z);
 			trigger.setPos(next.x, next.y - state.hitRadius, next.z);
-			if (Math.floorMod(nowTick, 3L) == 0L) {
-				level.sendParticles(ParticleTypes.BUBBLE, next.x, next.y, next.z, 1, 0.05D, 0.05D, 0.05D, 0.0D);
-			}
 		}
 	}
 
@@ -733,9 +734,9 @@ public final class StartupRaceAbilitySystem {
 		return InteractionResult.PASS;
 	}
 
-	private static ItemStack createSoapBubbleDisplayStack(int size) {
+	private static ItemStack createSoapBubbleDisplayStack() {
 		ItemStack stack = new ItemStack(Items.HEART_OF_THE_SEA);
-		stack.set(DataComponents.ITEM_MODEL, Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "startup_bubble_" + size));
+		stack.set(DataComponents.ITEM_MODEL, Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "startup_bubble_sprite"));
 		return stack;
 	}
 

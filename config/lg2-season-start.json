@@ -9,7 +9,6 @@
   "playerSlotSpacing": 4,
   "introBlindnessTicks": 24000,
   "guidanceRepeatTicks": 60,
-  "sharedReminderIntervalTicks": 600,
   "serverVoiceDistance": 40,
   "startupRaceId": "startup_race",
   "cues": [
@@ -1748,20 +1747,6 @@
       "requires": []
     },
     {
-      "id": "shared_reminder",
-      "trigger": "shared_phase_reminder",
-      "audience": "shared",
-      "channel": "global",
-      "audioFile": "voice/shared_reminder.wav",
-      "scriptText": "Биткоины в коробке. Ядро в центре. Дальше всё на удивление просто.",
-      "delayTicks": 0,
-      "durationTicks": 100,
-      "onceGlobal": false,
-      "oncePerPlayer": false,
-      "interruptCurrent": false,
-      "requires": []
-    },
-    {
       "id": "phase5_menu_power_received",
       "trigger": "player_menu_phase_started",
       "audience": "player",
@@ -1832,35 +1817,6 @@
       "durationTicks": 78,
       "onceGlobal": false,
       "oncePerPlayer": true,
-      "interruptCurrent": false,
-      "requires": []
-    },
-    {
-      "id": "phase5_menu_reminder_first",
-      "trigger": "player_menu_open_reminder_first",
-      "audience": "player",
-      "channel": "player",
-      "audioFile": "voice/phase5_menu_reminder_first.wav",
-      "scriptText": "Ядро перед вами. ПКМ по ядру. Не по полу. Не по соседу. По ядру.",
-      "delayTicks": 0,
-      "durationTicks": 118,
-      "onceGlobal": false,
-      "oncePerPlayer": false,
-      "interruptCurrent": false,
-      "requires": []
-    },
-    {
-      "id": "phase5_menu_reminder_later",
-      "trigger": "player_menu_open_reminder_later",
-      "audience": "player",
-      "channel": "player",
-      "audioFile": "voice/phase5_menu_reminder_later.wav",
-      "scriptText": "Меню не откроет себя само. Хотя, признаю, я рассматривал этот вариант. Потом вспомнил, что вам нужно чему-то научиться.",
-      "ttsText": "Меню не откроет себя само. Хотя, признаю, я рассматривал этот вариант. Потом вспомнил, что вам нужно чему-то научиться.",
-      "delayTicks": 0,
-      "durationTicks": 166,
-      "onceGlobal": false,
-      "oncePerPlayer": false,
       "interruptCurrent": false,
       "requires": []
     },

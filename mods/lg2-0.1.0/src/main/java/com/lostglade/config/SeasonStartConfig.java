@@ -114,11 +114,6 @@ public final class SeasonStartConfig {
 			configData.guidanceRepeatTicks = clampedGuidanceRepeatTicks;
 			changed = true;
 		}
-		int clampedSharedReminderIntervalTicks = clamp(configData.sharedReminderIntervalTicks, 20, 20 * 300);
-		if (clampedSharedReminderIntervalTicks != configData.sharedReminderIntervalTicks) {
-			configData.sharedReminderIntervalTicks = clampedSharedReminderIntervalTicks;
-			changed = true;
-		}
 		if (configData.startupRaceId == null || configData.startupRaceId.isBlank()) {
 			configData.startupRaceId = "startup_race";
 			changed = true;
@@ -202,7 +197,6 @@ public final class SeasonStartConfig {
 		public int playerSlotSpacing = 4;
 		public int introBlindnessTicks = 20 * 60 * 20;
 		public int guidanceRepeatTicks = 60;
-		public int sharedReminderIntervalTicks = 20 * 30;
 		public int serverVoiceDistance = 40;
 		/** Shared placeholder race assigned to every participant while the start tutorial is active. */
 		public String startupRaceId = "startup_race";
@@ -294,8 +288,6 @@ public final class SeasonStartConfig {
 			cues.add(VoiceCue.shared("shared_first_light", "first_player_shared_phase", "voice/shared_first_light.wav", "Свет есть. Теперь собирайте биткоины и следите за стабильностью сервера.", 20, 120)
 					.tts("Свет есть. Теперь собирайте бит-коины и следите за стабильностью сервера.")
 					.onceGlobal());
-			cues.add(VoiceCue.shared("shared_reminder", "shared_phase_reminder", "voice/shared_reminder.wav", "Биткоины поддерживают стабильность. Несите их к серверу.", 0, 100)
-					.tts("Бит-коины поддерживают стабильность. Несите их к серверу."));
 			cues.add(VoiceCue.global("season_finish", "season_finished", "voice/season_finish.wav", "Инициализация завершена. Мир прогружен.", 0, 100)
 					.onceGlobal());
 			return cues;

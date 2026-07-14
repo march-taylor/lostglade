@@ -80,6 +80,7 @@ import net.minecraft.world.item.Items;
 import net.minecraft.world.Difficulty;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.NoiseColumn;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.FallingBlock;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
@@ -329,10 +330,7 @@ public final class SeasonStartSystem {
 	private static final double SHARED_ORE_SERVER_BUFFER = 4.0D;
 	private static final double SHARED_FEED_RADIUS = 0.35D;
 	private static final double SHARED_FEED_PLAYER_MATCH_DISTANCE = 8.0D;
-	private static final long SHARED_IDLE_REMINDER_TICKS = 20L * 45L;
 	private static final long SHARED_FINISH_DELAY_TICKS = 20L * 2L;
-	private static final long MENU_OPEN_REMINDER_TICKS = 20L * 26L;
-	private static final long MENU_SECTION_REMINDER_TICKS = 20L * 22L;
 	private static final long MENU_PRICE_REACTION_COOLDOWN_TICKS = 20L * 3L;
 	private static final int MENU_EXPLANATION_UNLOCK_PERCENT = 50;
 	private static final int[] SHARED_LAUNCH_MILESTONES = {10, 20, 30, 40, 50, 60, 70, 80, 90, 100};
@@ -343,9 +341,10 @@ public final class SeasonStartSystem {
 	private static final float STARTUP_WORLDGEN_THICKNESS_SCALE = 0.25F;
 	private static final double STARTUP_WORLDGEN_Y_OFFSET_FROM_OUTER_FLOOR = 1.25D;
 	private static final int SCENE_BLOCK_SET_FLAGS = 2 | 16 | 32;
-	// Building the scene touches a large cube of terrain. Keep every server tick bounded.
-	private static final int SCENE_BUILD_BATCH_BLOCKS = 4_096;
-	private static final int SCENE_SNAPSHOT_BATCH_BLOCKS = 16_384;
+	// Building the scene touches a large cube of terrain. World access must stay on
+	// the server thread, but every pass is deliberately small enough to keep clients alive.
+	private static final int SCENE_BUILD_BATCH_BLOCKS = 1_024;
+	private static final int SCENE_SNAPSHOT_BATCH_BLOCKS = 1_024;
 	private static final int EXISTING_SERVER_SCAN_RADIUS = 48;
 	private static final int EXISTING_SERVER_SCAN_VERTICAL_MARGIN = 24;
 	private static final int LEGACY_FLOATING_SERVER_REPAIR_MIN_GAP = 24;
@@ -373,8 +372,11 @@ public final class SeasonStartSystem {
 	private static final long WORLD_REVEAL_POST_START_MORNING_TIME = 1000L;
 	private static final int WORLD_REVEAL_EPISODE_MAX_REVEAL_POSITIONS = 56;
 	private static final int WORLD_REVEAL_EPISODE_MAX_PARTICLE_POINTS = 18;
+	private static final int WORLD_REVEAL_MAX_BURSTS_PER_TICK = 2;
+	private static final int WORLD_REVEAL_BLACKOUT_REVEAL_EPISODES_PER_TICK = 6;
+	private static final int WORLD_REVEAL_SETTLE_REVEAL_EPISODES_PER_TICK = 12;
 	private static final int WORLD_REVEAL_RELOCATE_DEFERRED_BATCH = 36;
-	private static final int WORLD_REVEAL_SETTLE_DEFERRED_BATCH = 320;
+	private static final int WORLD_REVEAL_SETTLE_DEFERRED_BATCH = 128;
 	private static final DustParticleOptions WORLD_REVEAL_CRACK_CORE_PARTICLE = new DustParticleOptions(0x09090C, 1.18F);
 	private static final DustParticleOptions WORLD_REVEAL_CRACK_EDGE_PARTICLE = new DustParticleOptions(0x2F3138, 0.78F);
 	private static final long WORLD_REVEAL_RELOCATE_MIN_TICKS = 20L;
@@ -473,11 +475,11 @@ public final class SeasonStartSystem {
 	private static boolean sceneBoundaryPhysicsFrozen = false;
 	private static boolean shellDissolving = false;
 	private static boolean worldRevealActive = false;
+	private static boolean worldRevealRecoveryPending = false;
 	private static boolean worldRevealBarriersPlaced = false;
 	private static boolean scenePrepared = false;
 	private static SceneBuildTask sceneBuildTask = null;
 	private static int dissolveCursor = 0;
-	private static long nextSharedReminderTick = Long.MIN_VALUE;
 	private static long lastSharedLaunchProgressTick = Long.MIN_VALUE;
 	private static long pendingSharedFinishTick = Long.MIN_VALUE;
 	private static long pendingMenuExplanationTick = Long.MIN_VALUE;
@@ -515,11 +517,11 @@ public final class SeasonStartSystem {
 		sceneBoundaryPhysicsFrozen = false;
 		shellDissolving = false;
 		worldRevealActive = false;
+		worldRevealRecoveryPending = false;
 		worldRevealBarriersPlaced = false;
 		scenePrepared = false;
 		sceneBuildTask = null;
 		dissolveCursor = 0;
-		nextSharedReminderTick = Long.MIN_VALUE;
 		lastSharedLaunchProgressTick = Long.MIN_VALUE;
 		pendingSharedFinishTick = Long.MIN_VALUE;
 		pendingMenuExplanationTick = Long.MIN_VALUE;
@@ -767,12 +769,9 @@ public final class SeasonStartSystem {
 			return;
 		}
 		long nowTick = player.level().getGameTime();
-		state.menuLastInteractionTick = nowTick;
-		state.nextMenuSectionReminderTick = nowTick + MENU_SECTION_REMINDER_TICKS;
 		state.menuNarrationMuted = true;
 		if (!state.menuOpened) {
 			state.menuOpened = true;
-			state.nextMenuReminderTick = Long.MAX_VALUE;
 			SeasonStartVoiceSystem.clearPlayerChannel(player);
 			SeasonStartVoiceSystem.fireTrigger(server, "player_menu_opened", player);
 		}
@@ -801,8 +800,6 @@ public final class SeasonStartSystem {
 			return;
 		}
 		long nowTick = player.level().getGameTime();
-		state.menuLastInteractionTick = nowTick;
-		state.nextMenuSectionReminderTick = nowTick + MENU_SECTION_REMINDER_TICKS;
 		String itemExplanationTrigger = resolveMenuItemExplanationTrigger(upgradeId);
 		if (itemExplanationTrigger != null) {
 			String explanationKey = "menu_item:" + upgradeId;
@@ -844,8 +841,6 @@ public final class SeasonStartSystem {
 		if (state == null || server == null || !state.seenMenuSections.add(reactionKey)) {
 			return;
 		}
-		state.menuLastInteractionTick = player.level().getGameTime();
-		state.nextMenuSectionReminderTick = state.menuLastInteractionTick + MENU_SECTION_REMINDER_TICKS;
 		SeasonStartVoiceSystem.clearPlayerChannel(player);
 		SeasonStartVoiceSystem.fireTrigger(server, trigger, player);
 		stateDirty = true;
@@ -860,8 +855,6 @@ public final class SeasonStartSystem {
 		if (state == null || server == null) {
 			return;
 		}
-		state.menuLastInteractionTick = player.level().getGameTime();
-		state.nextMenuSectionReminderTick = state.menuLastInteractionTick + MENU_SECTION_REMINDER_TICKS;
 		state.menuNarrationMuted = false;
 		if (!state.seenMenuSections.add("menu_closed")) {
 			stateDirty = true;
@@ -1081,7 +1074,7 @@ public final class SeasonStartSystem {
 		ensureBootstrap(server);
 		removeRendererBotSceneStates(server);
 		if (worldRevealActive) {
-			forceCompleteWorldReveal(server);
+			beginWorldRevealRecovery(server);
 		}
 		applyStartDifficultyPolicy(server);
 		if (completed && !active) {
@@ -1159,6 +1152,9 @@ public final class SeasonStartSystem {
 			}
 		}
 		if (worldRevealActive) {
+			if (worldRevealRecoveryPending && !tickWorldRevealRecovery(server)) {
+				return;
+			}
 			tickWorldReveal(server);
 		}
 		if (shellDissolving) {
@@ -1299,6 +1295,13 @@ public final class SeasonStartSystem {
 		if (overworld == null) {
 			return;
 		}
+		// The normal path must not scan every loaded entity just to start another
+		// scene around the same, already verified server structure.
+		if (bootstrapComplete && serverAnchor != null && isWholeServerStructurePresent(overworld, serverAnchor, serverStructureAxis)) {
+			ServerBlock.ensureServerStructureDisplay(overworld, serverAnchor, serverStructureAxis);
+			setDefaultSpawn(overworld);
+			return;
+		}
 		ServerStructureBreakSystem.pruneStructureDisplays(overworld);
 		BlockPos anchor = resolveServerAnchor(overworld);
 		BlockPos bootstrapAnchor = resolveBootstrapAnchor(overworld);
@@ -1405,11 +1408,11 @@ public final class SeasonStartSystem {
 		sceneBoundaryPhysicsFrozen = true;
 		shellDissolving = false;
 		worldRevealActive = false;
+		worldRevealRecoveryPending = false;
 		worldRevealBarriersPlaced = false;
 		scenePrepared = false;
 		sceneBuildTask = null;
 		dissolveCursor = 0;
-		nextSharedReminderTick = Long.MIN_VALUE;
 		lastSharedLaunchProgressTick = Long.MIN_VALUE;
 		pendingSharedFinishTick = Long.MIN_VALUE;
 		pendingMenuExplanationTick = Long.MIN_VALUE;
@@ -1469,12 +1472,12 @@ public final class SeasonStartSystem {
 		sceneBoundaryPhysicsFrozen = true;
 		shellDissolving = false;
 		worldRevealActive = true;
+		worldRevealRecoveryPending = false;
 		worldRevealBarriersPlaced = false;
 		scenePrepared = false;
 		sceneBuildTask = null;
 		startupWorldgenFrameIndex = Integer.MIN_VALUE;
 		dissolveCursor = 0;
-		nextSharedReminderTick = Long.MIN_VALUE;
 		lastSharedLaunchProgressTick = Long.MIN_VALUE;
 		pendingSharedFinishTick = Long.MIN_VALUE;
 		pendingMenuExplanationTick = Long.MIN_VALUE;
@@ -2375,11 +2378,7 @@ public final class SeasonStartSystem {
 			sharedLaunchIntroTriggered = true;
 			SeasonStartVoiceSystem.fireTrigger(server, "first_player_shared_phase", null);
 		}
-		if (nextSharedReminderTick == Long.MIN_VALUE) {
-			long nowTick = overworld.getGameTime();
-			lastSharedLaunchProgressTick = nowTick;
-			nextSharedReminderTick = nowTick + SHARED_IDLE_REMINDER_TICKS;
-		}
+		lastSharedLaunchProgressTick = overworld.getGameTime();
 		ensureSharedBitcoinPopulation(overworld);
 		refreshSharedLaunchBossBar(server);
 		stateDirty = true;
@@ -2418,14 +2417,7 @@ public final class SeasonStartSystem {
 		if (!menuExplanationActive && pendingMenuExplanationTick != Long.MIN_VALUE && nowTick >= pendingMenuExplanationTick) {
 			beginMenuExplanationPhase(server);
 		}
-		if (menuExplanationActive) {
-			tickMenuExplanation(server, nowTick);
-		}
 		ensureSharedBitcoinPopulation(overworld);
-		if (nextSharedReminderTick != Long.MIN_VALUE && nowTick >= nextSharedReminderTick && sharedLaunchCollectedBitcoins < sharedLaunchRequiredBitcoins) {
-			SeasonStartVoiceSystem.fireTrigger(server, "shared_phase_reminder", null);
-			nextSharedReminderTick = nowTick + SHARED_IDLE_REMINDER_TICKS;
-		}
 	}
 
 	private static void beginMenuExplanationPhase(MinecraftServer server) {
@@ -2454,36 +2446,10 @@ public final class SeasonStartSystem {
 				giveOrDrop(player, new ItemStack(ModItems.BITCOIN, 4));
 				state.menuRaceAllowanceGranted = true;
 			}
-			state.nextMenuReminderTick = nowTick + resolveTriggerSequenceDurationTicks("player_menu_phase_started") + MENU_OPEN_REMINDER_TICKS;
-			state.nextMenuSectionReminderTick = Long.MAX_VALUE;
 			state.nextMenuPriceReactionTick = nowTick;
 			SeasonStartVoiceSystem.fireTrigger(server, "player_menu_phase_started", player);
 		}
 		stateDirty = true;
-	}
-
-	private static void tickMenuExplanation(MinecraftServer server, long nowTick) {
-		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-			if (!isSeasonStartEligiblePlayer(player)) {
-				continue;
-			}
-			PlayerSceneState state = PLAYER_STATES.get(player.getUUID());
-			if (state == null || state.phase != PlayerPhase.SHARED) {
-				continue;
-			}
-			if (!state.menuOpened && state.nextMenuReminderTick == Long.MAX_VALUE) {
-				// A restart has no scheduled in-memory timers, so resume the next reminder gracefully.
-				state.nextMenuReminderTick = nowTick + MENU_OPEN_REMINDER_TICKS;
-			}
-			if (!state.menuOpened && nowTick >= state.nextMenuReminderTick) {
-				String trigger = state.menuReminderIndex++ == 0
-						? "player_menu_open_reminder_first"
-						: "player_menu_open_reminder_later";
-				SeasonStartVoiceSystem.fireTrigger(server, trigger, player);
-				state.nextMenuReminderTick = nowTick + MENU_OPEN_REMINDER_TICKS;
-				continue;
-			}
-		}
 	}
 
 	private static void tickShellDissolve(MinecraftServer server) {
@@ -2515,7 +2481,7 @@ public final class SeasonStartSystem {
 
 	private static void tickWorldReveal(MinecraftServer server) {
 		ServerLevel overworld = server == null ? null : server.overworld();
-		if (server == null || overworld == null) {
+		if (server == null || overworld == null || worldRevealRecoveryPending) {
 			return;
 		}
 		long nowTick = overworld.getGameTime();
@@ -2526,7 +2492,7 @@ public final class SeasonStartSystem {
 			return;
 		}
 		if (WORLD_REVEAL_SURFACE_Y.isEmpty()) {
-			forceCompleteWorldReveal(server);
+			beginWorldRevealRecovery(server);
 			return;
 		}
 		if (worldRevealPhaseStartTick == Long.MIN_VALUE) {
@@ -2537,7 +2503,7 @@ public final class SeasonStartSystem {
 			case BLACKOUT_FADE -> tickWorldRevealBlackoutFade(server, overworld, nowTick);
 			case RELOCATE -> tickWorldRevealRelocate(server, overworld, nowTick);
 			case SETTLE -> tickWorldRevealSettle(server, overworld, nowTick);
-			default -> forceCompleteWorldReveal(server);
+			default -> beginWorldRevealSettlePhase(overworld, nowTick);
 		}
 	}
 
@@ -2569,7 +2535,10 @@ public final class SeasonStartSystem {
 		}
 		ensureWorldRevealSnapshotIndexes();
 		if (WORLD_REVEAL_SURFACE_Y.isEmpty() || WORLD_REVEAL_TARGET_STATES.isEmpty()) {
-			ensureSceneSnapshot(level);
+			// A missing in-memory snapshot after a reload used to trigger a full
+			// cube scan here. Rebuild it through the bounded recovery task instead.
+			beginWorldRevealRecovery(level.getServer());
+			return false;
 		}
 		if (shouldRebuildWorldRevealPlan() || (WORLD_REVEAL_EPISODES.isEmpty() && worldRevealPlanFuture == null)) {
 			beginWorldRevealPlanPreparation(level);
@@ -2634,6 +2603,32 @@ public final class SeasonStartSystem {
 		return level.getBlockState(new BlockPos(outerGeometry.minX, outerGeometry.floorY, outerGeometry.minZ)).is(Blocks.BLACK_CONCRETE)
 				|| level.getBlockState(new BlockPos(outerGeometry.minX, outerGeometry.roofY, outerGeometry.minZ)).is(Blocks.BLACK_CONCRETE)
 				|| level.getBlockState(new BlockPos(barrierGeometry.minX, barrierGeometry.floorY, barrierGeometry.minZ)).is(Blocks.BARRIER);
+	}
+
+	/**
+	 * A restart must not turn an intact scene into a new construction job. A
+	 * handful of floor, wall and roof sentinels is enough to distinguish the
+	 * current box from an interrupted or legacy one without scanning the cube.
+	 */
+	private static boolean isCurrentSceneShellIntact(ServerLevel level, BoxGeometry outer, BoxGeometry barrier) {
+		if (level == null || outer == null || barrier == null) {
+			return false;
+		}
+		return isBlock(level, outer.minX, outer.floorY, outer.minZ, Blocks.BLACK_CONCRETE)
+				&& isBlock(level, outer.maxX, outer.floorY, outer.maxZ, Blocks.BLACK_CONCRETE)
+				&& isBlock(level, outer.minX, outer.roofY, outer.maxZ, Blocks.BLACK_CONCRETE)
+				&& isBlock(level, outer.maxX, outer.roofY, outer.minZ, Blocks.BLACK_CONCRETE)
+				&& isBlock(level, outer.minX, (outer.floorY + outer.roofY) / 2, (outer.minZ + outer.maxZ) / 2, Blocks.BLACK_CONCRETE)
+				&& isBlock(level, outer.maxX, (outer.floorY + outer.roofY) / 2, (outer.minZ + outer.maxZ) / 2, Blocks.BLACK_CONCRETE)
+				&& isBlock(level, (outer.minX + outer.maxX) / 2, outer.roofY, (outer.minZ + outer.maxZ) / 2, Blocks.BLACK_CONCRETE)
+				&& isBlock(level, barrier.minX, barrier.floorY, barrier.minZ, Blocks.BARRIER)
+				&& isBlock(level, barrier.maxX, barrier.floorY, barrier.maxZ, Blocks.BARRIER)
+				&& isBlock(level, barrier.minX, barrier.roofY, barrier.maxZ, Blocks.BARRIER)
+				&& isBlock(level, barrier.maxX, barrier.roofY, barrier.minZ, Blocks.BARRIER);
+	}
+
+	private static boolean isBlock(ServerLevel level, int x, int y, int z, Block block) {
+		return level.getBlockState(new BlockPos(x, y, z)).is(block);
 	}
 
 	private static void captureSceneSnapshotFromWorld(ServerLevel level) {
@@ -2864,11 +2859,30 @@ public final class SeasonStartSystem {
 			return;
 		}
 		BoxGeometry outer = computeOuterBoxGeometry(anchor);
-		BoxGeometry barrier = computeBarrierGeometry(anchor);
 		Set<Long> structureFootprint = new HashSet<>();
 		for (BlockPos pos : ServerStructureBreakSystem.getStructurePositions(anchor, serverStructureAxis)) {
 			structureFootprint.add(pos.asLong());
 		}
+		List<TerrainPlacement> terrainSnapshot = List.copyOf(WORLD_REVEAL_TERRAIN);
+		Map<Long, Integer> surfaceSnapshot = Map.copyOf(WORLD_REVEAL_SURFACE_Y);
+		Set<Long> footprintSnapshot = Set.copyOf(structureFootprint);
+		long randomSeed = level.getSeed() ^ anchor.asLong() ^ 0x6C6732777265616CL;
+		resetWorldRevealPlanState();
+		worldRevealPlanReady = false;
+		worldRevealPlanFuture = CompletableFuture.supplyAsync(() -> buildWorldRevealPlan(
+				buildWorldRevealPlanInput(anchor.immutable(), outer, randomSeed, footprintSnapshot, terrainSnapshot, surfaceSnapshot)
+		));
+	}
+
+	private static WorldRevealPlanInput buildWorldRevealPlanInput(
+			BlockPos anchor,
+			BoxGeometry outer,
+			long randomSeed,
+			Set<Long> structureFootprint,
+			List<TerrainPlacement> terrainSnapshot,
+			Map<Long, Integer> surfaceSnapshot
+	) {
+		BoxGeometry barrier = computeBarrierGeometry(anchor);
 		Set<Long> shellCandidates = new LinkedHashSet<>();
 		for (BlockPos pos : collectBlackShellBlocks(outer)) {
 			if (!structureFootprint.contains(pos.asLong())) {
@@ -2880,26 +2894,29 @@ public final class SeasonStartSystem {
 				shellCandidates.add(pos.asLong());
 			}
 		}
-		Map<Long, BlockState> terrainTargets = new HashMap<>(WORLD_REVEAL_TARGET_STATES);
+		Map<Long, BlockState> terrainTargets = new HashMap<>();
+		for (TerrainPlacement placement : terrainSnapshot) {
+			if (placement == null || placement.pos() == null || placement.state() == null || placement.state().isAir()) {
+				continue;
+			}
+			terrainTargets.put(placement.pos().asLong(), placement.state());
+		}
 		Set<Long> requiredPositions = new LinkedHashSet<>(shellCandidates);
 		for (Map.Entry<Long, BlockState> entry : terrainTargets.entrySet()) {
-			if (entry.getValue() != null && !entry.getValue().isAir() && !structureFootprint.contains(entry.getKey())) {
+			if (!structureFootprint.contains(entry.getKey())) {
 				requiredPositions.add(entry.getKey());
 			}
 		}
-		WorldRevealPlanInput input = new WorldRevealPlanInput(
-				anchor.immutable(),
+		return new WorldRevealPlanInput(
+				anchor,
 				outer,
-				level.getSeed() ^ anchor.asLong() ^ 0x6C6732777265616CL,
-				Set.copyOf(structureFootprint),
+				randomSeed,
+				structureFootprint,
 				Set.copyOf(shellCandidates),
 				Map.copyOf(terrainTargets),
-				Map.copyOf(WORLD_REVEAL_SURFACE_Y),
+				surfaceSnapshot,
 				Set.copyOf(requiredPositions)
 		);
-		resetWorldRevealPlanState();
-		worldRevealPlanReady = false;
-		worldRevealPlanFuture = CompletableFuture.supplyAsync(() -> buildWorldRevealPlan(input));
 	}
 
 	private static boolean installPreparedWorldRevealPlan() {
@@ -3696,7 +3713,9 @@ public final class SeasonStartSystem {
 			return;
 		}
 		int visibleThreshold = resolveWorldRevealVisibleEpisodeThreshold();
-		while (worldRevealBurstCursor < WORLD_REVEAL_CRACK_BURSTS.length
+		int processedBursts = 0;
+		while (processedBursts < WORLD_REVEAL_MAX_BURSTS_PER_TICK
+				&& worldRevealBurstCursor < WORLD_REVEAL_CRACK_BURSTS.length
 				&& elapsedTicks >= WORLD_REVEAL_CRACK_BURSTS[worldRevealBurstCursor].offsetTicks()) {
 			WorldRevealBurst burst = WORLD_REVEAL_CRACK_BURSTS[worldRevealBurstCursor];
 			int previousCursor = worldRevealVisibleEpisodeCursor;
@@ -3711,14 +3730,11 @@ public final class SeasonStartSystem {
 			}
 			emitWorldRevealBurstParticles(level, previousCursor, worldRevealVisibleEpisodeCursor, burst.particleBudget(), burst.impactStrength());
 			worldRevealBurstCursor++;
+			processedBursts++;
 			stateDirty = true;
 		}
 		if (elapsedTicks < WORLD_REVEAL_CRACKING_DURATION_TICKS) {
 			return;
-		}
-		while (worldRevealVisibleEpisodeCursor < visibleThreshold) {
-			revealWorldRevealEpisode(level, WORLD_REVEAL_EPISODES.get(worldRevealVisibleEpisodeCursor));
-			worldRevealVisibleEpisodeCursor++;
 		}
 		if (worldRevealVisibleEpisodeCursor > 0) {
 			emitWorldRevealBurstParticles(level, Math.max(0, worldRevealVisibleEpisodeCursor - 2), worldRevealVisibleEpisodeCursor, 28, 1.0F);
@@ -3746,8 +3762,7 @@ public final class SeasonStartSystem {
 		if (server == null || level == null) {
 			return;
 		}
-		materializeCompletedWorldRevealTerrain(level);
-		completeWorldReveal(server, level);
+		beginWorldRevealBlackoutFade(server, level, level.getGameTime());
 	}
 
 	private static int resolveWorldRevealVisibleEpisodeThreshold() {
@@ -3985,7 +4000,7 @@ public final class SeasonStartSystem {
 			return;
 		}
 		tickWorldRevealDarknessRelease(level, nowTick);
-		revealWorldRevealEpisodeBatch(level, 18, false);
+		revealWorldRevealEpisodeBatch(level, WORLD_REVEAL_BLACKOUT_REVEAL_EPISODES_PER_TICK, false);
 		revealWorldRevealDeferredBatch(level, WORLD_REVEAL_RELOCATE_DEFERRED_BATCH, false);
 		refreshWorldRevealTargets(level);
 		if (!worldRevealDarknessRepositioned && nowTick - worldRevealPhaseStartTick >= WORLD_REVEAL_BLACKOUT_REPOSITION_TICKS) {
@@ -4063,7 +4078,7 @@ public final class SeasonStartSystem {
 
 	private static void tickWorldRevealSettle(MinecraftServer server, ServerLevel level, long nowTick) {
 		tickWorldRevealDarknessRelease(level, nowTick);
-		revealWorldRevealEpisodeBatch(level, 96, true);
+		revealWorldRevealEpisodeBatch(level, WORLD_REVEAL_SETTLE_REVEAL_EPISODES_PER_TICK, true);
 		revealWorldRevealDeferredBatch(level, WORLD_REVEAL_SETTLE_DEFERRED_BATCH, true);
 		if (nowTick - worldRevealPhaseStartTick < WORLD_REVEAL_SETTLE_MIN_TICKS) {
 			return;
@@ -4185,15 +4200,68 @@ public final class SeasonStartSystem {
 		}
 	}
 
-	private static void forceCompleteWorldReveal(MinecraftServer server) {
+	/**
+	 * The runtime snapshot is intentionally not persisted. After a restart in
+	 * the middle of the reveal, rebuild only that data in small server-tick
+	 * batches. Never synchronously tear down or rebuild the already visible box.
+	 */
+	private static void beginWorldRevealRecovery(MinecraftServer server) {
 		ServerLevel level = server == null ? null : server.overworld();
-		if (server == null || level == null) {
+		if (server == null || level == null || !worldRevealActive) {
 			return;
 		}
-		ensureWorldRevealSnapshotIndexes();
-		ensureSceneSnapshot(level);
-		materializeCompletedWorldRevealTerrain(level);
-		completeWorldReveal(server, level);
+		BlockPos anchor = resolveServerAnchor(level);
+		if (anchor == null) {
+			return;
+		}
+		serverAnchor = anchor.immutable();
+		worldRevealRecoveryPending = true;
+		scenePrepared = false;
+		worldRevealPlanFuture = null;
+		worldRevealPlanReady = false;
+		worldRevealPhase = WorldRevealPhase.SETTLE;
+		worldRevealPhaseStartTick = Long.MIN_VALUE;
+		worldRevealCrackStartTick = Long.MIN_VALUE;
+		worldRevealCrackNotBeforeTick = Long.MIN_VALUE;
+		worldRevealMusicEndTick = Long.MIN_VALUE;
+		worldRevealDarknessClearTick = Long.MIN_VALUE;
+		worldRevealEarthquakeSoundStarted = false;
+		worldRevealDarknessRepositioned = false;
+		if (sceneBuildTask == null || !sceneBuildTask.anchor.equals(anchor)
+				|| sceneBuildTask.mode != SceneBuildMode.WORLD_REVEAL_RECOVERY) {
+			sceneBuildTask = createSceneBuildTask(level, anchor, SceneBuildMode.WORLD_REVEAL_RECOVERY);
+		}
+		stateDirty = true;
+	}
+
+	private static boolean tickWorldRevealRecovery(MinecraftServer server) {
+		ServerLevel level = server == null ? null : server.overworld();
+		if (server == null || level == null) {
+			return false;
+		}
+		if (sceneBuildTask == null) {
+			beginWorldRevealRecovery(server);
+		}
+		return tickSceneBuildTask(server, level);
+	}
+
+	private static void finishWorldRevealRecovery(ServerLevel level) {
+		if (level == null) {
+			return;
+		}
+		worldRevealRecoveryPending = false;
+		worldRevealPhase = WorldRevealPhase.SETTLE;
+		worldRevealPhaseStartTick = level.getGameTime();
+		worldRevealVisibleEpisodeCursor = 0;
+		worldRevealBurstCursor = 0;
+		worldRevealBurstWeightProgress = 0.0F;
+		sceneBuildTask = null;
+		beginWorldRevealPlanPreparation(level);
+		stateDirty = true;
+	}
+
+	private static void forceCompleteWorldReveal(MinecraftServer server) {
+		beginWorldRevealRecovery(server);
 	}
 
 	private static void completeWorldReveal(MinecraftServer server, ServerLevel level) {
@@ -4216,6 +4284,7 @@ public final class SeasonStartSystem {
 		restoreSceneEntities(level);
 		sceneBoundaryPhysicsFrozen = false;
 		worldRevealActive = false;
+		worldRevealRecoveryPending = false;
 		worldRevealBarriersPlaced = false;
 		worldRevealPhaseStartTick = Long.MIN_VALUE;
 		worldRevealCrackStartTick = Long.MIN_VALUE;
@@ -4374,7 +4443,7 @@ public final class SeasonStartSystem {
 			return;
 		}
 		if (sceneBuildTask == null || !sceneBuildTask.anchor.equals(anchor)) {
-			sceneBuildTask = createSceneBuildTask(level, anchor);
+			sceneBuildTask = createSceneBuildTask(level, anchor, SceneBuildMode.STARTUP);
 		}
 	}
 
@@ -4411,9 +4480,17 @@ public final class SeasonStartSystem {
 		SCENE_BUILD_FLOATING_PLAYERS.clear();
 	}
 
-	private static SceneBuildTask createSceneBuildTask(ServerLevel level, BlockPos anchor) {
+	private static SceneBuildTask createSceneBuildTask(ServerLevel level, BlockPos anchor, SceneBuildMode mode) {
 		BoxGeometry outer = computeOuterBoxGeometry(anchor);
 		BoxGeometry barrier = computeBarrierGeometry(anchor);
+		BoxGeometry boundary = new BoxGeometry(
+				outer.minX - WORLD_REVEAL_BOUNDARY_RESTORE_RADIUS,
+				outer.maxX + WORLD_REVEAL_BOUNDARY_RESTORE_RADIUS,
+				outer.minZ - WORLD_REVEAL_BOUNDARY_RESTORE_RADIUS,
+				outer.maxZ + WORLD_REVEAL_BOUNDARY_RESTORE_RADIUS,
+				outer.floorY - WORLD_REVEAL_BOUNDARY_RESTORE_RADIUS,
+				outer.roofY + WORLD_REVEAL_BOUNDARY_RESTORE_RADIUS
+		);
 		int legacyFloorY = (anchor.getY() - 1) - BARRIER_FLOOR_DEPTH;
 		int legacyRoofY = legacyFloorY + (Math.max(get().boxHalfWidth, get().boxHalfDepth) * 2 + 1) - 1;
 		BoxGeometry stale = new BoxGeometry(
@@ -4434,11 +4511,18 @@ public final class SeasonStartSystem {
 		WORLD_REVEAL_TARGET_STATES.clear();
 		WORLD_REVEAL_BOUNDARY_TARGET_STATES.clear();
 		WORLD_REVEAL_SAFE_TARGETS.clear();
-		captureBoundaryRestoreSnapshot(level, outer);
-		captureSceneEntitySnapshot(level, outer);
-		protectPlayersDuringSceneBuild(level, level.players());
 		boolean hadExistingShell = isSceneShellAlreadyBuilt(level);
-		return new SceneBuildTask(anchor.immutable(), outer, barrier, stale, hadExistingShell, structureFootprint);
+		boolean reuseExistingShell = mode == SceneBuildMode.WORLD_REVEAL_RECOVERY
+				|| (hadExistingShell && isCurrentSceneShellIntact(level, outer, barrier));
+		boolean captureRestorationData = mode == SceneBuildMode.STARTUP && !reuseExistingShell;
+		if (captureRestorationData) {
+			protectPlayersDuringSceneBuild(level, level.players());
+		}
+		return new SceneBuildTask(
+				anchor.immutable(), outer, barrier, boundary, stale,
+				mode, mode == SceneBuildMode.WORLD_REVEAL_RECOVERY || hadExistingShell,
+				reuseExistingShell, captureRestorationData, structureFootprint
+		);
 	}
 
 	private static boolean tickSceneBuild(MinecraftServer server, ServerLevel level) {
@@ -4446,6 +4530,10 @@ public final class SeasonStartSystem {
 			return true;
 		}
 		ensureSceneBuilt(level);
+		return tickSceneBuildTask(server, level);
+	}
+
+	private static boolean tickSceneBuildTask(MinecraftServer server, ServerLevel level) {
 		SceneBuildTask task = sceneBuildTask;
 		if (task == null) {
 			return false;
@@ -4455,17 +4543,19 @@ public final class SeasonStartSystem {
 				? SCENE_SNAPSHOT_BATCH_BLOCKS
 				: SCENE_BUILD_BATCH_BLOCKS;
 		while (remainingBudget > 0 && task.phase == budgetPhase && task.phase != SceneBuildPhase.FINALIZE) {
-			long total = task.phase == SceneBuildPhase.BUILD_BARRIER
-					? task.barrierShellBlocks.size()
-					: volumeOf(task.currentGeometry());
+			long total = resolveSceneBuildPhaseTotal(level, task);
 			if (task.cursor >= total) {
 				advanceSceneBuildPhase(task);
 				continue;
 			}
 			BlockPos pos = task.phase == SceneBuildPhase.BUILD_BARRIER
 					? task.barrierShellBlocks.get((int) task.cursor++)
-					: positionAtColumnMajor(task.currentGeometry(), task.cursor++);
+					: task.phase == SceneBuildPhase.ENTITY_SNAPSHOT
+							? null
+							: positionAtColumnMajor(task.currentGeometry(), task.cursor++);
 			switch (task.phase) {
+				case BOUNDARY_SNAPSHOT -> captureBoundaryRestoreSnapshotCell(level, task, pos);
+				case ENTITY_SNAPSHOT -> captureSceneEntitySnapshotCell(level, task.sceneEntityCandidates.get((int) task.cursor++));
 				case SNAPSHOT -> captureSceneSnapshotCell(level, task, pos);
 				case CLEAR_STALE -> clearStaleSceneBlock(level, pos);
 				case BUILD_OUTER -> buildOuterSceneBlock(level, task, pos);
@@ -4480,6 +4570,19 @@ public final class SeasonStartSystem {
 		}
 		finishSceneBuild(server, level, task);
 		return true;
+	}
+
+	private static long resolveSceneBuildPhaseTotal(ServerLevel level, SceneBuildTask task) {
+		return switch (task.phase) {
+			case BUILD_BARRIER -> task.barrierShellBlocks.size();
+			case ENTITY_SNAPSHOT -> {
+				if (task.sceneEntityCandidates == null) {
+					task.sceneEntityCandidates = collectSceneEntityCandidates(level, task.outer);
+				}
+				yield task.sceneEntityCandidates.size();
+			}
+			default -> volumeOf(task.currentGeometry());
+		};
 	}
 
 	private static void captureSceneSnapshotCell(ServerLevel level, SceneBuildTask task, BlockPos pos) {
@@ -4515,6 +4618,50 @@ public final class SeasonStartSystem {
 		}
 	}
 
+	private static void captureBoundaryRestoreSnapshotCell(ServerLevel level, SceneBuildTask task, BlockPos pos) {
+		if (level == null || task == null || pos == null
+				|| (pos.getX() >= task.outer.minX && pos.getX() <= task.outer.maxX
+				&& pos.getY() >= task.outer.floorY && pos.getY() <= task.outer.roofY
+				&& pos.getZ() >= task.outer.minZ && pos.getZ() <= task.outer.maxZ)) {
+			return;
+		}
+		BlockState state = level.getBlockState(pos);
+		if (state != null && !state.isAir()) {
+			WORLD_REVEAL_BOUNDARY_TARGET_STATES.put(pos.asLong(), state);
+		}
+	}
+
+	private static List<Entity> collectSceneEntityCandidates(ServerLevel level, BoxGeometry outerGeometry) {
+		if (level == null || outerGeometry == null) {
+			return List.of();
+		}
+		AABB sceneBounds = new AABB(
+				outerGeometry.minX,
+				outerGeometry.floorY,
+				outerGeometry.minZ,
+				outerGeometry.maxX + 1.0D,
+				outerGeometry.roofY + 1.0D,
+				outerGeometry.maxZ + 1.0D
+		);
+		return new ArrayList<>(level.getEntities((Entity) null, sceneBounds, SeasonStartSystem::shouldSnapshotSceneEntity));
+	}
+
+	private static void captureSceneEntitySnapshotCell(ServerLevel level, Entity entity) {
+		if (level == null || entity == null || entity.isRemoved() || !shouldSnapshotSceneEntity(entity)) {
+			return;
+		}
+		TagValueOutput output = TagValueOutput.createWithContext(ProblemReporter.DISCARDING, level.registryAccess());
+		if (!entity.saveAsPassenger(output)) {
+			return;
+		}
+		CompoundTag tag = output.buildResult();
+		if (tag == null || tag.isEmpty()) {
+			return;
+		}
+		WORLD_REVEAL_ENTITY_SNAPSHOTS.add(tag.copy());
+		entity.discard();
+	}
+
 	private static void clearStaleSceneBlock(ServerLevel level, BlockPos pos) {
 		BlockState state = level.getBlockState(pos);
 		if (state.is(Blocks.BLACK_CONCRETE) || state.is(Blocks.BARRIER)) {
@@ -4547,7 +4694,10 @@ public final class SeasonStartSystem {
 			finalizeSceneSnapshot(task);
 		}
 		task.phase = switch (task.phase) {
-			case SNAPSHOT -> task.generatorFallback ? SceneBuildPhase.CLEAR_STALE : SceneBuildPhase.BUILD_OUTER;
+			case BOUNDARY_SNAPSHOT -> task.captureEntities ? SceneBuildPhase.ENTITY_SNAPSHOT : SceneBuildPhase.SNAPSHOT;
+			case ENTITY_SNAPSHOT -> SceneBuildPhase.SNAPSHOT;
+			case SNAPSHOT -> task.reuseExistingShell ? SceneBuildPhase.FINALIZE
+					: task.generatorFallback ? SceneBuildPhase.CLEAR_STALE : SceneBuildPhase.BUILD_OUTER;
 			case CLEAR_STALE -> SceneBuildPhase.BUILD_OUTER;
 			case BUILD_OUTER -> SceneBuildPhase.BUILD_BARRIER;
 			case BUILD_BARRIER, FINALIZE -> SceneBuildPhase.FINALIZE;
@@ -4571,6 +4721,10 @@ public final class SeasonStartSystem {
 
 	private static void finishSceneBuild(MinecraftServer server, ServerLevel level, SceneBuildTask task) {
 		if (server == null || level == null || task == null) {
+			return;
+		}
+		if (task.mode == SceneBuildMode.WORLD_REVEAL_RECOVERY) {
+			finishWorldRevealRecovery(level);
 			return;
 		}
 		if (!isServerStructurePresent(level, task.anchor)) {
@@ -4604,9 +4758,6 @@ public final class SeasonStartSystem {
 		}
 		if (sharedLaunchCollectedBitcoins < sharedLaunchRequiredBitcoins) {
 			ensureSharedBitcoinPopulation(level);
-		}
-		if (countSharedPlayers() > 0 && nextSharedReminderTick == Long.MIN_VALUE) {
-			nextSharedReminderTick = level.getGameTime() + SHARED_IDLE_REMINDER_TICKS;
 		}
 		syncPrivatePlayerProfiles(server);
 		stateDirty = true;
@@ -4862,7 +5013,6 @@ public final class SeasonStartSystem {
 		long nowTick = overworld == null ? 0L : overworld.getGameTime();
 		sharedLaunchCollectedBitcoins = Math.min(sharedLaunchRequiredBitcoins, sharedLaunchCollectedBitcoins + bitcoins);
 		lastSharedLaunchProgressTick = nowTick;
-		nextSharedReminderTick = nowTick + SHARED_IDLE_REMINDER_TICKS;
 		String newestMilestoneTrigger = null;
 		while (sharedLaunchMilestoneCursor < SHARED_LAUNCH_MILESTONES.length
 				&& getSharedLaunchPercent() >= SHARED_LAUNCH_MILESTONES[sharedLaunchMilestoneCursor]) {
@@ -6057,6 +6207,7 @@ public final class SeasonStartSystem {
 		sceneBuildTask = null;
 		shellDissolving = false;
 		worldRevealActive = false;
+		worldRevealRecoveryPending = false;
 		worldRevealBarriersPlaced = false;
 		lastSharedLaunchProgressTick = Long.MIN_VALUE;
 		pendingSharedFinishTick = Long.MIN_VALUE;
@@ -6131,7 +6282,6 @@ public final class SeasonStartSystem {
 					runtime.raceMenuReached = persisted.raceMenuReached;
 					runtime.racePurchaseExplained = persisted.racePurchaseExplained;
 					runtime.menuRaceAllowanceGranted = persisted.menuRaceAllowanceGranted;
-					runtime.menuReminderIndex = Math.max(0, persisted.menuReminderIndex);
 					if (persisted.seenMenuSections != null) {
 						runtime.seenMenuSections.addAll(persisted.seenMenuSections);
 					}
@@ -6176,7 +6326,6 @@ public final class SeasonStartSystem {
 			persisted.raceMenuReached = runtime.raceMenuReached;
 			persisted.racePurchaseExplained = runtime.racePurchaseExplained;
 			persisted.menuRaceAllowanceGranted = runtime.menuRaceAllowanceGranted;
-			persisted.menuReminderIndex = runtime.menuReminderIndex;
 			persisted.seenMenuSections = new ArrayList<>(runtime.seenMenuSections);
 			state.players.put(entry.getKey().toString(), persisted);
 		}
@@ -6583,11 +6732,7 @@ public final class SeasonStartSystem {
 		private boolean raceMenuReached;
 		private boolean racePurchaseExplained;
 		private boolean menuRaceAllowanceGranted;
-		private int menuReminderIndex;
 		private String activeMenuSection = "";
-		private long menuLastInteractionTick = Long.MIN_VALUE;
-		private long nextMenuReminderTick = Long.MAX_VALUE;
-		private long nextMenuSectionReminderTick = Long.MAX_VALUE;
 		private long nextMenuPriceReactionTick = Long.MIN_VALUE;
 		private final Set<String> seenMenuSections = new LinkedHashSet<>();
 	}
@@ -6599,6 +6744,8 @@ public final class SeasonStartSystem {
 	}
 
 	private enum SceneBuildPhase {
+		BOUNDARY_SNAPSHOT,
+		ENTITY_SNAPSHOT,
 		SNAPSHOT,
 		CLEAR_STALE,
 		BUILD_OUTER,
@@ -6606,16 +6753,26 @@ public final class SeasonStartSystem {
 		FINALIZE
 	}
 
+	private enum SceneBuildMode {
+		STARTUP,
+		WORLD_REVEAL_RECOVERY
+	}
+
 	private static final class SceneBuildTask {
 		private final BlockPos anchor;
 		private final BoxGeometry outer;
 		private final BoxGeometry barrier;
+		private final BoxGeometry boundary;
 		private final BoxGeometry stale;
+		private final SceneBuildMode mode;
 		private final boolean generatorFallback;
+		private final boolean reuseExistingShell;
+		private final boolean captureEntities;
 		private final Set<Long> structureFootprint;
 		private final List<BlockPos> barrierShellBlocks;
 		private final Map<Long, Integer> topSolidSurfaceY = new HashMap<>();
-		private SceneBuildPhase phase = SceneBuildPhase.SNAPSHOT;
+		private List<Entity> sceneEntityCandidates;
+		private SceneBuildPhase phase;
 		private long cursor;
 		private NoiseColumn noiseColumn;
 		private int noiseColumnX = Integer.MIN_VALUE;
@@ -6625,25 +6782,37 @@ public final class SeasonStartSystem {
 				BlockPos anchor,
 				BoxGeometry outer,
 				BoxGeometry barrier,
+				BoxGeometry boundary,
 				BoxGeometry stale,
+				SceneBuildMode mode,
 				boolean generatorFallback,
+				boolean reuseExistingShell,
+				boolean captureRestorationData,
 				Set<Long> structureFootprint
 		) {
 			this.anchor = anchor;
 			this.outer = outer;
 			this.barrier = barrier;
+			this.boundary = boundary;
 			this.stale = stale;
+			this.mode = mode;
 			this.generatorFallback = generatorFallback;
+			this.reuseExistingShell = reuseExistingShell;
+			this.captureEntities = captureRestorationData;
 			this.structureFootprint = structureFootprint;
 			this.barrierShellBlocks = collectBarrierShellBlocks(barrier);
+			this.phase = captureRestorationData
+					? SceneBuildPhase.BOUNDARY_SNAPSHOT
+					: SceneBuildPhase.SNAPSHOT;
 		}
 
 		private BoxGeometry currentGeometry() {
 			return switch (this.phase) {
+				case BOUNDARY_SNAPSHOT -> this.boundary;
 				case SNAPSHOT, BUILD_OUTER -> this.outer;
 				case CLEAR_STALE -> this.stale;
 				case BUILD_BARRIER -> this.barrier;
-				case FINALIZE -> this.outer;
+				case ENTITY_SNAPSHOT, FINALIZE -> this.outer;
 			};
 		}
 	}
@@ -6745,7 +6914,6 @@ public final class SeasonStartSystem {
 		private boolean raceMenuReached;
 		private boolean racePurchaseExplained;
 		private boolean menuRaceAllowanceGranted;
-		private int menuReminderIndex;
 		private List<String> seenMenuSections;
 	}
 }
