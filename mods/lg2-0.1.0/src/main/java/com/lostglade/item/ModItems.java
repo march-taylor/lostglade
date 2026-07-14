@@ -53,6 +53,8 @@ public final class ModItems {
 	private static final Identifier STABILITY_POTION_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "stability_potion");
 	private static final Identifier LONG_STABILITY_POTION_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "long_stability_potion");
 	private static final Identifier GREATER_STABILITY_POTION_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "greater_stability_potion");
+	private static final Identifier STARTUP_BALLOON_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "startup_balloon");
+	private static final Identifier STARTUP_JACK_CLOWN_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "startup_jack_clown");
 	private static final ResourceKey<Item> BITCOIN_KEY = ResourceKey.create(Registries.ITEM, BITCOIN_ID);
 	private static final ResourceKey<Item> SPECIAL_PICKAXE_KEY = ResourceKey.create(Registries.ITEM, SPECIAL_PICKAXE_ID);
 	private static final ResourceKey<Item> CAMERA_KEY = ResourceKey.create(Registries.ITEM, CAMERA_ID);
@@ -83,6 +85,8 @@ public final class ModItems {
 	private static final ResourceKey<Item> STABILITY_POTION_KEY = ResourceKey.create(Registries.ITEM, STABILITY_POTION_ID);
 	private static final ResourceKey<Item> LONG_STABILITY_POTION_KEY = ResourceKey.create(Registries.ITEM, LONG_STABILITY_POTION_ID);
 	private static final ResourceKey<Item> GREATER_STABILITY_POTION_KEY = ResourceKey.create(Registries.ITEM, GREATER_STABILITY_POTION_ID);
+	private static final ResourceKey<Item> STARTUP_BALLOON_KEY = ResourceKey.create(Registries.ITEM, STARTUP_BALLOON_ID);
+	private static final ResourceKey<Item> STARTUP_JACK_CLOWN_KEY = ResourceKey.create(Registries.ITEM, STARTUP_JACK_CLOWN_ID);
 	private static final ResourceKey<CreativeModeTab> INGREDIENTS_TAB = ResourceKey.create(
 			Registries.CREATIVE_MODE_TAB,
 			Identifier.fromNamespaceAndPath("minecraft", "ingredients")
@@ -413,6 +417,25 @@ public final class ModItems {
 					"安定性のポーションII"
 			)
 	);
+	public static final Item STARTUP_BALLOON = Registry.register(
+			BuiltInRegistries.ITEM,
+			STARTUP_BALLOON_ID,
+			new StartupBalloonItem(
+					new Item.Properties()
+							.setId(STARTUP_BALLOON_KEY)
+							.stacksTo(16)
+							.rarity(Rarity.UNCOMMON)
+			)
+	);
+	public static final Item STARTUP_JACK_CLOWN = Registry.register(
+			BuiltInRegistries.ITEM,
+			STARTUP_JACK_CLOWN_ID,
+			new StartupRaceVisualItem(
+					new Item.Properties().setId(STARTUP_JACK_CLOWN_KEY),
+					"startup_jack_clown",
+					Items.CARVED_PUMPKIN
+			)
+	);
 
 	private ModItems() {
 	}
@@ -427,6 +450,7 @@ public final class ModItems {
 
 	public static void register() {
 		ItemGroupEvents.modifyEntriesEvent(INGREDIENTS_TAB).register(entries -> {
+			entries.prepend(STARTUP_BALLOON);
 			entries.prepend(GREATER_STABILITY_POTION);
 			entries.prepend(LONG_STABILITY_POTION);
 			entries.prepend(STABILITY_POTION);

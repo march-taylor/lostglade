@@ -9,34 +9,34 @@
       "attack": {
         "enabled": true,
         "abilityId": "startup_race_attack",
-        "name": "Атака",
-        "description": "Заглушка способности.",
+        "name": "Мыльный пузырь",
+        "description": "Надувайте пузырь: он блуждает в случайном направлении и лопается от удара или столкновения.",
         "priceBitcoins": 1,
-        "cooldownSeconds": -1.0
+        "cooldownSeconds": 0.75
       },
       "defense": {
         "enabled": true,
         "abilityId": "startup_race_defense",
-        "name": "Защита",
-        "description": "Заглушка способности.",
+        "name": "Хлопушка",
+        "description": "Запускает праздничную хлопушку с конфетти.",
         "priceBitcoins": 1,
-        "cooldownSeconds": -1.0
+        "cooldownSeconds": 4.0
       },
       "uniqueAbility": {
         "enabled": true,
         "abilityId": "startup_race_unique",
-        "name": "Особая способность",
-        "description": "Заглушка способности.",
+        "name": "Воздушный шарик",
+        "description": "Выдаёт шарик. Используйте его на игроке, чтобы привязать, или на поверхности, чтобы отпустить к потолку.",
         "priceBitcoins": 1,
-        "cooldownSeconds": -1.0
+        "cooldownSeconds": 2.5
       },
       "shnyaga": {
         "enabled": true,
         "abilityId": "startup_race_shnyaga",
-        "name": "Способность",
-        "description": "Заглушка способности.",
+        "name": "Джекбокс",
+        "description": "Оставляет сюрприз для первого, кто к нему подойдёт.",
         "priceBitcoins": 1,
-        "cooldownSeconds": -1.0
+        "cooldownSeconds": 15.0
       },
       "stock": {
         "enabled": true,

@@ -42,6 +42,7 @@ import com.lostglade.server.ServerStructureBreakSystem;
 import com.lostglade.server.ServerMechanicsGateSystem;
 import com.lostglade.server.ServerRespectSystem;
 import com.lostglade.server.ServerRaceSystem;
+import com.lostglade.server.StartupRaceAbilitySystem;
 import com.lostglade.server.SeasonStartSystem;
 import com.lostglade.server.SeasonStartVoiceSystem;
 import com.lostglade.server.ServerTabIntegration;
@@ -121,6 +122,7 @@ public class Lg2 implements ModInitializer {
 		CopperManGogglesSystem.registerLateInteractions();
 		CopperManRepulsorSystem.registerLateInteractions();
 		ServerRaceSystem.register();
+		StartupRaceAbilitySystem.register();
 		ServerUnusedMobSpawnSystem.register();
 		SeasonStartVoiceSystem.register();
 		if (FabricLoader.getInstance().isModLoaded("tab")) {

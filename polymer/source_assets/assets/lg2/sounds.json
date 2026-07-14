@@ -401,5 +401,21 @@
         "attenuation_distance": 64
       }
     ]
+  },
+  "startup_confetti": {
+    "sounds": [
+      {
+        "name": "lg2:startup_confetti",
+        "preload": true
+      }
+    ]
+  },
+  "startup_jack_scream": {
+    "sounds": [
+      {
+        "name": "lg2:startup_jack_scream",
+        "preload": true
+      }
+    ]
   }
 }

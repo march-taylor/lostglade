@@ -752,9 +752,9 @@ public final class SeasonStartSystem {
 		return ServerRaceSystem.isSeasonStartRaceAbility(player, upgradeId) ? 1 : 9_999;
 	}
 
-	/** The next phase will enable the temporary race; phase five only teaches and buys it. */
+	/** Start-race abilities are usable immediately after their buttons are purchased. */
 	public static boolean isSeasonStartRaceTestingPending(ServerPlayer player) {
-		return active && menuExplanationActive && player != null && PLAYER_STATES.containsKey(player.getUUID());
+		return false;
 	}
 
 	public static void onServerUpgradeScreenOpened(ServerPlayer player, String screenId) {
@@ -2354,6 +2354,7 @@ public final class SeasonStartSystem {
 		stateDirty = true;
 		applySharedPlayerState(player);
 		syncPrivatePlayerProfiles(server);
+		refreshSharedPlayerEntityTracking(server);
 		spawnLightOnlineParticles(server.overworld());
 		if (state.pendingSharedPeersLine) {
 			SeasonStartVoiceSystem.fireTrigger(server, "player_powered_server_others_visible", player);
@@ -5652,6 +5653,23 @@ public final class SeasonStartSystem {
 					viewer.connection.send(ClientboundPlayerInfoUpdatePacket.createPlayerInitializing(List.of(subject)));
 				}
 			}
+		}
+	}
+
+	/**
+	 * Private-intro players are deliberately removed from ChunkMap tracking. Changing only the
+	 * phase leaves a stationary viewer with no reason for vanilla to retry pairing the entity,
+	 * so make the normal tracker reevaluate every shared viewer immediately after the light cue.
+	 */
+	private static void refreshSharedPlayerEntityTracking(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+		for (ServerPlayer viewer : server.getPlayerList().getPlayers()) {
+			if (!isSeasonStartEligiblePlayer(viewer) || !isInSharedPhase(viewer) || !(viewer.level() instanceof ServerLevel level)) {
+				continue;
+			}
+			level.getChunkSource().move(viewer);
 		}
 	}
 

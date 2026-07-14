@@ -2201,6 +2201,13 @@ public final class ServerRaceSystem {
 		if (slot == RaceAbilitySlot.SHNYAGA && LITTLE_DICTATOR_RACE_ID.equals(raceId)) {
 			return useLittleDictatorShnyaga(player, race, ability);
 		}
+		if ("startup_race".equals(raceId)) {
+			int result = StartupRaceAbilitySystem.useAbility(player, slot);
+			if (result > 0) {
+				startGenericAbilityCooldown(player, slot, ability);
+			}
+			return result;
+		}
 
 		startGenericAbilityCooldown(player, slot, ability);
 		Lg2.LOGGER.info("Player {} used race ability '{}' from race '{}'", player.getGameProfile().name(), ability.abilityId, race.id);
@@ -2233,6 +2240,7 @@ public final class ServerRaceSystem {
 	}
 
 	public static void beginSeasonStartRaces(MinecraftServer server, String raceId) {
+		StartupRaceAbilitySystem.clearSeasonStartState(server);
 		SEASON_START_RACES.clear();
 		if (server == null) {
 			return;
@@ -2256,6 +2264,7 @@ public final class ServerRaceSystem {
 			collectAbilityId(abilityIds, race == null ? null : race.shnyaga);
 		}
 		ServerUpgradeUiSystem.resetSeasonStartRacePurchases(server, playerIds, abilityIds);
+		StartupRaceAbilitySystem.clearSeasonStartState(server);
 		for (UUID playerId : playerIds) {
 			SEASON_START_RACES.remove(playerId);
 			ServerPlayer player = server == null ? null : server.getPlayerList().getPlayer(playerId);
@@ -2286,6 +2295,7 @@ public final class ServerRaceSystem {
 			return;
 		}
 		if (server != null) {
+			StartupRaceAbilitySystem.clearPlayerState(server, player.getUUID());
 			applyRaceCommandRuntimeRefresh(server, player);
 		}
 	}

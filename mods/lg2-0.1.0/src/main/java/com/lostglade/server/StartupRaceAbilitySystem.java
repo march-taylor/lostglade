@@ -1,0 +1,887 @@
+package com.lostglade.server;
+
+import com.lostglade.Lg2;
+import com.lostglade.config.RaceConfig.RaceAbilitySlot;
+import com.lostglade.item.ModItems;
+import com.lostglade.util.ItemDisplayHitboxHelper;
+import com.mojang.math.Transformation;
+import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+import net.fabricmc.fabric.api.event.player.AttackEntityCallback;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.core.Holder;
+import net.minecraft.core.particles.DustParticleOptions;
+import net.minecraft.core.particles.ParticleTypes;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.network.protocol.game.ClientboundSoundPacket;
+import net.minecraft.resources.Identifier;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.sounds.SoundEvent;
+import net.minecraft.sounds.SoundEvents;
+import net.minecraft.sounds.SoundSource;
+import net.minecraft.util.RandomSource;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.world.effect.MobEffectInstance;
+import net.minecraft.world.effect.MobEffects;
+import net.minecraft.world.entity.Display;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.Interaction;
+import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.ItemDisplayContext;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.ClipContext;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
+import org.joml.Quaternionf;
+import org.joml.Vector3f;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+
+/**
+ * Physical abilities of the temporary start race. All visible pieces are standard display
+ * entities, so players without any extra client mod see the same effects through Polymer.
+ */
+public final class StartupRaceAbilitySystem {
+	private static final Identifier CONFETTI_SOUND_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "startup_confetti");
+	private static final Identifier JACK_SCREAM_SOUND_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "startup_jack_scream");
+	private static final Holder<SoundEvent> CONFETTI_SOUND = Holder.direct(SoundEvent.createVariableRangeEvent(CONFETTI_SOUND_ID));
+	private static final Holder<SoundEvent> JACK_SCREAM_SOUND = Holder.direct(SoundEvent.createVariableRangeEvent(JACK_SCREAM_SOUND_ID));
+	private static final int BUBBLE_LIFETIME_TICKS = 20 * 18;
+	private static final int FREE_BALLOON_LIFETIME_TICKS = 20 * 90;
+	private static final int JACK_LIFETIME_TICKS = 20 * 75;
+	private static final int JACK_OPEN_TICKS = 12;
+	private static final int JACK_VISIBLE_TICKS = 36;
+	private static final int MAX_BALLOONS_PER_PLAYER = 8;
+	private static final double BUBBLE_HIT_RADIUS = 0.34D;
+	private static final double JACK_ARM_DISTANCE_SQR = 3.5D * 3.5D;
+	private static final double JACK_TRIGGER_DISTANCE_SQR = 1.45D * 1.45D;
+	private static final Map<UUID, BubbleState> BUBBLES = new HashMap<>();
+	private static final Map<UUID, BalloonState> BALLOONS = new HashMap<>();
+	private static final Map<UUID, FreeBalloonState> FREE_BALLOONS = new HashMap<>();
+	private static final Map<UUID, JackBoxState> JACK_BOXES = new HashMap<>();
+
+	private StartupRaceAbilitySystem() {
+	}
+
+	public static void register() {
+		BUBBLES.clear();
+		BALLOONS.clear();
+		FREE_BALLOONS.clear();
+		JACK_BOXES.clear();
+		ServerTickEvents.END_SERVER_TICK.register(StartupRaceAbilitySystem::tick);
+		AttackEntityCallback.EVENT.register(StartupRaceAbilitySystem::onAttackEntity);
+		ServerLifecycleEvents.SERVER_STOPPING.register(StartupRaceAbilitySystem::clearSeasonStartState);
+	}
+
+	public static int useAbility(ServerPlayer player, RaceAbilitySlot slot) {
+		if (player == null || slot == null || !(player.level() instanceof ServerLevel level)) {
+			return 0;
+		}
+		return switch (slot) {
+			case ATTACK -> spawnSoapBubble(player, level) ? 1 : 0;
+			case DEFENSE -> fireConfetti(player, level) ? 1 : 0;
+			case UNIQUE_ABILITY -> giveBalloon(player) ? 1 : 0;
+			case SHNYAGA -> placeJackBox(player, level) ? 1 : 0;
+			case STOCK -> 0;
+		};
+	}
+
+	public static boolean attachBalloon(ServerPlayer owner, ServerPlayer target) {
+		if (owner == null || target == null || !owner.isAlive() || !target.isAlive() || owner.level() != target.level()
+				|| !(target.level() instanceof ServerLevel level)) {
+			return false;
+		}
+		int attached = 0;
+		for (BalloonState state : BALLOONS.values()) {
+			if (state.targetId.equals(target.getUUID())) {
+				attached++;
+			}
+		}
+		if (attached >= MAX_BALLOONS_PER_PLAYER) {
+			owner.displayClientMessage(net.minecraft.network.chat.Component.literal("На этом игроке уже слишком много шариков."), true);
+			return false;
+		}
+		float size = 0.72F + level.getRandom().nextFloat() * 0.62F;
+		Display.ItemDisplay display = createDisplay(
+				level,
+				new ItemStack(ModItems.STARTUP_BALLOON),
+				target.position().add(0.0D, target.getBbHeight() + 1.0D, 0.0D),
+				Display.BillboardConstraints.CENTER,
+				size
+		);
+		if (display == null) {
+			return false;
+		}
+		BalloonState state = new BalloonState(level.dimension(), owner.getUUID(), target.getUUID(), display.getUUID(), level.getGameTime(), size);
+		BALLOONS.put(display.getUUID(), state);
+		level.playSound(null, target.blockPosition(), SoundEvents.ALLAY_ITEM_GIVEN, SoundSource.PLAYERS, 0.7F, 1.18F);
+		return true;
+	}
+
+	/** Releases a balloon from a block face. It rises until it reaches the ceiling or another solid block. */
+	public static boolean releaseBalloon(ServerPlayer owner, BlockPos clickedPos, Direction clickedFace) {
+		if (owner == null || clickedPos == null || clickedFace == null || !(owner.level() instanceof ServerLevel level)) {
+			return false;
+		}
+		RandomSource random = level.getRandom();
+		Vec3 normal = new Vec3(clickedFace.getStepX(), clickedFace.getStepY(), clickedFace.getStepZ());
+		Vec3 position = Vec3.atCenterOf(clickedPos)
+				.add(normal.scale(0.64D))
+				.add(0.0D, 0.12D, 0.0D);
+		float size = 0.56F + random.nextFloat() * 0.84F;
+		Display.ItemDisplay display = createDisplay(
+				level,
+				new ItemStack(ModItems.STARTUP_BALLOON),
+				position,
+				Display.BillboardConstraints.CENTER,
+				size
+		);
+		if (display == null) {
+			return false;
+		}
+		Interaction trigger = new Interaction(EntityType.INTERACTION, level);
+		trigger.setNoGravity(true);
+		trigger.noPhysics = true;
+		trigger.setSilent(true);
+		trigger.setInvisible(true);
+		trigger.setResponse(false);
+		trigger.setWidth(Math.max(0.35F, size * 0.78F));
+		trigger.setHeight(Math.max(0.35F, size * 0.78F));
+		trigger.setPos(position.x, position.y - size * 0.38D, position.z);
+		level.addFreshEntity(trigger);
+		Vec3 drift = new Vec3(normal.x, 0.0D, normal.z).scale(0.018D + random.nextDouble() * 0.028D).add(
+				(random.nextDouble() - 0.5D) * 0.018D,
+				0.042D + random.nextDouble() * 0.018D,
+				(random.nextDouble() - 0.5D) * 0.018D
+		);
+		FreeBalloonState state = new FreeBalloonState(
+				level.dimension(),
+				owner.getUUID(),
+				display.getUUID(),
+				trigger.getUUID(),
+				position,
+				drift,
+				size,
+				level.getGameTime() + FREE_BALLOON_LIFETIME_TICKS
+		);
+		FREE_BALLOONS.put(display.getUUID(), state);
+		level.playSound(null, clickedPos, SoundEvents.ALLAY_ITEM_GIVEN, SoundSource.PLAYERS, 0.55F, 1.24F);
+		return true;
+	}
+
+	public static void clearPlayerState(MinecraftServer server, UUID playerId) {
+		if (server == null || playerId == null) {
+			return;
+		}
+		removeBalloons(server, state -> state.ownerId.equals(playerId) || state.targetId.equals(playerId));
+		removeFreeBalloons(server, state -> state.ownerId.equals(playerId));
+		removeJackBoxes(server, state -> state.ownerId.equals(playerId));
+	}
+
+	public static void clearSeasonStartState(MinecraftServer server) {
+		if (server == null) {
+			BUBBLES.clear();
+			BALLOONS.clear();
+			FREE_BALLOONS.clear();
+			JACK_BOXES.clear();
+			return;
+		}
+		for (BubbleState state : BUBBLES.values()) {
+			removeEntity(server, state.displayId);
+			removeEntity(server, state.triggerId);
+		}
+		for (BalloonState state : BALLOONS.values()) {
+			removeEntity(server, state.displayId);
+		}
+		for (FreeBalloonState state : FREE_BALLOONS.values()) {
+			removeEntity(server, state.displayId);
+			removeEntity(server, state.triggerId);
+		}
+		for (JackBoxState state : JACK_BOXES.values()) {
+			removeJackVisuals(server, state);
+		}
+		BUBBLES.clear();
+		BALLOONS.clear();
+		FREE_BALLOONS.clear();
+		JACK_BOXES.clear();
+	}
+
+	private static boolean spawnSoapBubble(ServerPlayer player, ServerLevel level) {
+		RandomSource random = level.getRandom();
+		Vec3 direction = player.getLookAngle();
+		if (direction.lengthSqr() < 1.0E-5D) {
+			direction = new Vec3(0.0D, 0.0D, 1.0D);
+		}
+		direction = direction.normalize();
+		Vec3 position = player.getEyePosition().add(direction.scale(0.74D));
+		Display.ItemDisplay display = createDisplay(
+				level,
+				new ItemStack(Items.HEART_OF_THE_SEA),
+				position,
+				Display.BillboardConstraints.CENTER,
+				0.58F
+		);
+		if (display == null) {
+			return false;
+		}
+		Interaction trigger = new Interaction(EntityType.INTERACTION, level);
+		trigger.setNoGravity(true);
+		trigger.noPhysics = true;
+		trigger.setSilent(true);
+		trigger.setInvisible(true);
+		trigger.setResponse(false);
+		trigger.setWidth(0.72F);
+		trigger.setHeight(0.72F);
+		trigger.setPos(position.x, position.y - 0.36D, position.z);
+		level.addFreshEntity(trigger);
+		BubbleState state = new BubbleState(
+				level.dimension(),
+				player.getUUID(),
+				display.getUUID(),
+				trigger.getUUID(),
+				position,
+				newRandomBubbleDirection(random).scale(0.045D + random.nextDouble() * 0.055D),
+				newRandomBubbleDirection(random),
+				level.getGameTime() + 8L + random.nextInt(18),
+				level.getGameTime() + BUBBLE_LIFETIME_TICKS
+		);
+		BUBBLES.put(display.getUUID(), state);
+		level.playSound(null, player.blockPosition(), SoundEvents.BUBBLE_COLUMN_BUBBLE_POP, SoundSource.PLAYERS, 0.35F, 1.55F);
+		return true;
+	}
+
+	private static boolean fireConfetti(ServerPlayer player, ServerLevel level) {
+		RandomSource random = level.getRandom();
+		Vec3 origin = player.getEyePosition().add(player.getLookAngle().normalize().scale(0.55D));
+		int[] colors = {
+				0xFF2130,
+				0xFFD114,
+				0x2EBFFF,
+				0xCF3AFF,
+				0x4DFF73
+		};
+		for (int i = 0; i < 78; i++) {
+			int color = colors[random.nextInt(colors.length)];
+			DustParticleOptions particle = new DustParticleOptions(color, 1.15F + random.nextFloat() * 0.65F);
+			double spread = 0.38D + random.nextDouble() * 0.7D;
+			level.sendParticles(
+					particle,
+					origin.x,
+					origin.y,
+					origin.z,
+					1,
+					(random.nextDouble() - 0.5D) * spread,
+					0.08D + random.nextDouble() * 0.35D,
+					(random.nextDouble() - 0.5D) * spread,
+					0.55D
+			);
+		}
+		playNearbyPackSound(level, origin, CONFETTI_SOUND, SoundSource.PLAYERS, 1.0F, 1.0F);
+		return true;
+	}
+
+	private static boolean giveBalloon(ServerPlayer player) {
+		ItemStack balloon = new ItemStack(ModItems.STARTUP_BALLOON);
+		if (!player.getInventory().add(balloon)) {
+			player.drop(balloon, false);
+		}
+		player.level().playSound(null, player.blockPosition(), SoundEvents.ALLAY_ITEM_GIVEN, SoundSource.PLAYERS, 0.55F, 1.12F);
+		return true;
+	}
+
+	private static boolean placeJackBox(ServerPlayer player, ServerLevel level) {
+		BlockPos ground = findGroundBelowPlayer(level, player);
+		if (ground == null) {
+			return false;
+		}
+		Vec3 base = Vec3.atBottomCenterOf(ground).add(0.0D, 1.0D, 0.0D);
+		for (JackBoxState other : JACK_BOXES.values()) {
+			if (other.dimension.equals(level.dimension()) && other.position.distanceToSqr(base) < 2.25D) {
+				player.displayClientMessage(net.minecraft.network.chat.Component.literal("Здесь уже стоит джекбокс."), true);
+				return false;
+			}
+		}
+		Display.ItemDisplay box = createDisplay(level, new ItemStack(Items.RED_SHULKER_BOX), base, Display.BillboardConstraints.FIXED, 0.64F);
+		Display.ItemDisplay spring = createDisplay(level, new ItemStack(Items.IRON_BARS), base.add(0.0D, 0.14D, 0.0D), Display.BillboardConstraints.FIXED, 0.14F);
+		Display.ItemDisplay clown = createDisplay(level, new ItemStack(ModItems.STARTUP_JACK_CLOWN), base.add(0.0D, 0.20D, 0.0D), Display.BillboardConstraints.CENTER, 0.08F);
+		if (box == null || spring == null || clown == null) {
+			if (box != null) {
+				box.discard();
+			}
+			if (spring != null) {
+				spring.discard();
+			}
+			if (clown != null) {
+				clown.discard();
+			}
+			return false;
+		}
+		clown.setInvisible(true);
+		JackBoxState state = new JackBoxState(level.dimension(), player.getUUID(), base, box.getUUID(), spring.getUUID(), clown.getUUID(), level.getGameTime());
+		JACK_BOXES.put(box.getUUID(), state);
+		level.playSound(null, ground, SoundEvents.SHULKER_BOX_CLOSE, SoundSource.BLOCKS, 0.75F, 1.12F);
+		return true;
+	}
+
+	private static BlockPos findGroundBelowPlayer(ServerLevel level, ServerPlayer player) {
+		BlockPos start = player.blockPosition();
+		for (int offset = 0; offset <= 5; offset++) {
+			BlockPos candidate = start.below(offset);
+			if (level.getBlockState(candidate).blocksMotion()) {
+				return candidate;
+			}
+		}
+		return null;
+	}
+
+	private static void tick(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+		tickBubbles(server);
+		tickBalloons(server);
+		tickFreeBalloons(server);
+		tickJackBoxes(server);
+	}
+
+	private static void tickBubbles(MinecraftServer server) {
+		Iterator<BubbleState> iterator = BUBBLES.values().iterator();
+		while (iterator.hasNext()) {
+			BubbleState state = iterator.next();
+			ServerLevel level = server.getLevel(state.dimension);
+			Display.ItemDisplay display = findEntity(server, state.displayId, Display.ItemDisplay.class);
+			Interaction trigger = findEntity(server, state.triggerId, Interaction.class);
+			if (level == null || display == null || trigger == null || level.getGameTime() >= state.expiresAtTick) {
+				popBubble(server, state, false);
+				iterator.remove();
+				continue;
+			}
+			long nowTick = level.getGameTime();
+			RandomSource random = level.getRandom();
+			if (nowTick >= state.nextDirectionChangeTick) {
+				state.steering = newRandomBubbleDirection(random);
+				state.targetSpeed = random.nextDouble() < 0.18D ? 0.0D : 0.025D + random.nextDouble() * 0.105D;
+				state.nextDirectionChangeTick = nowTick + 9L + random.nextInt(38);
+			}
+			state.velocity = state.velocity.scale(0.90D).add(state.steering.scale(state.targetSpeed * 0.20D));
+			if (state.velocity.lengthSqr() > 0.15D * 0.15D) {
+				state.velocity = state.velocity.normalize().scale(0.15D);
+			}
+			Vec3 next = state.position.add(state.velocity);
+			BlockHitResult hit = level.clip(new ClipContext(state.position, next, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, display));
+			boolean hitBlock = hit.getType() != HitResult.Type.MISS;
+			boolean hitEntity = !level.getEntities(
+					display,
+					AABB.ofSize(next, BUBBLE_HIT_RADIUS * 2.0D, BUBBLE_HIT_RADIUS * 2.0D, BUBBLE_HIT_RADIUS * 2.0D),
+					entity -> entity != trigger
+							&& !entity.getUUID().equals(state.casterId)
+							&& (entity instanceof Player || entity instanceof ItemEntity || entity.isPickable())
+			).isEmpty();
+			if (hitBlock || hitEntity) {
+				popBubble(server, state, true);
+				iterator.remove();
+				continue;
+			}
+			state.position = next;
+			display.setPos(next.x, next.y, next.z);
+			trigger.setPos(next.x, next.y - 0.36D, next.z);
+			if (Math.floorMod(nowTick, 3L) == 0L) {
+				level.sendParticles(ParticleTypes.BUBBLE, next.x, next.y, next.z, 1, 0.05D, 0.05D, 0.05D, 0.0D);
+			}
+		}
+	}
+
+	private static void tickBalloons(MinecraftServer server) {
+		Map<UUID, List<BalloonState>> balloonsByTarget = new HashMap<>();
+		Iterator<BalloonState> iterator = BALLOONS.values().iterator();
+		while (iterator.hasNext()) {
+			BalloonState state = iterator.next();
+			ServerPlayer target = server.getPlayerList().getPlayer(state.targetId);
+			Display.ItemDisplay display = findEntity(server, state.displayId, Display.ItemDisplay.class);
+			if (target == null || !target.isAlive() || display == null || !target.level().dimension().equals(state.dimension)) {
+				removeEntity(server, state.displayId);
+				iterator.remove();
+				continue;
+			}
+			balloonsByTarget.computeIfAbsent(state.targetId, ignored -> new ArrayList<>()).add(state);
+		}
+		for (Map.Entry<UUID, List<BalloonState>> entry : balloonsByTarget.entrySet()) {
+			ServerPlayer target = server.getPlayerList().getPlayer(entry.getKey());
+			if (target == null || !target.isAlive()) {
+				continue;
+			}
+			List<BalloonState> balloons = entry.getValue();
+			for (int index = 0; index < balloons.size(); index++) {
+				BalloonState state = balloons.get(index);
+				Display.ItemDisplay display = findEntity(server, state.displayId, Display.ItemDisplay.class);
+				if (display != null) {
+					updateBalloonDisplay(target, display, index, balloons.size(), state.createdAtTick, state.size);
+				}
+			}
+			// Every attached balloon contributes one Jump Boost level; the visual cap is already enforced on attachment.
+			int amplifier = Math.min(127, balloons.size() - 1);
+			target.addEffect(new MobEffectInstance(MobEffects.JUMP_BOOST, 28, amplifier, false, false, true));
+		}
+	}
+
+	private static void updateBalloonDisplay(ServerPlayer target, Display.ItemDisplay display, int index, int total, long createdAtTick, float size) {
+		long nowTick = target.level().getGameTime();
+		double angle = (Math.PI * 2.0D * index / Math.max(1, total)) + createdAtTick * 0.017D;
+		double radius = total == 1 ? 0.0D : 0.32D + (index % 2) * 0.07D;
+		double sway = Math.sin((nowTick + createdAtTick + index * 11L) * 0.10D) * 0.12D;
+		Vec3 position = target.position().add(
+				Math.cos(angle) * radius,
+				target.getBbHeight() + 1.1D + sway,
+				Math.sin(angle) * radius
+		);
+		display.setPos(position.x, position.y, position.z);
+		float wobble = (float) Math.sin((nowTick + index * 7L) * 0.085D) * 0.08F;
+		display.setTransformation(new Transformation(
+				new Vector3f(),
+				new Quaternionf().rotateZ(wobble),
+				new Vector3f(size, size, size),
+				new Quaternionf()
+		));
+		if (Math.floorMod(nowTick + index, 12L) == 0L && target.level() instanceof ServerLevel level) {
+			level.sendParticles(ParticleTypes.END_ROD, position.x, position.y - 0.55D, position.z, 1, 0.015D, 0.02D, 0.015D, 0.0D);
+		}
+	}
+
+	private static void tickFreeBalloons(MinecraftServer server) {
+		Iterator<FreeBalloonState> iterator = FREE_BALLOONS.values().iterator();
+		while (iterator.hasNext()) {
+			FreeBalloonState state = iterator.next();
+			ServerLevel level = server.getLevel(state.dimension);
+			Display.ItemDisplay display = findEntity(server, state.displayId, Display.ItemDisplay.class);
+			Interaction trigger = findEntity(server, state.triggerId, Interaction.class);
+			if (level == null || display == null || trigger == null || level.getGameTime() >= state.expiresAtTick) {
+				popFreeBalloon(server, state, false);
+				iterator.remove();
+				continue;
+			}
+			RandomSource random = level.getRandom();
+			state.velocity = state.velocity.scale(0.95D).add(
+					(random.nextDouble() - 0.5D) * 0.0022D,
+					0.005D + random.nextDouble() * 0.003D,
+					(random.nextDouble() - 0.5D) * 0.0022D
+			);
+			Vec3 horizontal = new Vec3(state.velocity.x, 0.0D, state.velocity.z);
+			if (horizontal.lengthSqr() > 0.075D * 0.075D) {
+				horizontal = horizontal.normalize().scale(0.075D);
+			}
+			state.velocity = new Vec3(horizontal.x, Math.min(0.115D, state.velocity.y), horizontal.z);
+			Vec3 next = state.position.add(state.velocity);
+			BlockHitResult hit = level.clip(new ClipContext(state.position, next, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, display));
+			if (hit.getType() != HitResult.Type.MISS) {
+				popFreeBalloon(server, state, true);
+				iterator.remove();
+				continue;
+			}
+			state.position = next;
+			display.setPos(next.x, next.y, next.z);
+			trigger.setPos(next.x, next.y - state.size * 0.38D, next.z);
+			float wobble = (float) Math.sin((level.getGameTime() + state.displayId.getLeastSignificantBits()) * 0.10D) * 0.13F;
+			display.setTransformation(new Transformation(
+					new Vector3f(),
+					new Quaternionf().rotateZ(wobble),
+					new Vector3f(state.size, state.size, state.size),
+					new Quaternionf()
+			));
+		}
+	}
+
+	private static void tickJackBoxes(MinecraftServer server) {
+		Iterator<JackBoxState> iterator = JACK_BOXES.values().iterator();
+		while (iterator.hasNext()) {
+			JackBoxState state = iterator.next();
+			ServerLevel level = server.getLevel(state.dimension);
+			Display.ItemDisplay box = findEntity(server, state.boxDisplayId, Display.ItemDisplay.class);
+			Display.ItemDisplay spring = findEntity(server, state.springDisplayId, Display.ItemDisplay.class);
+			Display.ItemDisplay clown = findEntity(server, state.clownDisplayId, Display.ItemDisplay.class);
+			if (level == null || box == null || spring == null || clown == null || level.getGameTime() >= state.createdAtTick + JACK_LIFETIME_TICKS) {
+				removeJackVisuals(server, state);
+				iterator.remove();
+				continue;
+			}
+			if (state.triggeredAtTick > 0L) {
+				long elapsed = level.getGameTime() - state.triggeredAtTick;
+				updateOpenedJackBox(state, box, spring, clown, elapsed);
+				if (elapsed >= JACK_VISIBLE_TICKS) {
+					removeJackVisuals(server, state);
+					iterator.remove();
+				}
+				continue;
+			}
+			ServerPlayer owner = server.getPlayerList().getPlayer(state.ownerId);
+			if (!state.armed && (owner == null || owner.level().dimension() != state.dimension || owner.position().distanceToSqr(state.position) >= JACK_ARM_DISTANCE_SQR)) {
+				state.armed = true;
+				level.playSound(null, BlockPos.containing(state.position), SoundEvents.NOTE_BLOCK_HAT.value(), SoundSource.BLOCKS, 0.5F, 1.4F);
+			}
+			if (state.armed) {
+				for (ServerPlayer candidate : level.players()) {
+					if (!candidate.isAlive() || candidate.isSpectator() || candidate.position().distanceToSqr(state.position) > JACK_TRIGGER_DISTANCE_SQR) {
+						continue;
+					}
+					triggerJackBox(level, state, candidate, clown);
+					break;
+				}
+			}
+		}
+	}
+
+	private static void triggerJackBox(ServerLevel level, JackBoxState state, ServerPlayer victim, Display.ItemDisplay clown) {
+		state.triggeredAtTick = level.getGameTime();
+		clown.setInvisible(false);
+		playPersonalPackSound(victim, JACK_SCREAM_SOUND, SoundSource.HOSTILE, state.position.add(0.0D, 0.9D, 0.0D), 1.15F, 1.0F);
+		level.playSound(null, BlockPos.containing(state.position), SoundEvents.SHULKER_BOX_OPEN, SoundSource.BLOCKS, 0.9F, 0.82F);
+		level.sendParticles(ParticleTypes.SOUL_FIRE_FLAME, state.position.x, state.position.y + 0.48D, state.position.z, 14, 0.24D, 0.34D, 0.24D, 0.02D);
+	}
+
+	private static void updateOpenedJackBox(JackBoxState state, Display.ItemDisplay box, Display.ItemDisplay spring, Display.ItemDisplay clown, long elapsed) {
+		float progress = Math.min(1.0F, elapsed / (float) JACK_OPEN_TICKS);
+		float eased = 1.0F - (float) Math.pow(1.0F - progress, 3.0F);
+		box.setTransformation(new Transformation(
+				new Vector3f(),
+				new Quaternionf().rotateX(-0.20F * eased),
+				new Vector3f(0.64F, 0.64F, 0.64F),
+				new Quaternionf()
+		));
+		spring.setPos(state.position.x, state.position.y + 0.14D + 0.52D * eased, state.position.z);
+		spring.setTransformation(new Transformation(
+				new Vector3f(),
+				new Quaternionf(),
+				new Vector3f(0.14F, 0.16F + 0.72F * eased, 0.14F),
+				new Quaternionf()
+		));
+		clown.setPos(state.position.x, state.position.y + 0.26D + 0.88D * eased, state.position.z);
+		clown.setTransformation(new Transformation(
+				new Vector3f(),
+				new Quaternionf().rotateZ((float) Math.sin(elapsed * 0.6D) * 0.18F),
+				new Vector3f(0.12F + 0.52F * eased, 0.12F + 0.52F * eased, 0.12F + 0.52F * eased),
+				new Quaternionf()
+		));
+	}
+
+	private static InteractionResult onAttackEntity(Player player, Level world, InteractionHand hand, Entity entity, net.minecraft.world.phys.EntityHitResult hitResult) {
+		if (!(player instanceof ServerPlayer) || world.isClientSide() || !(entity instanceof Interaction)) {
+			return InteractionResult.PASS;
+		}
+		for (BubbleState state : new ArrayList<>(BUBBLES.values())) {
+			if (!state.triggerId.equals(entity.getUUID())) {
+				continue;
+			}
+			MinecraftServer server = world.getServer();
+			if (server != null) {
+				popBubble(server, state, true);
+			}
+			BUBBLES.remove(state.displayId);
+			return InteractionResult.SUCCESS;
+		}
+		for (FreeBalloonState state : new ArrayList<>(FREE_BALLOONS.values())) {
+			if (!state.triggerId.equals(entity.getUUID())) {
+				continue;
+			}
+			MinecraftServer server = world.getServer();
+			if (server != null) {
+				popFreeBalloon(server, state, true);
+			}
+			FREE_BALLOONS.remove(state.displayId);
+			return InteractionResult.SUCCESS;
+		}
+		return InteractionResult.PASS;
+	}
+
+	private static Display.ItemDisplay createDisplay(
+			ServerLevel level,
+			ItemStack stack,
+			Vec3 position,
+			Display.BillboardConstraints billboard,
+			float scale
+	) {
+		if (level == null || stack == null || stack.isEmpty() || position == null) {
+			return null;
+		}
+		Display.ItemDisplay display = new Display.ItemDisplay(EntityType.ITEM_DISPLAY, level);
+		display.setNoGravity(true);
+		display.noPhysics = true;
+		display.setInvulnerable(true);
+		display.setSilent(true);
+		display.setShadowRadius(0.0F);
+		display.setShadowStrength(0.0F);
+		display.setViewRange(64.0F);
+		display.setBillboardConstraints(billboard);
+		display.setItemTransform(ItemDisplayContext.FIXED);
+		display.setTransformationInterpolationDelay(0);
+		display.setTransformationInterpolationDuration(2);
+		display.setPosRotInterpolationDuration(2);
+		display.setTransformation(new Transformation(new Vector3f(), new Quaternionf(), new Vector3f(scale, scale, scale), new Quaternionf()));
+		display.setItemStack(stack);
+		ItemDisplayHitboxHelper.clear(display);
+		display.setPos(position.x, position.y, position.z);
+		level.addFreshEntity(display);
+		return display;
+	}
+
+	private static void popBubble(MinecraftServer server, BubbleState state, boolean visible) {
+		if (state == null) {
+			return;
+		}
+		ServerLevel level = server.getLevel(state.dimension);
+		if (visible && level != null) {
+			Vec3 position = state.position;
+			level.sendParticles(ParticleTypes.BUBBLE_POP, position.x, position.y, position.z, 14, 0.18D, 0.18D, 0.18D, 0.05D);
+			level.playSound(null, BlockPos.containing(position), SoundEvents.BUBBLE_COLUMN_BUBBLE_POP, SoundSource.PLAYERS, 0.62F, 1.12F);
+		}
+		removeEntity(server, state.displayId);
+		removeEntity(server, state.triggerId);
+	}
+
+	private static void popFreeBalloon(MinecraftServer server, FreeBalloonState state, boolean visible) {
+		if (state == null) {
+			return;
+		}
+		ServerLevel level = server.getLevel(state.dimension);
+		if (visible && level != null) {
+			Vec3 position = state.position;
+			level.sendParticles(ParticleTypes.FIREWORK, position.x, position.y, position.z, 18, 0.18D, 0.18D, 0.18D, 0.06D);
+			level.sendParticles(ParticleTypes.POOF, position.x, position.y, position.z, 7, 0.12D, 0.12D, 0.12D, 0.02D);
+			playNearbyPackSound(level, position, CONFETTI_SOUND, SoundSource.PLAYERS, 0.78F, 0.96F + level.getRandom().nextFloat() * 0.10F);
+		}
+		removeEntity(server, state.displayId);
+		removeEntity(server, state.triggerId);
+	}
+
+	private static Vec3 newRandomBubbleDirection(RandomSource random) {
+		double angle = random.nextDouble() * Math.PI * 2.0D;
+		return new Vec3(
+				Math.cos(angle),
+				(random.nextDouble() - 0.5D) * 1.25D,
+				Math.sin(angle)
+		).normalize();
+	}
+
+	private static void removeBalloons(MinecraftServer server, java.util.function.Predicate<BalloonState> predicate) {
+		Iterator<BalloonState> iterator = BALLOONS.values().iterator();
+		while (iterator.hasNext()) {
+			BalloonState state = iterator.next();
+			if (predicate.test(state)) {
+				removeEntity(server, state.displayId);
+				iterator.remove();
+			}
+		}
+	}
+
+	private static void removeFreeBalloons(MinecraftServer server, java.util.function.Predicate<FreeBalloonState> predicate) {
+		Iterator<FreeBalloonState> iterator = FREE_BALLOONS.values().iterator();
+		while (iterator.hasNext()) {
+			FreeBalloonState state = iterator.next();
+			if (predicate.test(state)) {
+				popFreeBalloon(server, state, false);
+				iterator.remove();
+			}
+		}
+	}
+
+	private static void removeJackBoxes(MinecraftServer server, java.util.function.Predicate<JackBoxState> predicate) {
+		Iterator<JackBoxState> iterator = JACK_BOXES.values().iterator();
+		while (iterator.hasNext()) {
+			JackBoxState state = iterator.next();
+			if (predicate.test(state)) {
+				removeJackVisuals(server, state);
+				iterator.remove();
+			}
+		}
+	}
+
+	private static void removeJackVisuals(MinecraftServer server, JackBoxState state) {
+		removeEntity(server, state.boxDisplayId);
+		removeEntity(server, state.springDisplayId);
+		removeEntity(server, state.clownDisplayId);
+	}
+
+	private static void removeEntity(MinecraftServer server, UUID id) {
+		Entity entity = findEntity(server, id, Entity.class);
+		if (entity != null) {
+			entity.discard();
+		}
+	}
+
+	private static <T extends Entity> T findEntity(MinecraftServer server, UUID id, Class<T> type) {
+		if (server == null || id == null) {
+			return null;
+		}
+		for (ServerLevel level : server.getAllLevels()) {
+			Entity entity = level.getEntity(id);
+			if (type.isInstance(entity)) {
+				return type.cast(entity);
+			}
+		}
+		return null;
+	}
+
+	private static void playNearbyPackSound(ServerLevel level, Vec3 position, Holder<SoundEvent> sound, SoundSource source, float volume, float pitch) {
+		long seed = level.getRandom().nextLong();
+		for (ServerPlayer player : level.players()) {
+			if (player.distanceToSqr(position) > 48.0D * 48.0D) {
+				continue;
+			}
+			if (PolymerResourcePackUtils.hasMainPack(player)) {
+				player.connection.send(new ClientboundSoundPacket(sound, source, position.x, position.y, position.z, volume, pitch, seed));
+			} else {
+				player.connection.send(new ClientboundSoundPacket(
+						BuiltInRegistries.SOUND_EVENT.wrapAsHolder(SoundEvents.FIREWORK_ROCKET_LARGE_BLAST),
+						source,
+						position.x,
+						position.y,
+						position.z,
+						volume,
+						pitch,
+						seed
+				));
+			}
+		}
+	}
+
+	private static void playPersonalPackSound(ServerPlayer player, Holder<SoundEvent> sound, SoundSource source, Vec3 position, float volume, float pitch) {
+		if (player == null || player.connection == null) {
+			return;
+		}
+		Holder<SoundEvent> selected = PolymerResourcePackUtils.hasMainPack(player)
+				? sound
+				: BuiltInRegistries.SOUND_EVENT.wrapAsHolder(SoundEvents.WARDEN_ROAR);
+		player.connection.send(new ClientboundSoundPacket(
+				selected,
+				source,
+				position.x,
+				position.y,
+				position.z,
+				volume,
+				pitch,
+				player.level().getRandom().nextLong()
+		));
+	}
+
+	private static final class BubbleState {
+		private final ResourceKey<Level> dimension;
+		private final UUID casterId;
+		private final UUID displayId;
+		private final UUID triggerId;
+		private final long expiresAtTick;
+		private Vec3 position;
+		private Vec3 velocity;
+		private Vec3 steering;
+		private double targetSpeed;
+		private long nextDirectionChangeTick;
+
+		private BubbleState(
+				ResourceKey<Level> dimension,
+				UUID casterId,
+				UUID displayId,
+				UUID triggerId,
+				Vec3 position,
+				Vec3 velocity,
+				Vec3 steering,
+				long nextDirectionChangeTick,
+				long expiresAtTick
+		) {
+			this.dimension = dimension;
+			this.casterId = casterId;
+			this.displayId = displayId;
+			this.triggerId = triggerId;
+			this.position = position;
+			this.velocity = velocity;
+			this.steering = steering;
+			this.targetSpeed = Math.min(0.13D, velocity.length());
+			this.nextDirectionChangeTick = nextDirectionChangeTick;
+			this.expiresAtTick = expiresAtTick;
+		}
+	}
+
+	private static final class BalloonState {
+		private final ResourceKey<Level> dimension;
+		private final UUID ownerId;
+		private final UUID targetId;
+		private final UUID displayId;
+		private final long createdAtTick;
+		private final float size;
+
+		private BalloonState(ResourceKey<Level> dimension, UUID ownerId, UUID targetId, UUID displayId, long createdAtTick, float size) {
+			this.dimension = dimension;
+			this.ownerId = ownerId;
+			this.targetId = targetId;
+			this.displayId = displayId;
+			this.createdAtTick = createdAtTick;
+			this.size = size;
+		}
+	}
+
+	private static final class FreeBalloonState {
+		private final ResourceKey<Level> dimension;
+		private final UUID ownerId;
+		private final UUID displayId;
+		private final UUID triggerId;
+		private final float size;
+		private final long expiresAtTick;
+		private Vec3 position;
+		private Vec3 velocity;
+
+		private FreeBalloonState(
+				ResourceKey<Level> dimension,
+				UUID ownerId,
+				UUID displayId,
+				UUID triggerId,
+				Vec3 position,
+				Vec3 velocity,
+				float size,
+				long expiresAtTick
+		) {
+			this.dimension = dimension;
+			this.ownerId = ownerId;
+			this.displayId = displayId;
+			this.triggerId = triggerId;
+			this.position = position;
+			this.velocity = velocity;
+			this.size = size;
+			this.expiresAtTick = expiresAtTick;
+		}
+	}
+
+	private static final class JackBoxState {
+		private final ResourceKey<Level> dimension;
+		private final UUID ownerId;
+		private final Vec3 position;
+		private final UUID boxDisplayId;
+		private final UUID springDisplayId;
+		private final UUID clownDisplayId;
+		private final long createdAtTick;
+		private boolean armed;
+		private long triggeredAtTick;
+
+		private JackBoxState(ResourceKey<Level> dimension, UUID ownerId, Vec3 position, UUID boxDisplayId, UUID springDisplayId, UUID clownDisplayId, long createdAtTick) {
+			this.dimension = dimension;
+			this.ownerId = ownerId;
+			this.position = position;
+			this.boxDisplayId = boxDisplayId;
+			this.springDisplayId = springDisplayId;
+			this.clownDisplayId = clownDisplayId;
+			this.createdAtTick = createdAtTick;
+		}
+	}
+}
