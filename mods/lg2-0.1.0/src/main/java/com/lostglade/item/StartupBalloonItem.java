@@ -16,9 +16,10 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.context.UseOnContext;
+import net.minecraft.world.level.Level;
 import xyz.nucleoid.packettweaker.PacketContext;
 
-/** Education Edition-style balloon that attaches to the player it is used on. */
+/** Education Edition-style balloon that can be worn on the head, attached to a player, or released. */
 public final class StartupBalloonItem extends SimplePolymerItem {
 	private static final Identifier MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "startup_balloon");
 
@@ -33,9 +34,24 @@ public final class StartupBalloonItem extends SimplePolymerItem {
 
 	@Override
 	public void modifyBasePolymerItemStack(ItemStack out, ItemStack original, PacketContext context) {
+		// The physical stack is kept in the head slot server-side; only the floating display is sent to clients.
 		if (!PolymerResourcePackUtils.hasMainPack(context)) {
 			out.set(DataComponents.CUSTOM_NAME, Component.literal("Воздушный шарик").withStyle(style -> style.withItalic(false)));
 		}
+	}
+
+	@Override
+	public InteractionResult use(Level level, Player user, InteractionHand hand) {
+		if (!(user instanceof ServerPlayer owner) || level.isClientSide()) {
+			return InteractionResult.PASS;
+		}
+		if (!StartupRaceAbilitySystem.attachBalloon(owner, owner)) {
+			return InteractionResult.FAIL;
+		}
+		if (!owner.getAbilities().instabuild) {
+			owner.getItemInHand(hand).shrink(1);
+		}
+		return InteractionResult.SUCCESS;
 	}
 
 	@Override

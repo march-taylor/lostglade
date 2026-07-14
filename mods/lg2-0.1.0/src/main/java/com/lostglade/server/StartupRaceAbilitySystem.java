@@ -9,9 +9,11 @@ import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.event.player.AttackEntityCallback;
+import net.fabricmc.fabric.api.event.player.UseEntityCallback;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.Holder;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.particles.DustParticleOptions;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -32,6 +34,7 @@ import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.Display;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.Interaction;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.player.Player;
@@ -68,8 +71,8 @@ public final class StartupRaceAbilitySystem {
 	private static final int JACK_LIFETIME_TICKS = 20 * 75;
 	private static final int JACK_OPEN_TICKS = 12;
 	private static final int JACK_VISIBLE_TICKS = 36;
-	private static final int MAX_BALLOONS_PER_PLAYER = 8;
-	private static final double BUBBLE_HIT_RADIUS = 0.34D;
+	private static final int[] BUBBLE_MODEL_SIZES = {4, 6, 8};
+	private static final float BUBBLE_DISPLAY_SCALE = 1.10F;
 	private static final double JACK_ARM_DISTANCE_SQR = 3.5D * 3.5D;
 	private static final double JACK_TRIGGER_DISTANCE_SQR = 1.45D * 1.45D;
 	private static final Map<UUID, BubbleState> BUBBLES = new HashMap<>();
@@ -87,6 +90,7 @@ public final class StartupRaceAbilitySystem {
 		JACK_BOXES.clear();
 		ServerTickEvents.END_SERVER_TICK.register(StartupRaceAbilitySystem::tick);
 		AttackEntityCallback.EVENT.register(StartupRaceAbilitySystem::onAttackEntity);
+		UseEntityCallback.EVENT.register(StartupRaceAbilitySystem::onUseEntity);
 		ServerLifecycleEvents.SERVER_STOPPING.register(StartupRaceAbilitySystem::clearSeasonStartState);
 	}
 
@@ -108,30 +112,41 @@ public final class StartupRaceAbilitySystem {
 				|| !(target.level() instanceof ServerLevel level)) {
 			return false;
 		}
-		int attached = 0;
-		for (BalloonState state : BALLOONS.values()) {
-			if (state.targetId.equals(target.getUUID())) {
-				attached++;
-			}
-		}
-		if (attached >= MAX_BALLOONS_PER_PLAYER) {
-			owner.displayClientMessage(net.minecraft.network.chat.Component.literal("На этом игроке уже слишком много шариков."), true);
+		ItemStack headStack = target.getItemBySlot(EquipmentSlot.HEAD);
+		if (!headStack.isEmpty() && !headStack.is(ModItems.STARTUP_BALLOON)) {
+			owner.displayClientMessage(net.minecraft.network.chat.Component.literal("Сначала нужно снять предмет с головы."), true);
 			return false;
 		}
-		float size = 0.72F + level.getRandom().nextFloat() * 0.62F;
-		Display.ItemDisplay display = createDisplay(
-				level,
-				new ItemStack(ModItems.STARTUP_BALLOON),
-				target.position().add(0.0D, target.getBbHeight() + 1.0D, 0.0D),
-				Display.BillboardConstraints.CENTER,
-				size
-		);
-		if (display == null) {
+		if (headStack.isEmpty()) {
+			headStack = new ItemStack(ModItems.STARTUP_BALLOON);
+		} else if (headStack.getCount() >= headStack.getMaxStackSize()) {
+			owner.displayClientMessage(net.minecraft.network.chat.Component.literal("На голове уже слишком много шариков."), true);
+			return false;
+		} else {
+			headStack.grow(1);
+		}
+		target.setItemSlot(EquipmentSlot.HEAD, headStack);
+		ensureAttachedBalloonVisuals(level.getServer(), target);
+		return true;
+	}
+
+	/** Removes one physical balloon from a player's head and returns it to the player who removed it. */
+	public static boolean removeEquippedBalloon(ServerPlayer actor, ServerPlayer target) {
+		if (actor == null || target == null || !(target.level() instanceof ServerLevel level)) {
 			return false;
 		}
-		BalloonState state = new BalloonState(level.dimension(), owner.getUUID(), target.getUUID(), display.getUUID(), level.getGameTime(), size);
-		BALLOONS.put(display.getUUID(), state);
-		level.playSound(null, target.blockPosition(), SoundEvents.ALLAY_ITEM_GIVEN, SoundSource.PLAYERS, 0.7F, 1.18F);
+		ItemStack headStack = target.getItemBySlot(EquipmentSlot.HEAD);
+		if (!headStack.is(ModItems.STARTUP_BALLOON)) {
+			return false;
+		}
+		headStack.shrink(1);
+		target.setItemSlot(EquipmentSlot.HEAD, headStack);
+		ItemStack returned = new ItemStack(ModItems.STARTUP_BALLOON);
+		if (!actor.getInventory().add(returned)) {
+			actor.drop(returned, false);
+		}
+		ensureAttachedBalloonVisuals(level.getServer(), target);
+		level.playSound(null, target.blockPosition(), SoundEvents.LEAD_UNTIED, SoundSource.PLAYERS, 0.55F, 1.22F);
 		return true;
 	}
 
@@ -150,7 +165,7 @@ public final class StartupRaceAbilitySystem {
 				level,
 				new ItemStack(ModItems.STARTUP_BALLOON),
 				position,
-				Display.BillboardConstraints.CENTER,
+				Display.BillboardConstraints.FIXED,
 				size
 		);
 		if (display == null) {
@@ -182,7 +197,6 @@ public final class StartupRaceAbilitySystem {
 				level.getGameTime() + FREE_BALLOON_LIFETIME_TICKS
 		);
 		FREE_BALLOONS.put(display.getUUID(), state);
-		level.playSound(null, clickedPos, SoundEvents.ALLAY_ITEM_GIVEN, SoundSource.PLAYERS, 0.55F, 1.24F);
 		return true;
 	}
 
@@ -209,6 +223,7 @@ public final class StartupRaceAbilitySystem {
 		}
 		for (BalloonState state : BALLOONS.values()) {
 			removeEntity(server, state.displayId);
+			removeEntity(server, state.triggerId);
 		}
 		for (FreeBalloonState state : FREE_BALLOONS.values()) {
 			removeEntity(server, state.displayId);
@@ -231,12 +246,14 @@ public final class StartupRaceAbilitySystem {
 		}
 		direction = direction.normalize();
 		Vec3 position = player.getEyePosition().add(direction.scale(0.74D));
+		int modelSize = BUBBLE_MODEL_SIZES[random.nextInt(BUBBLE_MODEL_SIZES.length)];
+		float hitRadius = Math.max(0.16F, modelSize / 16.0F * BUBBLE_DISPLAY_SCALE);
 		Display.ItemDisplay display = createDisplay(
 				level,
-				new ItemStack(Items.HEART_OF_THE_SEA),
+				createSoapBubbleDisplayStack(modelSize),
 				position,
-				Display.BillboardConstraints.CENTER,
-				0.58F
+				Display.BillboardConstraints.FIXED,
+				BUBBLE_DISPLAY_SCALE
 		);
 		if (display == null) {
 			return false;
@@ -247,9 +264,9 @@ public final class StartupRaceAbilitySystem {
 		trigger.setSilent(true);
 		trigger.setInvisible(true);
 		trigger.setResponse(false);
-		trigger.setWidth(0.72F);
-		trigger.setHeight(0.72F);
-		trigger.setPos(position.x, position.y - 0.36D, position.z);
+		trigger.setWidth(hitRadius * 2.0F);
+		trigger.setHeight(hitRadius * 2.0F);
+		trigger.setPos(position.x, position.y - hitRadius, position.z);
 		level.addFreshEntity(trigger);
 		BubbleState state = new BubbleState(
 				level.dimension(),
@@ -259,6 +276,7 @@ public final class StartupRaceAbilitySystem {
 				position,
 				newRandomBubbleDirection(random).scale(0.045D + random.nextDouble() * 0.055D),
 				newRandomBubbleDirection(random),
+				hitRadius,
 				level.getGameTime() + 8L + random.nextInt(18),
 				level.getGameTime() + BUBBLE_LIFETIME_TICKS
 		);
@@ -302,7 +320,6 @@ public final class StartupRaceAbilitySystem {
 		if (!player.getInventory().add(balloon)) {
 			player.drop(balloon, false);
 		}
-		player.level().playSound(null, player.blockPosition(), SoundEvents.ALLAY_ITEM_GIVEN, SoundSource.PLAYERS, 0.55F, 1.12F);
 		return true;
 	}
 
@@ -355,6 +372,7 @@ public final class StartupRaceAbilitySystem {
 		if (server == null) {
 			return;
 		}
+		syncEquippedBalloons(server);
 		tickBubbles(server);
 		tickBalloons(server);
 		tickFreeBalloons(server);
@@ -389,7 +407,7 @@ public final class StartupRaceAbilitySystem {
 			boolean hitBlock = hit.getType() != HitResult.Type.MISS;
 			boolean hitEntity = !level.getEntities(
 					display,
-					AABB.ofSize(next, BUBBLE_HIT_RADIUS * 2.0D, BUBBLE_HIT_RADIUS * 2.0D, BUBBLE_HIT_RADIUS * 2.0D),
+					AABB.ofSize(next, state.hitRadius * 2.0D, state.hitRadius * 2.0D, state.hitRadius * 2.0D),
 					entity -> entity != trigger
 							&& !entity.getUUID().equals(state.casterId)
 							&& (entity instanceof Player || entity instanceof ItemEntity || entity.isPickable())
@@ -401,7 +419,7 @@ public final class StartupRaceAbilitySystem {
 			}
 			state.position = next;
 			display.setPos(next.x, next.y, next.z);
-			trigger.setPos(next.x, next.y - 0.36D, next.z);
+			trigger.setPos(next.x, next.y - state.hitRadius, next.z);
 			if (Math.floorMod(nowTick, 3L) == 0L) {
 				level.sendParticles(ParticleTypes.BUBBLE, next.x, next.y, next.z, 1, 0.05D, 0.05D, 0.05D, 0.0D);
 			}
@@ -415,8 +433,10 @@ public final class StartupRaceAbilitySystem {
 			BalloonState state = iterator.next();
 			ServerPlayer target = server.getPlayerList().getPlayer(state.targetId);
 			Display.ItemDisplay display = findEntity(server, state.displayId, Display.ItemDisplay.class);
-			if (target == null || !target.isAlive() || display == null || !target.level().dimension().equals(state.dimension)) {
+			Interaction trigger = findEntity(server, state.triggerId, Interaction.class);
+			if (target == null || !target.isAlive() || display == null || trigger == null || !target.level().dimension().equals(state.dimension)) {
 				removeEntity(server, state.displayId);
+				removeEntity(server, state.triggerId);
 				iterator.remove();
 				continue;
 			}
@@ -431,27 +451,108 @@ public final class StartupRaceAbilitySystem {
 			for (int index = 0; index < balloons.size(); index++) {
 				BalloonState state = balloons.get(index);
 				Display.ItemDisplay display = findEntity(server, state.displayId, Display.ItemDisplay.class);
-				if (display != null) {
-					updateBalloonDisplay(target, display, index, balloons.size(), state.createdAtTick, state.size);
+				Interaction trigger = findEntity(server, state.triggerId, Interaction.class);
+				if (display != null && trigger != null) {
+					updateBalloonDisplay(target, display, trigger, index, balloons.size(), state.createdAtTick, state.size);
 				}
 			}
-			// Every attached balloon contributes one Jump Boost level; the visual cap is already enforced on attachment.
+			// Every physical balloon in the head slot contributes one Jump Boost level.
 			int amplifier = Math.min(127, balloons.size() - 1);
 			target.addEffect(new MobEffectInstance(MobEffects.JUMP_BOOST, 28, amplifier, false, false, true));
 		}
 	}
 
-	private static void updateBalloonDisplay(ServerPlayer target, Display.ItemDisplay display, int index, int total, long createdAtTick, float size) {
+	private static void syncEquippedBalloons(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			if (player.isAlive() && player.level() instanceof ServerLevel) {
+				ensureAttachedBalloonVisuals(server, player);
+			}
+		}
+	}
+
+	private static void ensureAttachedBalloonVisuals(MinecraftServer server, ServerPlayer target) {
+		if (server == null || target == null || !(target.level() instanceof ServerLevel level)) {
+			return;
+		}
+		ItemStack headStack = target.getItemBySlot(EquipmentSlot.HEAD);
+		int expected = headStack.is(ModItems.STARTUP_BALLOON) ? headStack.getCount() : 0;
+		List<BalloonState> current = new ArrayList<>();
+		for (BalloonState state : BALLOONS.values()) {
+			if (state.targetId.equals(target.getUUID())) {
+				current.add(state);
+			}
+		}
+		while (current.size() > expected) {
+			BalloonState removed = current.remove(current.size() - 1);
+			BALLOONS.remove(removed.displayId);
+			removeEntity(server, removed.displayId);
+			removeEntity(server, removed.triggerId);
+		}
+		while (current.size() < expected) {
+			BalloonState created = createAttachedBalloon(level, target);
+			if (created == null) {
+				break;
+			}
+			BALLOONS.put(created.displayId, created);
+			current.add(created);
+		}
+	}
+
+	private static BalloonState createAttachedBalloon(ServerLevel level, ServerPlayer target) {
+		if (level == null || target == null) {
+			return null;
+		}
+		float size = 0.72F + level.getRandom().nextFloat() * 0.62F;
+		Vec3 position = target.position().add(0.0D, target.getBbHeight() + 1.0D, 0.0D);
+		Display.ItemDisplay display = createDisplay(
+				level,
+				new ItemStack(ModItems.STARTUP_BALLOON),
+				position,
+				Display.BillboardConstraints.FIXED,
+				size
+		);
+		if (display == null) {
+			return null;
+		}
+		Interaction trigger = new Interaction(EntityType.INTERACTION, level);
+		trigger.setNoGravity(true);
+		trigger.noPhysics = true;
+		trigger.setSilent(true);
+		trigger.setInvisible(true);
+		trigger.setResponse(false);
+		trigger.setWidth(Math.max(0.35F, size * 0.78F));
+		trigger.setHeight(Math.max(0.35F, size * 0.78F));
+		trigger.setPos(position.x, position.y - size * 0.38D, position.z);
+		level.addFreshEntity(trigger);
+		return new BalloonState(
+				level.dimension(),
+				target.getUUID(),
+				target.getUUID(),
+				display.getUUID(),
+				trigger.getUUID(),
+				level.getGameTime(),
+				size
+		);
+	}
+
+	private static void updateBalloonDisplay(ServerPlayer target, Display.ItemDisplay display, Interaction trigger, int index, int total, long createdAtTick, float size) {
 		long nowTick = target.level().getGameTime();
-		double angle = (Math.PI * 2.0D * index / Math.max(1, total)) + createdAtTick * 0.017D;
-		double radius = total == 1 ? 0.0D : 0.32D + (index % 2) * 0.07D;
+		int ring = index / 8;
+		int ringStart = ring * 8;
+		int ringSize = Math.min(8, total - ringStart);
+		double angle = (Math.PI * 2.0D * (index - ringStart) / Math.max(1, ringSize)) + createdAtTick * 0.017D;
+		double radius = total == 1 ? 0.0D : 0.24D + ring * 0.17D;
 		double sway = Math.sin((nowTick + createdAtTick + index * 11L) * 0.10D) * 0.12D;
 		Vec3 position = target.position().add(
 				Math.cos(angle) * radius,
-				target.getBbHeight() + 1.1D + sway,
+				target.getBbHeight() + 1.0D + ring * 0.10D + sway,
 				Math.sin(angle) * radius
 		);
 		display.setPos(position.x, position.y, position.z);
+		trigger.setPos(position.x, position.y - size * 0.38D, position.z);
 		float wobble = (float) Math.sin((nowTick + index * 7L) * 0.085D) * 0.08F;
 		display.setTransformation(new Transformation(
 				new Vector3f(),
@@ -459,9 +560,6 @@ public final class StartupRaceAbilitySystem {
 				new Vector3f(size, size, size),
 				new Quaternionf()
 		));
-		if (Math.floorMod(nowTick + index, 12L) == 0L && target.level() instanceof ServerLevel level) {
-			level.sendParticles(ParticleTypes.END_ROD, position.x, position.y - 0.55D, position.z, 1, 0.015D, 0.02D, 0.015D, 0.0D);
-		}
 	}
 
 	private static void tickFreeBalloons(MinecraftServer server) {
@@ -605,7 +703,40 @@ public final class StartupRaceAbilitySystem {
 			FREE_BALLOONS.remove(state.displayId);
 			return InteractionResult.SUCCESS;
 		}
+		for (BalloonState state : new ArrayList<>(BALLOONS.values())) {
+			if (!state.triggerId.equals(entity.getUUID())) {
+				continue;
+			}
+			MinecraftServer server = world.getServer();
+			if (server != null) {
+				popAttachedBalloon(server, state);
+			}
+			return InteractionResult.SUCCESS;
+		}
 		return InteractionResult.PASS;
+	}
+
+	private static InteractionResult onUseEntity(Player player, Level world, InteractionHand hand, Entity entity, net.minecraft.world.phys.EntityHitResult hitResult) {
+		if (!(player instanceof ServerPlayer actor) || world.isClientSide() || !(entity instanceof Interaction)) {
+			return InteractionResult.PASS;
+		}
+		for (BalloonState state : new ArrayList<>(BALLOONS.values())) {
+			if (!state.triggerId.equals(entity.getUUID())) {
+				continue;
+			}
+			MinecraftServer server = world.getServer();
+			ServerPlayer target = server == null ? null : server.getPlayerList().getPlayer(state.targetId);
+			return target != null && removeEquippedBalloon(actor, target)
+					? InteractionResult.SUCCESS
+					: InteractionResult.FAIL;
+		}
+		return InteractionResult.PASS;
+	}
+
+	private static ItemStack createSoapBubbleDisplayStack(int size) {
+		ItemStack stack = new ItemStack(Items.HEART_OF_THE_SEA);
+		stack.set(DataComponents.ITEM_MODEL, Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "startup_bubble_" + size));
+		return stack;
 	}
 
 	private static Display.ItemDisplay createDisplay(
@@ -668,6 +799,35 @@ public final class StartupRaceAbilitySystem {
 		removeEntity(server, state.triggerId);
 	}
 
+	/** Pops one specific visible balloon and consumes its matching head-slot stack entry. */
+	private static void popAttachedBalloon(MinecraftServer server, BalloonState state) {
+		if (server == null || state == null) {
+			return;
+		}
+		ServerLevel level = server.getLevel(state.dimension);
+		Display.ItemDisplay display = findEntity(server, state.displayId, Display.ItemDisplay.class);
+		Vec3 position = display == null ? null : display.position();
+		ServerPlayer target = server.getPlayerList().getPlayer(state.targetId);
+		if (target != null) {
+			ItemStack headStack = target.getItemBySlot(EquipmentSlot.HEAD);
+			if (headStack.is(ModItems.STARTUP_BALLOON)) {
+				headStack.shrink(1);
+				target.setItemSlot(EquipmentSlot.HEAD, headStack);
+			}
+		}
+		BALLOONS.remove(state.displayId);
+		removeEntity(server, state.displayId);
+		removeEntity(server, state.triggerId);
+		if (level != null && position != null) {
+			level.sendParticles(ParticleTypes.FIREWORK, position.x, position.y, position.z, 14, 0.16D, 0.16D, 0.16D, 0.04D);
+			level.sendParticles(ParticleTypes.POOF, position.x, position.y, position.z, 6, 0.12D, 0.12D, 0.12D, 0.02D);
+			playNearbyPackSound(level, position, CONFETTI_SOUND, SoundSource.PLAYERS, 0.72F, 1.0F);
+		}
+		if (target != null) {
+			ensureAttachedBalloonVisuals(server, target);
+		}
+	}
+
 	private static Vec3 newRandomBubbleDirection(RandomSource random) {
 		double angle = random.nextDouble() * Math.PI * 2.0D;
 		return new Vec3(
@@ -683,6 +843,7 @@ public final class StartupRaceAbilitySystem {
 			BalloonState state = iterator.next();
 			if (predicate.test(state)) {
 				removeEntity(server, state.displayId);
+				removeEntity(server, state.triggerId);
 				iterator.remove();
 			}
 		}
@@ -789,6 +950,7 @@ public final class StartupRaceAbilitySystem {
 		private Vec3 steering;
 		private double targetSpeed;
 		private long nextDirectionChangeTick;
+		private final float hitRadius;
 
 		private BubbleState(
 				ResourceKey<Level> dimension,
@@ -798,6 +960,7 @@ public final class StartupRaceAbilitySystem {
 				Vec3 position,
 				Vec3 velocity,
 				Vec3 steering,
+				float hitRadius,
 				long nextDirectionChangeTick,
 				long expiresAtTick
 		) {
@@ -808,6 +971,7 @@ public final class StartupRaceAbilitySystem {
 			this.position = position;
 			this.velocity = velocity;
 			this.steering = steering;
+			this.hitRadius = hitRadius;
 			this.targetSpeed = Math.min(0.13D, velocity.length());
 			this.nextDirectionChangeTick = nextDirectionChangeTick;
 			this.expiresAtTick = expiresAtTick;
@@ -819,14 +983,16 @@ public final class StartupRaceAbilitySystem {
 		private final UUID ownerId;
 		private final UUID targetId;
 		private final UUID displayId;
+		private final UUID triggerId;
 		private final long createdAtTick;
 		private final float size;
 
-		private BalloonState(ResourceKey<Level> dimension, UUID ownerId, UUID targetId, UUID displayId, long createdAtTick, float size) {
+		private BalloonState(ResourceKey<Level> dimension, UUID ownerId, UUID targetId, UUID displayId, UUID triggerId, long createdAtTick, float size) {
 			this.dimension = dimension;
 			this.ownerId = ownerId;
 			this.targetId = targetId;
 			this.displayId = displayId;
+			this.triggerId = triggerId;
 			this.createdAtTick = createdAtTick;
 			this.size = size;
 		}

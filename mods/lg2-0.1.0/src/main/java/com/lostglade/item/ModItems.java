@@ -423,7 +423,7 @@ public final class ModItems {
 			new StartupBalloonItem(
 					new Item.Properties()
 							.setId(STARTUP_BALLOON_KEY)
-							.stacksTo(16)
+							.stacksTo(64)
 							.rarity(Rarity.UNCOMMON)
 			)
 	);

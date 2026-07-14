@@ -1,0 +1,25 @@
+{
+  "format_version": "1.21.11",
+  "gui_light": "front",
+  "texture_size": [32, 16],
+  "textures": {
+    "bubble": "lg2:item/startup_bubbles",
+    "particle": "lg2:item/startup_bubbles"
+  },
+  "elements": [
+    {
+      "name": "bubble_6",
+      "from": [5, 5, 5],
+      "to": [11, 11, 11],
+      "faces": {
+        "north": {"uv": [9, 5, 15, 11], "texture": "#bubble"},
+        "east": {"uv": [9, 5, 15, 11], "texture": "#bubble"},
+        "south": {"uv": [9, 5, 15, 11], "texture": "#bubble"},
+        "west": {"uv": [9, 5, 15, 11], "texture": "#bubble"},
+        "up": {"uv": [9, 5, 15, 11], "texture": "#bubble"},
+        "down": {"uv": [9, 5, 15, 11], "texture": "#bubble"}
+      }
+    }
+  ],
+  "display": {"fixed": {"rotation": [0, 180, 0], "scale": [1, 1, 1]}}
+}
