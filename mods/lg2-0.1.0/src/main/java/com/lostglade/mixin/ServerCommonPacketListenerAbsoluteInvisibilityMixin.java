@@ -166,8 +166,22 @@ public abstract class ServerCommonPacketListenerAbsoluteInvisibilityMixin {
 			return;
 		}
 
-		if (com.lostglade.server.SeasonStartSystem.shouldSuppressOutgoingPacket(receiver, packet)) {
+		Packet<?> seasonFilteredPacket = com.lostglade.server.SeasonStartSystem.filterOutgoingPacket(receiver, packet);
+		if (seasonFilteredPacket != packet) {
 			ci.cancel();
+			if (seasonFilteredPacket == null) {
+				return;
+			}
+			LG2_ABSOLUTE_INVISIBILITY_BYPASS.set(true);
+			try {
+				if (listener == null) {
+					gameListener.send(seasonFilteredPacket);
+				} else {
+					gameListener.send(seasonFilteredPacket, listener);
+				}
+			} finally {
+				LG2_ABSOLUTE_INVISIBILITY_BYPASS.remove();
+			}
 			return;
 		}
 

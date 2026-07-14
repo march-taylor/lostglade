@@ -1141,6 +1141,13 @@
       "outputPath": "config/lg2-season-start/voice/shared_launch_eighty.wav",
       "durationTicks": 70,
       "generatorVersion": 4
+    },
+    "phase5_menu_race_controls": {
+      "fingerprint": "e5f0d992f34531f710e684994916102f85ce368fb9d398b1e14e6c0465e3976d",
+      "text": "Способность куплена. Меню расы открывается на G. Зайдите в настройки: управление, назначение клавиш. Советую перенести эту кнопку на мышь, в сложный момент так быстрее. Если меню не открылось, используйте команду /race.",
+      "outputPath": "config/lg2-season-start/voice/phase5_menu_race_controls.wav",
+      "durationTicks": 295,
+      "generatorVersion": 4
     }
   }
 }

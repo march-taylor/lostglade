@@ -19,6 +19,7 @@ import net.fabricmc.fabric.api.event.player.PlayerBlockBreakEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
+import net.minecraft.commands.arguments.EntityArgument;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.Holder;
@@ -33,6 +34,7 @@ import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientboundAddEntityPacket;
 import net.minecraft.network.protocol.game.ClientboundAnimatePacket;
 import net.minecraft.network.protocol.game.ClientboundBlockUpdatePacket;
+import net.minecraft.network.protocol.game.ClientboundBundlePacket;
 import net.minecraft.network.protocol.game.ClientboundDisguisedChatPacket;
 import net.minecraft.network.protocol.game.ClientboundEntityEventPacket;
 import net.minecraft.network.protocol.game.ClientboundLevelParticlesPacket;
@@ -40,6 +42,7 @@ import net.minecraft.network.protocol.game.ClientboundMoveEntityPacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerChatPacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoRemovePacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket;
+import net.minecraft.network.protocol.game.ClientboundRemoveEntitiesPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityLinkPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
@@ -50,6 +53,8 @@ import net.minecraft.network.protocol.game.ClientboundSoundPacket;
 import net.minecraft.network.protocol.game.ClientboundStopSoundPacket;
 import net.minecraft.network.protocol.game.ClientboundTakeItemEntityPacket;
 import net.minecraft.network.protocol.game.ClientboundTeleportEntityPacket;
+import net.minecraft.network.protocol.game.ClientboundTrackedWaypointPacket;
+import net.minecraft.network.protocol.game.ClientGamePacketListener;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerBossEvent;
@@ -142,6 +147,8 @@ public final class SeasonStartSystem {
 	private static final long GUIDANCE_CORRECTION_COOLDOWN_TICKS = 8L;
 	private static final long GUIDANCE_FORWARD_COOLDOWN_TICKS = 16L;
 	private static final long GUIDANCE_STALL_COOLDOWN_TICKS = 24L;
+	private static final long GUIDANCE_TURN_RECOVERY_MIN_DELAY_TICKS = 20L;
+	private static final float GUIDANCE_TURN_RECOVERY_WRONG_YAW_DEGREES = 8.0F;
 	private static final long GUIDANCE_RECOVER_REACTION_WINDOW_TICKS = 20L * 4L;
 	private static final long GUIDANCE_STALL_AFTER_ALIGNMENT_TICKS = 20L;
 	private static final long GUIDANCE_STALL_AFTER_TURN_TICKS = 18L;
@@ -169,6 +176,7 @@ public final class SeasonStartSystem {
 	private static final double GUIDANCE_RECOVER_WORSEN_THRESHOLD = 8.0D;
 	private static final String START_WORD_EN = "start";
 	private static final String START_WORD_RU = "старт";
+	private static final int STARTUP_CLEAR_WEATHER_TICKS = Integer.MAX_VALUE;
 	private static final String[] WAITING_START_PROMPT_TRIGGERS = {
 			"player_waiting_start_prompt_01",
 			"player_waiting_start_prompt_02",
@@ -358,9 +366,7 @@ public final class SeasonStartSystem {
 	private static final long WORLD_REVEAL_CRACKING_DURATION_TICKS = 20L * 30L;
 	private static final long WORLD_REVEAL_BLACKOUT_DURATION_TICKS = 80L;
 	private static final long WORLD_REVEAL_BLACKOUT_REPOSITION_TICKS = 40L;
-	private static final long WORLD_REVEAL_DARKNESS_ONSET_TICKS = 60L;
 	private static final long WORLD_REVEAL_CRACK_START_BUFFER_TICKS = 4L;
-	private static final long WORLD_REVEAL_DARKNESS_LEAD_OUT_TICKS = 20L * 4L;
 	private static final double WORLD_REVEAL_VISIBLE_TARGET_PROGRESS = 1.0D;
 	private static final int WORLD_REVEAL_VISIBLE_PROTECTION_RADIUS = 2;
 	private static final int WORLD_REVEAL_VISIBLE_PROTECTION_HEIGHT = 4;
@@ -588,6 +594,9 @@ public final class SeasonStartSystem {
 								.executes(SeasonStartSystem::toggleSeasonStart)
 								.then(Commands.literal("status")
 										.executes(SeasonStartSystem::printStatus))
+								.then(Commands.literal("skip")
+										.then(Commands.argument("player", EntityArgument.player())
+												.executes(SeasonStartSystem::skipPersonalStage)))
 				)
 		);
 	}
@@ -807,17 +816,28 @@ public final class SeasonStartSystem {
 				SeasonStartVoiceSystem.clearPlayerChannel(player);
 				SeasonStartVoiceSystem.fireTrigger(server, itemExplanationTrigger, player);
 			}
-		} else if (ServerRaceSystem.isSeasonStartRaceAbility(player, upgradeId)) {
-			if (!state.racePurchaseExplained) {
-				state.racePurchaseExplained = true;
-				SeasonStartVoiceSystem.clearPlayerChannel(player);
-				SeasonStartVoiceSystem.fireTrigger(server, "player_menu_race_purchase", player);
-			}
-		} else if (nowTick >= state.nextMenuPriceReactionTick) {
+		} else if (!ServerRaceSystem.isSeasonStartRaceAbility(player, upgradeId)
+				&& nowTick >= state.nextMenuPriceReactionTick) {
 			state.nextMenuPriceReactionTick = nowTick + MENU_PRICE_REACTION_COOLDOWN_TICKS;
 			SeasonStartVoiceSystem.clearPlayerChannel(player);
 			SeasonStartVoiceSystem.fireTrigger(server, "player_menu_price_limit", player);
 		}
+		stateDirty = true;
+	}
+
+	/** Called only after the upgrade transaction succeeded, never merely after pressing its button. */
+	public static void onServerUpgradePurchased(ServerPlayer player, String upgradeId) {
+		if (!isServerMenuAvailable(player) || player == null || !ServerRaceSystem.isSeasonStartRaceAbility(player, upgradeId)) {
+			return;
+		}
+		PlayerSceneState state = PLAYER_STATES.get(player.getUUID());
+		MinecraftServer server = player.level().getServer();
+		if (state == null || server == null || state.racePurchaseExplained) {
+			return;
+		}
+		state.racePurchaseExplained = true;
+		SeasonStartVoiceSystem.clearPlayerChannel(player);
+		SeasonStartVoiceSystem.fireTrigger(server, "player_menu_race_purchase", player);
 		stateDirty = true;
 	}
 
@@ -856,6 +876,14 @@ public final class SeasonStartSystem {
 			return;
 		}
 		state.menuNarrationMuted = false;
+		if (state.racePurchaseExplained && !state.raceControlsExplained) {
+			state.raceControlsExplained = true;
+			state.seenMenuSections.add("menu_closed");
+			SeasonStartVoiceSystem.clearPlayerChannel(player);
+			SeasonStartVoiceSystem.fireTrigger(server, "player_menu_race_controls", player);
+			stateDirty = true;
+			return;
+		}
 		if (!state.seenMenuSections.add("menu_closed")) {
 			stateDirty = true;
 			return;
@@ -876,6 +904,10 @@ public final class SeasonStartSystem {
 			return isInPrivateIntroPhase(receiver) || shouldHidePlayerFrom(receiver, sender);
 		}
 		if (packet instanceof ClientboundDisguisedChatPacket && isInPrivateIntroPhase(receiver)) {
+			return true;
+		}
+		if (packet instanceof ClientboundTrackedWaypointPacket waypointPacket
+				&& shouldSuppressPlayerLocator(receiver, waypointPacket)) {
 			return true;
 		}
 		if (packet instanceof ClientboundBlockUpdatePacket blockUpdatePacket
@@ -901,6 +933,53 @@ public final class SeasonStartSystem {
 			return isPrivateIntroParticipantNear(receiver, particlesPacket.getX(), particlesPacket.getY(), particlesPacket.getZ(), 3.0D);
 		}
 		return false;
+	}
+
+	/**
+	 * Entity spawn packets are often bundled by the server. Filter each nested packet instead of
+	 * cancelling the whole bundle, otherwise one hidden item can delay unrelated world updates.
+	 */
+	public static Packet<?> filterOutgoingPacket(ServerPlayer receiver, Packet<?> packet) {
+		if (receiver == null || packet == null) {
+			return packet;
+		}
+		if (packet instanceof ClientboundBundlePacket bundlePacket) {
+			List<Packet<? super ClientGamePacketListener>> visiblePackets = new ArrayList<>();
+			boolean changed = false;
+			for (Packet<? super ClientGamePacketListener> bundledPacket : bundlePacket.subPackets()) {
+				Packet<?> filteredPacket = filterOutgoingPacket(receiver, bundledPacket);
+				if (filteredPacket == null) {
+					changed = true;
+					continue;
+				}
+				if (filteredPacket != bundledPacket) {
+					changed = true;
+				}
+				@SuppressWarnings("unchecked")
+				Packet<? super ClientGamePacketListener> gamePacket = (Packet<? super ClientGamePacketListener>) filteredPacket;
+				visiblePackets.add(gamePacket);
+			}
+			if (!changed) {
+				return packet;
+			}
+			return visiblePackets.isEmpty() ? null : new ClientboundBundlePacket(visiblePackets);
+		}
+		return shouldSuppressOutgoingPacket(receiver, packet) ? null : packet;
+	}
+
+	private static boolean shouldSuppressPlayerLocator(ServerPlayer receiver, ClientboundTrackedWaypointPacket packet) {
+		if (receiver == null || packet == null || packet.waypoint() == null || receiver.level().getServer() == null) {
+			return false;
+		}
+		if ("UNTRACK".equals(String.valueOf(packet.operation()))) {
+			return false;
+		}
+		UUID targetId = packet.waypoint().id().left().orElse(null);
+		if (targetId == null || targetId.equals(receiver.getUUID())) {
+			return false;
+		}
+		ServerPlayer target = receiver.level().getServer().getPlayerList().getPlayer(targetId);
+		return shouldHidePlayerFrom(receiver, target);
 	}
 
 	private static boolean shouldSuppressPrivateIntroBlockUpdate(ServerPlayer receiver, BlockPos pos) {
@@ -1131,6 +1210,9 @@ public final class SeasonStartSystem {
 		if (server == null) {
 			return;
 		}
+		if ((active || worldRevealActive) && server.overworld() != null) {
+			enforceStartupClearWeather(server.overworld());
+		}
 		if (active) {
 			ServerLevel overworld = server.overworld();
 			if (overworld != null) {
@@ -1287,6 +1369,51 @@ public final class SeasonStartSystem {
 				),
 				false
 		);
+		return 1;
+	}
+
+	/** Admin escape hatch for a player who cannot or should not complete the private tutorial. */
+	private static int skipPersonalStage(CommandContext<CommandSourceStack> context) throws com.mojang.brigadier.exceptions.CommandSyntaxException {
+		MinecraftServer server = context.getSource().getServer();
+		ServerPlayer player = EntityArgument.getPlayer(context, "player");
+		if (!active || server == null) {
+			context.getSource().sendFailure(Component.literal("Персональный этап можно пропустить только во время старта сезона."));
+			return 0;
+		}
+		PlayerSceneState state = PLAYER_STATES.get(player.getUUID());
+		if (state == null) {
+			context.getSource().sendFailure(Component.literal("Игрок не участвует в стартовой сцене."));
+			return 0;
+		}
+		if (state.phase == PlayerPhase.SHARED) {
+			context.getSource().sendSuccess(() -> Component.literal(player.getName().getString() + " уже находится в общей фазе."), false);
+			return 1;
+		}
+
+		ServerLevel level = server.overworld();
+		if (level != null) {
+			SlotDefinition slot = resolveSlotDefinition(computeBarrierGeometry(resolveServerAnchor(level)), state.slotIndex);
+			if (slot != null) {
+				clearIntroOre(level, slot);
+			}
+		}
+		SeasonStartVoiceSystem.clearPlayerChannel(player);
+		removeIntroTool(player);
+		state.minedIntroBitcoin = true;
+		state.poweredServer = true;
+		state.sharedVisionRestored = true;
+		state.pendingSharedPeersLine = false;
+		state.restoreVisionTick = Long.MAX_VALUE;
+		state.nextGuidanceTick = Long.MAX_VALUE;
+		state.nextGuidanceVoiceTick = Long.MAX_VALUE;
+		state.nextGuidanceEarliestTick = Long.MAX_VALUE;
+		state.phase = PlayerPhase.SHARED;
+		applySharedPlayerState(player);
+		syncPrivatePlayerProfiles(server);
+		refreshSharedPlayerEntityTracking(server);
+		onPlayerEnteredSharedPhase(server);
+		stateDirty = true;
+		context.getSource().sendSuccess(() -> Component.literal("Персональный этап игрока " + player.getName().getString() + " пропущен."), true);
 		return 1;
 	}
 
@@ -1456,6 +1583,7 @@ public final class SeasonStartSystem {
 		releaseSceneBuildFlight(server);
 		SeasonStartVoiceSystem.resetSceneState();
 		stopWorldRevealEarthquakeSound(overworld);
+		forceStartupClearWeather(overworld);
 		enforcePeacefulDifficulty(server);
 		// Also terminates any ability sessions from a previous race, including XP-draining ones.
 		ServerRaceSystem.beginSeasonStartRaces(server, get().startupRaceId);
@@ -1855,12 +1983,12 @@ public final class SeasonStartSystem {
 		Vec3 toTarget = target.subtract(playerPos);
 		double horizontalDistance = Math.sqrt(toTarget.x * toTarget.x + toTarget.z * toTarget.z);
 		if (horizontalDistance <= 1.0E-4D) {
-			return new GuidanceSnapshot(0.0D, 0.0D, true, 0);
+			return new GuidanceSnapshot(0.0D, 0.0D, true, 0, player.getYRot());
 		}
 		float targetYaw = (float) (Math.atan2(-toTarget.x, toTarget.z) * Mth.RAD_TO_DEG);
 		double deltaYaw = Mth.wrapDegrees(targetYaw - player.getYRot());
 		boolean aligned = Math.abs(deltaYaw) <= GUIDANCE_LOCK_ANGLE;
-		return new GuidanceSnapshot(horizontalDistance, deltaYaw, aligned, guidanceDistanceBucket(horizontalDistance));
+		return new GuidanceSnapshot(horizontalDistance, deltaYaw, aligned, guidanceDistanceBucket(horizontalDistance), player.getYRot());
 	}
 
 	private static GuidanceInstruction resolveGuidanceInstruction(
@@ -1982,7 +2110,7 @@ public final class SeasonStartSystem {
 			return null;
 		}
 		TurnHintDirection desiredDirection = snapshot.deltaYaw < 0.0D ? TurnHintDirection.LEFT : TurnHintDirection.RIGHT;
-		GuidanceInstruction recoverInstruction = resolveTurnRecoverInstruction(state, desiredDirection, absYaw, nowTick);
+		GuidanceInstruction recoverInstruction = resolveTurnRecoverInstruction(state, desiredDirection, snapshot, absYaw, nowTick);
 		if (recoverInstruction != null) {
 			return recoverInstruction;
 		}
@@ -2015,25 +2143,42 @@ public final class SeasonStartSystem {
 	private static GuidanceInstruction resolveTurnRecoverInstruction(
 			PlayerSceneState state,
 			TurnHintDirection desiredDirection,
+			GuidanceSnapshot snapshot,
 			double absYaw,
 			long nowTick
 	) {
 		TurnHintDirection recoverContextDirection = state == null
 				? TurnHintDirection.NONE
 				: resolveRecoverContextDirection(state.lastGuidanceStateKey);
-		if (state == null
+		if (state == null || snapshot == null
 				|| desiredDirection == TurnHintDirection.NONE
 				|| recoverContextDirection != desiredDirection
 				|| state.lastGuidanceTurnDirection != desiredDirection
 				|| state.lastGuidanceTurnRecoverUsed
 				|| !Double.isFinite(state.lastGuidanceTurnAbsYaw)
+				|| nowTick < state.turnRecoveryAllowedTick
 				|| nowTick - state.lastGuidanceTurnTick > GUIDANCE_RECOVER_REACTION_WINDOW_TICKS
-				|| absYaw < state.lastGuidanceTurnAbsYaw + GUIDANCE_RECOVER_WORSEN_THRESHOLD) {
+				|| absYaw < state.lastGuidanceTurnAbsYaw + GUIDANCE_RECOVER_WORSEN_THRESHOLD
+				|| !hasTurnedOppositeToGuidance(state, desiredDirection, snapshot.playerYaw)) {
 			return null;
 		}
 		return desiredDirection == TurnHintDirection.LEFT
 				? new GuidanceInstruction("guide_turn_left_recover", "guide_turn_left_recover", GUIDE_TURN_LEFT_RECOVER_TRIGGERS, GUIDANCE_CORRECTION_COOLDOWN_TICKS)
 				: new GuidanceInstruction("guide_turn_right_recover", "guide_turn_right_recover", GUIDE_TURN_RIGHT_RECOVER_TRIGGERS, GUIDANCE_CORRECTION_COOLDOWN_TICKS);
+	}
+
+	private static boolean hasTurnedOppositeToGuidance(
+			PlayerSceneState state,
+			TurnHintDirection desiredDirection,
+			float currentYaw
+	) {
+		if (state == null || desiredDirection == TurnHintDirection.NONE || !Float.isFinite(state.lastGuidanceTurnPlayerYaw)) {
+			return false;
+		}
+		float yawDelta = Mth.wrapDegrees(currentYaw - state.lastGuidanceTurnPlayerYaw);
+		return desiredDirection == TurnHintDirection.LEFT
+				? yawDelta >= GUIDANCE_TURN_RECOVERY_WRONG_YAW_DEGREES
+				: yawDelta <= -GUIDANCE_TURN_RECOVERY_WRONG_YAW_DEGREES;
 	}
 
 	private static VerticalAimHint resolveIntroVerticalAimHint(
@@ -2110,7 +2255,7 @@ public final class SeasonStartSystem {
 		}
 		double absYaw = Math.abs(snapshot.deltaYaw);
 		state.guidanceRouteStarted = true;
-		updateGuidanceTurnContext(state, instruction, absYaw, nowTick);
+		updateGuidanceTurnContext(state, instruction, snapshot, absYaw, nowTick);
 		if ("guide_locked_on".equals(instruction.stateKey)) {
 			state.guidanceAlignedEver = true;
 			state.lastGuidanceAlignedTick = nowTick;
@@ -2167,10 +2312,11 @@ public final class SeasonStartSystem {
 	private static void updateGuidanceTurnContext(
 			PlayerSceneState state,
 			GuidanceInstruction instruction,
+			GuidanceSnapshot snapshot,
 			double absYaw,
 			long nowTick
 	) {
-		if (state == null || instruction == null) {
+		if (state == null || instruction == null || snapshot == null) {
 			return;
 		}
 		if ("guide_turn_left_recover".equals(instruction.stateKey)) {
@@ -2191,14 +2337,23 @@ public final class SeasonStartSystem {
 		if (followUpDirection != TurnHintDirection.NONE) {
 			state.lastGuidanceTurnDirection = followUpDirection;
 			state.lastGuidanceTurnAbsYaw = absYaw;
+			state.lastGuidanceTurnPlayerYaw = snapshot.playerYaw;
 			state.lastGuidanceTurnTick = nowTick;
+			state.turnRecoveryAllowedTick = nowTick + resolveTurnRecoveryDelayTicks(instruction.triggers);
 			state.lastGuidanceTurnRecoverUsed = false;
 			return;
 		}
 		state.lastGuidanceTurnDirection = TurnHintDirection.NONE;
 		state.lastGuidanceTurnAbsYaw = Double.NaN;
+		state.lastGuidanceTurnPlayerYaw = Float.NaN;
 		state.lastGuidanceTurnTick = Long.MIN_VALUE;
+		state.turnRecoveryAllowedTick = Long.MIN_VALUE;
 		state.lastGuidanceTurnRecoverUsed = false;
+	}
+
+	private static long resolveTurnRecoveryDelayTicks(String[] triggers) {
+		long narrationTicks = resolveGuidanceNarrationLockTicks(triggers);
+		return Math.max(GUIDANCE_TURN_RECOVERY_MIN_DELAY_TICKS, (narrationTicks + 1L) / 2L);
 	}
 
 	private static ServerStructureBounds resolveServerStructureBounds() {
@@ -2330,7 +2485,9 @@ public final class SeasonStartSystem {
 		state.guidanceMistakeCount = 0;
 		state.lastGuidanceTurnDirection = TurnHintDirection.NONE;
 		state.lastGuidanceTurnAbsYaw = Double.NaN;
+		state.lastGuidanceTurnPlayerYaw = Float.NaN;
 		state.lastGuidanceTurnTick = Long.MIN_VALUE;
+		state.turnRecoveryAllowedTick = Long.MIN_VALUE;
 		state.lastGuidanceTurnRecoverUsed = false;
 		state.announcedServerSight = false;
 		state.guidanceQuietZoneActive = false;
@@ -2440,6 +2597,7 @@ public final class SeasonStartSystem {
 			state.menuNarrationMuted = false;
 			state.raceMenuReached = false;
 			state.racePurchaseExplained = false;
+			state.raceControlsExplained = false;
 			state.seenMenuSections.clear();
 			state.activeMenuSection = MenuSection.ROOT.id;
 			if (!state.menuRaceAllowanceGranted) {
@@ -2485,9 +2643,6 @@ public final class SeasonStartSystem {
 			return;
 		}
 		long nowTick = overworld.getGameTime();
-		if (worldRevealPhase == WorldRevealPhase.CRACKING) {
-			tickWorldRevealAudioPrelude(overworld, nowTick);
-		}
 		if (!prepareWorldReveal(overworld)) {
 			return;
 		}
@@ -3691,23 +3846,14 @@ public final class SeasonStartSystem {
 		if (server == null || level == null) {
 			return;
 		}
-		if (worldRevealCrackStartTick == Long.MIN_VALUE) {
-			if (worldRevealCrackNotBeforeTick != Long.MIN_VALUE && nowTick < worldRevealCrackNotBeforeTick) {
-				return;
-			}
-			worldRevealCrackStartTick = nowTick;
-			worldRevealCrackNotBeforeTick = Long.MIN_VALUE;
-		}
-		if (nowTick < worldRevealCrackStartTick) {
+		// This runs only after the asynchronous reveal plan is installed.
+		// Starting it here prevents the 30-second timeline from expiring while
+		// there is still nothing available to animate.
+		tickWorldRevealAudioPrelude(level, nowTick);
+		if (worldRevealCrackStartTick == Long.MIN_VALUE || nowTick < worldRevealCrackStartTick) {
 			return;
 		}
-		if (!worldRevealEarthquakeSoundStarted) {
-			startWorldRevealEarthquakeSound(level);
-			worldRevealEarthquakeSoundStarted = true;
-			stateDirty = true;
-		}
 		long elapsedTicks = nowTick - worldRevealCrackStartTick;
-		maybeStartWorldRevealMusic(level, nowTick, elapsedTicks);
 		if (WORLD_REVEAL_EPISODES.isEmpty()) {
 			finalizeWorldRevealCracking(server, level);
 			return;
@@ -3983,13 +4129,13 @@ public final class SeasonStartSystem {
 		worldRevealDarknessRepositioned = false;
 		worldRevealPhase = WorldRevealPhase.BLACKOUT_FADE;
 		worldRevealPhaseStartTick = nowTick;
-		worldRevealMusicEndTick = Long.MIN_VALUE;
-		worldRevealDarknessClearTick = nowTick + WORLD_REVEAL_BLACKOUT_DURATION_TICKS;
+		// The finale track started during the cracks and must finish only once, exactly at
+		// the end of that animation. Never clear its state here or the settle phase restarts it.
+		worldRevealDarknessClearTick = Long.MIN_VALUE;
 		clearStartupWorldgenDisplay(level);
-		long initialDarknessTicks = 20L * 6L;
 		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
 			if (isSeasonStartEligiblePlayer(player) && player.level() == level) {
-				applyWorldRevealDarkness(player, initialDarknessTicks);
+				player.removeEffect(MobEffects.DARKNESS);
 			}
 		}
 		stateDirty = true;
@@ -3999,7 +4145,6 @@ public final class SeasonStartSystem {
 		if (server == null || level == null) {
 			return;
 		}
-		tickWorldRevealDarknessRelease(level, nowTick);
 		revealWorldRevealEpisodeBatch(level, WORLD_REVEAL_BLACKOUT_REVEAL_EPISODES_PER_TICK, false);
 		revealWorldRevealDeferredBatch(level, WORLD_REVEAL_RELOCATE_DEFERRED_BATCH, false);
 		refreshWorldRevealTargets(level);
@@ -4008,39 +4153,10 @@ public final class SeasonStartSystem {
 			worldRevealDarknessRepositioned = true;
 			stateDirty = true;
 		}
-		if (worldRevealDarknessClearTick != Long.MIN_VALUE) {
+		if (nowTick - worldRevealPhaseStartTick < WORLD_REVEAL_BLACKOUT_DURATION_TICKS) {
 			return;
 		}
 		beginWorldRevealSettlePhase(level, nowTick);
-	}
-
-	private static long resolveWorldRevealDarknessBlendInTicks() {
-		int blendInTicks = MobEffects.DARKNESS.value().getBlendInDurationTicks();
-		return Math.max(1L, blendInTicks > 0 ? blendInTicks : WORLD_REVEAL_DARKNESS_ONSET_TICKS);
-	}
-
-	private static void applyWorldRevealDarkness(ServerPlayer player) {
-		applyWorldRevealDarkness(player, 20L * 6L);
-	}
-
-	private static void applyWorldRevealDarkness(ServerPlayer player, long durationTicks) {
-		if (player == null) {
-			return;
-		}
-		int duration = (int) Math.max(80L, durationTicks);
-		player.addEffect(new MobEffectInstance(MobEffects.DARKNESS, duration, 0, false, false, true));
-	}
-
-	private static void tickWorldRevealDarknessRelease(ServerLevel level, long nowTick) {
-		if (level == null || worldRevealDarknessClearTick == Long.MIN_VALUE || nowTick < worldRevealDarknessClearTick) {
-			return;
-		}
-		for (ServerPlayer player : level.players()) {
-			if (isSeasonStartEligiblePlayer(player)) {
-				player.removeEffect(MobEffects.DARKNESS);
-			}
-		}
-		worldRevealDarknessClearTick = Long.MIN_VALUE;
 	}
 
 	private static float computeWorldRevealTotalBurstWeight() {
@@ -4065,10 +4181,6 @@ public final class SeasonStartSystem {
 		if (level == null) {
 			return;
 		}
-		if (worldRevealMusicEndTick == Long.MIN_VALUE) {
-			long musicDurationTicks = ServerStabilitySystem.playFeedMusicForStartup(level, resolveServerAnchor(level));
-			worldRevealMusicEndTick = nowTick + Math.max(1L, musicDurationTicks);
-		}
 		revealWorldRevealDeferredBatch(level, WORLD_REVEAL_SETTLE_DEFERRED_BATCH, true);
 		worldRevealBarriersPlaced = false;
 		worldRevealPhase = WorldRevealPhase.SETTLE;
@@ -4077,7 +4189,6 @@ public final class SeasonStartSystem {
 	}
 
 	private static void tickWorldRevealSettle(MinecraftServer server, ServerLevel level, long nowTick) {
-		tickWorldRevealDarknessRelease(level, nowTick);
 		revealWorldRevealEpisodeBatch(level, WORLD_REVEAL_SETTLE_REVEAL_EPISODES_PER_TICK, true);
 		revealWorldRevealDeferredBatch(level, WORLD_REVEAL_SETTLE_DEFERRED_BATCH, true);
 		if (nowTick - worldRevealPhaseStartTick < WORLD_REVEAL_SETTLE_MIN_TICKS) {
@@ -4430,6 +4541,25 @@ public final class SeasonStartSystem {
 		}
 		level.setDayTime(morning);
 		level.setWeatherParameters(12000, 0, false, false);
+		level.setRainLevel(0.0F);
+		level.setThunderLevel(0.0F);
+	}
+
+	private static void enforceStartupClearWeather(ServerLevel level) {
+		if (level == null) {
+			return;
+		}
+		if (level.isRaining() || level.isThundering()
+				|| level.getRainLevel(1.0F) > 0.0F || level.getThunderLevel(1.0F) > 0.0F) {
+			forceStartupClearWeather(level);
+		}
+	}
+
+	private static void forceStartupClearWeather(ServerLevel level) {
+		if (level == null) {
+			return;
+		}
+		level.setWeatherParameters(STARTUP_CLEAR_WEATHER_TICKS, 0, false, false);
 		level.setRainLevel(0.0F);
 		level.setThunderLevel(0.0F);
 	}
@@ -4894,6 +5024,18 @@ public final class SeasonStartSystem {
 			level.setBlock(slot.oreSupportPos, Blocks.AIR.defaultBlockState(), 3);
 		}
 		level.setBlock(slot.orePos, ModBlocks.BITCOIN_ORE.defaultBlockState(), 3);
+	}
+
+	private static void clearIntroOre(ServerLevel level, SlotDefinition slot) {
+		if (level == null || slot == null) {
+			return;
+		}
+		if (level.getBlockState(slot.orePos).is(ModBlocks.BITCOIN_ORE)) {
+			level.setBlock(slot.orePos, Blocks.AIR.defaultBlockState(), 3);
+		}
+		if (level.getBlockState(slot.oreSupportPos).is(Blocks.BLACK_CONCRETE)) {
+			level.setBlock(slot.oreSupportPos, Blocks.AIR.defaultBlockState(), 3);
+		}
 	}
 
 	private static void tickStartupOfferings(MinecraftServer server, ServerLevel level) {
@@ -5647,7 +5789,7 @@ public final class SeasonStartSystem {
 		}
 		player.setSilent(true);
 		player.setGameMode(GameType.SURVIVAL);
-		player.addEffect(new MobEffectInstance(MobEffects.BLINDNESS, get().introBlindnessTicks, 0, false, false, true));
+		player.addEffect(new MobEffectInstance(MobEffects.BLINDNESS, get().introBlindnessTicks, 0, false, false, false));
 		clearLegacyIntroInvisibility(player);
 		ensureIntroTool(player);
 	}
@@ -5667,7 +5809,7 @@ public final class SeasonStartSystem {
 		}
 		player.setSilent(true);
 		player.setGameMode(GameType.SURVIVAL);
-		player.addEffect(new MobEffectInstance(MobEffects.BLINDNESS, get().introBlindnessTicks, 0, false, false, true));
+		player.addEffect(new MobEffectInstance(MobEffects.BLINDNESS, get().introBlindnessTicks, 0, false, false, false));
 		clearLegacyIntroInvisibility(player);
 		ensureIntroTool(player);
 	}
@@ -5684,7 +5826,7 @@ public final class SeasonStartSystem {
 		}
 		player.setSilent(true);
 		player.setGameMode(GameType.ADVENTURE);
-		player.addEffect(new MobEffectInstance(MobEffects.BLINDNESS, get().introBlindnessTicks, 0, false, false, true));
+		player.addEffect(new MobEffectInstance(MobEffects.BLINDNESS, get().introBlindnessTicks, 0, false, false, false));
 		clearLegacyIntroInvisibility(player);
 		removeIntroTool(player);
 	}
@@ -5703,7 +5845,7 @@ public final class SeasonStartSystem {
 		player.setGameMode(GameType.SURVIVAL);
 		player.setSilent(true);
 		if (!state.sharedVisionRestored) {
-			player.addEffect(new MobEffectInstance(MobEffects.BLINDNESS, get().introBlindnessTicks, 0, false, false, true));
+			player.addEffect(new MobEffectInstance(MobEffects.BLINDNESS, get().introBlindnessTicks, 0, false, false, false));
 		} else {
 			player.removeEffect(MobEffects.BLINDNESS);
 		}
@@ -5795,14 +5937,52 @@ public final class SeasonStartSystem {
 					continue;
 				}
 				PlayerVisibilityPair pair = new PlayerVisibilityPair(viewer.getUUID(), subject.getUUID());
-				if (shouldHidePlayerFrom(viewer, subject)) {
-					if (HIDDEN_PLAYER_PROFILE_PAIRS.add(pair)) {
-						viewer.connection.send(new ClientboundPlayerInfoRemovePacket(List.of(subject.getUUID())));
-					}
+					if (shouldHidePlayerFrom(viewer, subject)) {
+						if (HIDDEN_PLAYER_PROFILE_PAIRS.add(pair)) {
+							viewer.connection.send(new ClientboundPlayerInfoRemovePacket(List.of(subject.getUUID())));
+							viewer.connection.send(ClientboundTrackedWaypointPacket.removeWaypoint(subject.getUUID()));
+						}
 				} else if (HIDDEN_PLAYER_PROFILE_PAIRS.remove(pair)) {
 					viewer.connection.send(ClientboundPlayerInfoUpdatePacket.createPlayerInitializing(List.of(subject)));
 				}
 			}
+		}
+		refreshPrivateIntroEntityTracking(server);
+	}
+
+	/**
+	 * ChunkMap prevents new tracking for hidden items. This additionally removes items that were
+	 * tracked before the player entered their personal scene, so no dropped item can leak through.
+	 */
+	private static void refreshPrivateIntroEntityTracking(MinecraftServer server) {
+		if (server == null || serverAnchor == null) {
+			return;
+		}
+		for (ServerPlayer viewer : server.getPlayerList().getPlayers()) {
+			if (!isSeasonStartEligiblePlayer(viewer) || !isInPrivateIntroPhase(viewer)
+					|| viewer.connection == null || !(viewer.level() instanceof ServerLevel level)) {
+				continue;
+			}
+			// Force ChunkMap to discard any stale entity pair through the same tracking predicate.
+			level.getChunkSource().move(viewer);
+			BoxGeometry geometry = computeOuterBoxGeometry(resolveServerAnchor(level));
+			AABB sceneBounds = new AABB(
+					geometry.minX,
+					geometry.floorY,
+					geometry.minZ,
+					geometry.maxX + 1.0D,
+					geometry.roofY + 1.0D,
+					geometry.maxZ + 1.0D
+			);
+			List<ItemEntity> hiddenItems = level.getEntitiesOfClass(ItemEntity.class, sceneBounds);
+			if (hiddenItems.isEmpty()) {
+				continue;
+			}
+			int[] hiddenIds = new int[hiddenItems.size()];
+			for (int index = 0; index < hiddenItems.size(); index++) {
+				hiddenIds[index] = hiddenItems.get(index).getId();
+			}
+			viewer.connection.send(new ClientboundRemoveEntitiesPacket(hiddenIds));
 		}
 	}
 
@@ -6281,6 +6461,7 @@ public final class SeasonStartSystem {
 					runtime.menuNarrationMuted = persisted.menuNarrationMuted;
 					runtime.raceMenuReached = persisted.raceMenuReached;
 					runtime.racePurchaseExplained = persisted.racePurchaseExplained;
+					runtime.raceControlsExplained = persisted.raceControlsExplained;
 					runtime.menuRaceAllowanceGranted = persisted.menuRaceAllowanceGranted;
 					if (persisted.seenMenuSections != null) {
 						runtime.seenMenuSections.addAll(persisted.seenMenuSections);
@@ -6325,6 +6506,7 @@ public final class SeasonStartSystem {
 			persisted.menuNarrationMuted = runtime.menuNarrationMuted;
 			persisted.raceMenuReached = runtime.raceMenuReached;
 			persisted.racePurchaseExplained = runtime.racePurchaseExplained;
+			persisted.raceControlsExplained = runtime.raceControlsExplained;
 			persisted.menuRaceAllowanceGranted = runtime.menuRaceAllowanceGranted;
 			persisted.seenMenuSections = new ArrayList<>(runtime.seenMenuSections);
 			state.players.put(entry.getKey().toString(), persisted);
@@ -6414,7 +6596,9 @@ public final class SeasonStartSystem {
 		state.guidanceMistakeCount = 0;
 		state.lastGuidanceTurnDirection = TurnHintDirection.NONE;
 		state.lastGuidanceTurnAbsYaw = Double.NaN;
+		state.lastGuidanceTurnPlayerYaw = Float.NaN;
 		state.lastGuidanceTurnTick = Long.MIN_VALUE;
+		state.turnRecoveryAllowedTick = Long.MIN_VALUE;
 		state.lastGuidanceTurnRecoverUsed = false;
 		state.announcedServerSight = false;
 		state.guidanceCueCycles.clear();
@@ -6705,7 +6889,9 @@ public final class SeasonStartSystem {
 		private boolean guidanceQuietZoneActive = false;
 		private TurnHintDirection lastGuidanceTurnDirection = TurnHintDirection.NONE;
 		private double lastGuidanceTurnAbsYaw = Double.NaN;
+		private float lastGuidanceTurnPlayerYaw = Float.NaN;
 		private long lastGuidanceTurnTick = Long.MIN_VALUE;
+		private long turnRecoveryAllowedTick = Long.MIN_VALUE;
 		private boolean lastGuidanceTurnRecoverUsed = false;
 		private final Map<String, Integer> guidanceCueCycles = new LinkedHashMap<>();
 		private long lastActivityTick = 0L;
@@ -6731,6 +6917,7 @@ public final class SeasonStartSystem {
 		private boolean menuNarrationMuted;
 		private boolean raceMenuReached;
 		private boolean racePurchaseExplained;
+		private boolean raceControlsExplained;
 		private boolean menuRaceAllowanceGranted;
 		private String activeMenuSection = "";
 		private long nextMenuPriceReactionTick = Long.MIN_VALUE;
@@ -6823,9 +7010,9 @@ public final class SeasonStartSystem {
 	private record TerrainPlacement(BlockPos pos, BlockState state) {
 	}
 
-	private record GuidanceSnapshot(double horizontalDistance, double deltaYaw, boolean aligned, int distanceBucket) {
+	private record GuidanceSnapshot(double horizontalDistance, double deltaYaw, boolean aligned, int distanceBucket, float playerYaw) {
 		private GuidanceSnapshot withAlignmentLock() {
-			return new GuidanceSnapshot(horizontalDistance, 0.0D, true, distanceBucket);
+			return new GuidanceSnapshot(horizontalDistance, 0.0D, true, distanceBucket, playerYaw);
 		}
 	}
 
@@ -6913,6 +7100,7 @@ public final class SeasonStartSystem {
 		private boolean menuNarrationMuted;
 		private boolean raceMenuReached;
 		private boolean racePurchaseExplained;
+		private boolean raceControlsExplained;
 		private boolean menuRaceAllowanceGranted;
 		private List<String> seenMenuSections;
 	}

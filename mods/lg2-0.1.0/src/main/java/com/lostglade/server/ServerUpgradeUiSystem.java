@@ -1364,6 +1364,7 @@ public final class ServerUpgradeUiSystem {
 		}
 
 		setUpgradeLevel(player.level().getServer(), player, button.upgradeId, currentLevel + 1);
+		SeasonStartSystem.onServerUpgradePurchased(player, button.upgradeId);
 		startEraProgressAnimation(player, button.upgradeId);
 		playPurchaseSound(player);
 		sendPlayerMessage(player, localizeSystem(player, "Upgrade purchased.", "Улучшение куплено."));

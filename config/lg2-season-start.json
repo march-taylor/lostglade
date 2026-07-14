@@ -1961,6 +1961,20 @@
       "requires": []
     },
     {
+      "id": "phase5_menu_race_controls",
+      "trigger": "player_menu_race_controls",
+      "audience": "player",
+      "channel": "player",
+      "audioFile": "voice/phase5_menu_race_controls.wav",
+      "scriptText": "Способность куплена. Меню расы открывается на G. Зайдите в настройки: управление, назначение клавиш. Советую перенести эту кнопку на мышь, в сложный момент так быстрее. Если меню не открылось, используйте команду /race.",
+      "delayTicks": 0,
+      "durationTicks": 295,
+      "onceGlobal": false,
+      "oncePerPlayer": true,
+      "interruptCurrent": false,
+      "requires": []
+    },
+    {
       "id": "phase5_menu_price_limit",
       "trigger": "player_menu_price_limit",
       "audience": "player",
