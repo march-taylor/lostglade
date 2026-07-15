@@ -199,6 +199,8 @@ public final class DroneSystem {
 	private static final String DRONE_KAMIKAZE_POWER_TAG_PREFIX = "lg2_drone_kamikaze_power_";
 	private static final String DRONE_NIGHT_VISION_TAG = "lg2_drone_night_vision";
 	private static final String DRONE_AUTO_AIM_TAG = "lg2_drone_auto_aim";
+	private static final String DRONE_AUTO_AIM_TARGET_ENTITY_TAG_PREFIX = "lg2_drone_auto_aim_target_entity_";
+	private static final String DRONE_AUTO_AIM_TARGET_BLOCK_TAG_PREFIX = "lg2_drone_auto_aim_target_block_";
 	private static final String DRONE_MICROPHONE_TAG = "lg2_drone_microphone";
 	private static final String DRONE_PAINT_TAG_PREFIX = "lg2_drone_paint_";
 	private static final String DRONE_DISPLAY_TAG = "lg2_drone_display";
@@ -357,6 +359,7 @@ public final class DroneSystem {
 	private static final byte ENTITY_FLAG_FALL_FLYING = (byte) 0x80;
 	private static final int CONTROLLED_VIEW_TELEPORT_ID_BASE = 1_000_000_000;
 	private static final long CONTROLLED_DRONE_START_ROTATION_SUPPRESSION_TICKS = 20L;
+	private static final long CONTROLLED_DRONE_START_POSITION_SUPPRESSION_TICKS = 20L;
 	private static final long CONTROLLED_DRONE_TELEPORT_ACK_ROTATION_GRACE_TICKS = 2L;
 	private static final double CONTROLLED_DRONE_BLOCKED_MOVEMENT_EPSILON = 1.0E-5D;
 	private static final double CONTROLLED_DRONE_MAX_REPORTED_MOVE_BLOCKS = 4.0D;
@@ -450,6 +453,7 @@ public final class DroneSystem {
 	private static final Set<UUID> VISUALLY_CONTROLLED_PLAYERS = new HashSet<>();
 	private static final Set<UUID> CONTROLLED_OPERATOR_MANAGED_NIGHT_VISION = new HashSet<>();
 	private static final Set<UUID> CONTROLLED_OPERATOR_AUTO_AIM_HIGHLIGHTS = new HashSet<>();
+	private static final Set<UUID> CONTROLLED_OPERATOR_AUTO_AIM_BODY_HIGHLIGHTS = new HashSet<>();
 	private static final Set<PendingDroneLoadDiscard> PENDING_DRONE_LOAD_DISCARDS = new LinkedHashSet<>();
 	private static final ThreadLocal<Boolean> CONTROLLED_OPERATOR_PACKET_REWRITE_BYPASS = ThreadLocal.withInitial(() -> false);
 	private static final DispenseItemBehavior DEFAULT_DRONE_DISPENSE_FALLBACK = new DefaultDispenseItemBehavior();
@@ -585,6 +589,7 @@ public final class DroneSystem {
 			shutdownAllControlledOperatorAudio();
 			CONTROLLED_OPERATOR_MANAGED_NIGHT_VISION.clear();
 			CONTROLLED_OPERATOR_AUTO_AIM_HIGHLIGHTS.clear();
+			CONTROLLED_OPERATOR_AUTO_AIM_BODY_HIGHLIGHTS.clear();
 		});
 	}
 
@@ -700,7 +705,7 @@ public final class DroneSystem {
 		registerDroneDispenseBehavior(Items.RABBIT_HIDE, DroneSystem::tryDispenseTuneDrone);
 		registerDroneDispenseBehavior(Items.DISPENSER, DroneSystem::tryDispenseTuneDrone);
 		registerDroneDispenseBehavior(Items.SPIDER_EYE, DroneSystem::tryDispenseTuneDrone);
-		registerDroneDispenseBehavior(Items.CALIBRATED_SCULK_SENSOR, DroneSystem::tryDispenseTuneDrone);
+		registerDroneDispenseBehavior(Items.SCULK_SENSOR, DroneSystem::tryDispenseTuneDrone);
 		registerDroneDispenseBehavior(ModBlocks.MICROPHONE_ITEM, DroneSystem::tryDispenseTuneDrone);
 		for (DyeColor color : DyeColor.values()) {
 			Item dyeItem = dyeItemForColor(color);
@@ -793,7 +798,7 @@ public final class DroneSystem {
 			stack.shrink(1);
 			return DroneAutomationAction.SUCCESS;
 		}
-		if (stack.is(Items.CALIBRATED_SCULK_SENSOR)) {
+		if (stack.is(Items.SCULK_SENSOR)) {
 			if (hasDroneAutoAimModule(root)) {
 				return DroneAutomationAction.FAIL_KEEP;
 			}
@@ -1261,11 +1266,16 @@ public final class DroneSystem {
 		if (root == null || !root.isAlive() || root.level() != level) {
 			return List.of();
 		}
-		Entity highlightEntity = findDroneDisplay(root);
-		if (highlightEntity == null || !highlightEntity.isAlive()) {
-			highlightEntity = root;
+		List<ServerSelectionHighlightSystem.DisplayBlueprint> blueprints = new ArrayList<>();
+		for (Display.ItemDisplay display : findDroneDisplayLayers(root)) {
+			if (display.isAlive()) {
+				blueprints.add(new ServerSelectionHighlightSystem.EntityGlowBlueprint(display));
+			}
 		}
-		return List.of(new ServerSelectionHighlightSystem.EntityGlowBlueprint(highlightEntity));
+		if (!blueprints.isEmpty()) {
+			return blueprints;
+		}
+		return List.of(new ServerSelectionHighlightSystem.EntityGlowBlueprint(root));
 	}
 
 	public static DroneLiveFeedState resolveLiveFeedState(MinecraftServer server, BluetoothLinkSystem.Endpoint endpoint) {
@@ -1458,6 +1468,9 @@ public final class DroneSystem {
 		session.setControlPitch(pitch);
 		session.setProxyYaw(yaw);
 		session.setProxyPitch(pitch);
+		if (packet.hasPosition() && session.shouldSuppressStartupPosition(root.level() == null ? Long.MIN_VALUE : root.level().getGameTime())) {
+			return;
+		}
 
 		if (!packet.hasPosition()) {
 			root.setYRot(yaw);
@@ -3254,6 +3267,7 @@ public final class DroneSystem {
 				&& autoAimTargetPoint == null
 				&& isDroneAutoAimTargetDefinitelyMissing(root.level().getServer(), state.dimension(), state.autoAimTarget())) {
 			state.setAutoAimTarget(null);
+			setPersistedDroneAutoAimTarget(root, null);
 		}
 		boolean autoAimAdjusted = syncUncontrolledDroneAutoAim(root, state, autoAimTargetPoint);
 		boolean screenDrive = heldByScreenStream && state.hasDriveState();
@@ -4025,6 +4039,7 @@ public final class DroneSystem {
 				root.getYRot(),
 				root.getXRot()
 		);
+		uncontrolledState.setAutoAimTarget(resolvePersistedDroneAutoAimTarget(root));
 		uncontrolledState.setLastPosition(root.position());
 		UNCONTROLLED_DRONES.putIfAbsent(root.getUUID(), uncontrolledState);
 		rememberLastKnownDroneFeedState(root);
@@ -4736,7 +4751,11 @@ public final class DroneSystem {
 		EntityDataAccessor<Pose> poseAccessor = EntityTrackedDataAccessor.lg2$getDataPose();
 		EntityDataAccessor<HumanoidArm> mainHandAccessor = PlayerTrackedDataAccessor.lg2$getDataPlayerMainHand();
 		EntityDataAccessor<Byte> skinPartsAccessor = PlayerTrackedDataAccessor.lg2$getDataPlayerModeCustomisation();
-		upsertTrackedData(data, SynchedEntityData.DataValue.create(sharedFlagsAccessor, player.getEntityData().get(sharedFlagsAccessor)));
+		byte sharedFlags = player.getEntityData().get(sharedFlagsAccessor);
+		if (CONTROLLED_OPERATOR_AUTO_AIM_BODY_HIGHLIGHTS.contains(player.getUUID())) {
+			sharedFlags |= 0x40;
+		}
+		upsertTrackedData(data, SynchedEntityData.DataValue.create(sharedFlagsAccessor, sharedFlags));
 		upsertTrackedData(data, SynchedEntityData.DataValue.create(noGravityAccessor, player.getEntityData().get(noGravityAccessor)));
 		upsertTrackedData(data, SynchedEntityData.DataValue.create(poseAccessor, player.getEntityData().get(poseAccessor)));
 		HumanoidArm mainHand = player.getEntityData().get(mainHandAccessor);
@@ -4911,10 +4930,13 @@ public final class DroneSystem {
 				|| !(useInput ? shouldHandleControlledAutoAimUseInput(root) : shouldHandleControlledAutoAimAttackInput(root))) {
 			return InteractionResult.PASS;
 		}
+		if (session.shouldSuppressAutoAimSelection(root.level() == null ? Long.MIN_VALUE : root.level().getGameTime())) {
+			return InteractionResult.SUCCESS;
+		}
 		if (isDroneInternalEntity(entity)) {
 			return selectControlledAutoAimTargetFromView(player, session, root);
 		}
-		if (entity == player || !isSelectableControlledAutoAimEntityTarget(player, root, entity)) {
+		if (!isSelectableControlledAutoAimEntityTarget(root, entity)) {
 			return InteractionResult.PASS;
 		}
 		Vec3 targetPoint = entity.getEyePosition();
@@ -4936,6 +4958,9 @@ public final class DroneSystem {
 		if (!hasDroneAutoAimModule(root)) {
 			return InteractionResult.PASS;
 		}
+		if (session.shouldSuppressAutoAimSelection(level.getGameTime())) {
+			return InteractionResult.SUCCESS;
+		}
 		Vec3 origin = resolveSafeDroneCameraOrigin(
 				root,
 				droneCameraOrigin(finiteVecOr(session.proxyPos(), root.position()), resolveDroneVisualLift(root))
@@ -4945,15 +4970,21 @@ public final class DroneSystem {
 		Vec3 end = origin.add(direction.scale(selectionRangeBlocks));
 		BlockHitResult blockHit = clipAutoAimBlockThroughPartialBlocks(level, origin, end, root);
 		Vec3 blockLimitedEnd = blockHit.getType() == HitResult.Type.MISS ? end : blockHit.getLocation();
+		Vec3 operatorHit = resolveControlledOperatorAutoAimRayHit(player, level, origin, blockLimitedEnd);
 		EntityHitResult entityHit = ProjectileUtil.getEntityHitResult(
 				level,
 				root,
 				origin,
 				blockLimitedEnd,
 				new AABB(origin, blockLimitedEnd).inflate(0.75D),
-				entity -> isSelectableControlledAutoAimEntityTarget(player, root, entity),
+				entity -> isSelectableControlledAutoAimEntityTarget(root, entity),
 				0.25F
 		);
+		if (operatorHit != null
+				&& (entityHit == null || origin.distanceToSqr(operatorHit) <= origin.distanceToSqr(entityHit.getLocation()))) {
+			toggleControlledAutoAimTarget(player, session, new DroneAutoAimEntityTarget(player.getUUID()));
+			return InteractionResult.SUCCESS;
+		}
 		if (entityHit != null && entityHit.getEntity() != null) {
 			toggleControlledAutoAimTarget(player, session, new DroneAutoAimEntityTarget(entityHit.getEntity().getUUID()));
 			return InteractionResult.SUCCESS;
@@ -4973,10 +5004,26 @@ public final class DroneSystem {
 		return InteractionResult.SUCCESS;
 	}
 
-	private static boolean isSelectableControlledAutoAimEntityTarget(ServerPlayer player, Entity root, Entity entity) {
+	private static Vec3 resolveControlledOperatorAutoAimRayHit(
+			ServerPlayer player,
+			ServerLevel droneLevel,
+			Vec3 origin,
+			Vec3 end
+	) {
+		if (player == null
+				|| droneLevel == null
+				|| player.level() != droneLevel
+				|| origin == null
+				|| end == null
+				|| !isSelectableControlledAutoAimEntityTarget(null, player)) {
+			return null;
+		}
+		return player.getBoundingBox().inflate(0.25D).clip(origin, end).orElse(null);
+	}
+
+	private static boolean isSelectableControlledAutoAimEntityTarget(Entity root, Entity entity) {
 		return entity != null
 				&& entity.isAlive()
-				&& entity != player
 				&& entity != root
 				&& !isDroneInternalEntity(entity);
 	}
@@ -5024,6 +5071,7 @@ public final class DroneSystem {
 			return;
 		}
 		session.setAutoAimTarget(target);
+		setPersistedDroneAutoAimTarget(resolveControlledDroneRoot(player), target);
 		showControlledAutoAimTarget(player, session, target);
 	}
 
@@ -5032,6 +5080,12 @@ public final class DroneSystem {
 			return;
 		}
 		MinecraftServer server = player.level() == null ? null : player.level().getServer();
+		if (target instanceof DroneAutoAimEntityTarget entityTarget && Objects.equals(entityTarget.entityUuid(), player.getUUID())) {
+			showControlledOperatorBodyAutoAimHighlight(player);
+			CONTROLLED_OPERATOR_AUTO_AIM_HIGHLIGHTS.add(player.getUUID());
+			return;
+		}
+		clearControlledOperatorBodyAutoAimHighlight(player);
 		List<ServerSelectionHighlightSystem.DisplayBlueprint> blueprints = resolveControlledAutoAimHighlightBlueprints(server, session, target);
 		if (blueprints.isEmpty()) {
 			clearControlledAutoAimHighlight(player);
@@ -5044,13 +5098,30 @@ public final class DroneSystem {
 	private static void clearControlledAutoAimTarget(ServerPlayer player, DroneControlSession session) {
 		if (session != null) {
 			session.setAutoAimTarget(null);
+			setPersistedDroneAutoAimTarget(resolveControlledDroneRoot(player), null);
 		}
 		clearControlledAutoAimHighlight(player);
 	}
 
 	private static void clearControlledAutoAimHighlight(ServerPlayer player) {
+		clearControlledOperatorBodyAutoAimHighlight(player);
 		if (player != null && CONTROLLED_OPERATOR_AUTO_AIM_HIGHLIGHTS.remove(player.getUUID())) {
 			ServerSelectionHighlightSystem.clear(player);
+		}
+	}
+
+	private static void showControlledOperatorBodyAutoAimHighlight(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		ServerSelectionHighlightSystem.clear(player);
+		CONTROLLED_OPERATOR_AUTO_AIM_BODY_HIGHLIGHTS.add(player.getUUID());
+		syncControlledOperatorBodyMirror(player, false);
+	}
+
+	private static void clearControlledOperatorBodyAutoAimHighlight(ServerPlayer player) {
+		if (player != null && CONTROLLED_OPERATOR_AUTO_AIM_BODY_HIGHLIGHTS.remove(player.getUUID())) {
+			syncControlledOperatorBodyMirror(player, false);
 		}
 	}
 
@@ -5148,6 +5219,53 @@ public final class DroneSystem {
 			return !isSelectableAutoAimBlock(level, blockTarget.blockPos(), level.getBlockState(blockTarget.blockPos()));
 		}
 		return false;
+	}
+
+	private static DroneAutoAimTarget resolvePersistedDroneAutoAimTarget(Entity root) {
+		if (root == null) {
+			return null;
+		}
+		for (String tag : root.getTags()) {
+			if (tag != null && tag.startsWith(DRONE_AUTO_AIM_TARGET_ENTITY_TAG_PREFIX)) {
+				try {
+					return new DroneAutoAimEntityTarget(UUID.fromString(tag.substring(DRONE_AUTO_AIM_TARGET_ENTITY_TAG_PREFIX.length())));
+				} catch (IllegalArgumentException ignored) {
+				}
+			}
+			if (tag != null && tag.startsWith(DRONE_AUTO_AIM_TARGET_BLOCK_TAG_PREFIX)) {
+				String[] coordinates = tag.substring(DRONE_AUTO_AIM_TARGET_BLOCK_TAG_PREFIX.length()).split("_", -1);
+				if (coordinates.length != 3) {
+					continue;
+				}
+				try {
+					return new DroneAutoAimBlockTarget(new BlockPos(
+							Integer.parseInt(coordinates[0]),
+							Integer.parseInt(coordinates[1]),
+							Integer.parseInt(coordinates[2])
+					));
+				} catch (NumberFormatException ignored) {
+				}
+			}
+		}
+		return null;
+	}
+
+	private static void setPersistedDroneAutoAimTarget(Entity root, DroneAutoAimTarget target) {
+		if (root == null) {
+			return;
+		}
+		for (String tag : new ArrayList<>(root.getTags())) {
+			if (tag != null && (tag.startsWith(DRONE_AUTO_AIM_TARGET_ENTITY_TAG_PREFIX)
+					|| tag.startsWith(DRONE_AUTO_AIM_TARGET_BLOCK_TAG_PREFIX))) {
+				root.removeTag(tag);
+			}
+		}
+		if (target instanceof DroneAutoAimEntityTarget entityTarget && entityTarget.entityUuid() != null) {
+			root.addTag(DRONE_AUTO_AIM_TARGET_ENTITY_TAG_PREFIX + entityTarget.entityUuid());
+		} else if (target instanceof DroneAutoAimBlockTarget blockTarget && blockTarget.blockPos() != null) {
+			BlockPos pos = blockTarget.blockPos();
+			root.addTag(DRONE_AUTO_AIM_TARGET_BLOCK_TAG_PREFIX + pos.getX() + "_" + pos.getY() + "_" + pos.getZ());
+		}
 	}
 
 	private static boolean isSelectableAutoAimBlock(ServerLevel level, BlockPos pos, BlockState state) {
@@ -5558,9 +5676,16 @@ public final class DroneSystem {
 		session.setVelocity(incomingVelocity);
 		session.refreshKnownDroneLocation(root);
 		session.setTurretInputSuppressedUntilTick(droneLevel.getGameTime() + DRONE_TURRET_CONTROL_START_SUPPRESS_TICKS);
+		session.suppressAutoAimSelectionUntil(droneLevel.getGameTime() + 1L);
 		session.suppressStartupRotationUntil(droneLevel.getGameTime() + CONTROLLED_DRONE_START_ROTATION_SUPPRESSION_TICKS);
+		session.suppressStartupPositionUntil(droneLevel.getGameTime() + CONTROLLED_DRONE_START_POSITION_SUPPRESSION_TICKS);
+		DroneAutoAimTarget restoredAutoAimTarget = resolvePersistedDroneAutoAimTarget(root);
+		if (restoredAutoAimTarget == null && previousUncontrolledState != null) {
+			restoredAutoAimTarget = previousUncontrolledState.autoAimTarget();
+			setPersistedDroneAutoAimTarget(root, restoredAutoAimTarget);
+		}
+		session.setAutoAimTarget(restoredAutoAimTarget);
 		if (previousUncontrolledState != null) {
-			session.setAutoAimTarget(previousUncontrolledState.autoAimTarget());
 			restoreControlledDrivesFromUncontrolledState(session, previousUncontrolledState, droneYaw, dronePitch);
 		} else {
 			seedControlledDrivesFromWorldVelocity(session, incomingVelocity, droneYaw, dronePitch);
@@ -5720,7 +5845,7 @@ public final class DroneSystem {
 			spawnDroneRecoveryItem(root, level, Items.SPIDER_EYE);
 		}
 		if (hasDroneAutoAimModule(root)) {
-			spawnDroneRecoveryItem(root, level, Items.CALIBRATED_SCULK_SENSOR);
+			spawnDroneRecoveryItem(root, level, Items.SCULK_SENSOR);
 		}
 		if (hasDroneMicrophoneModule(root)) {
 			spawnDroneRecoveryItem(root, level, ModBlocks.MICROPHONE_ITEM);
@@ -5947,7 +6072,7 @@ public final class DroneSystem {
 			NEXT_DRONE_ARM_ALLOWED_TICK.put(root.getUUID(), now + 1L);
 			return tryInstallNightVisionModule(player, root, heldStack);
 		}
-		if (heldStack.is(Items.CALIBRATED_SCULK_SENSOR)) {
+		if (heldStack.is(Items.SCULK_SENSOR)) {
 			NEXT_DRONE_ARM_ALLOWED_TICK.put(root.getUUID(), now + 1L);
 			return tryInstallAutoAimModule(player, root, heldStack);
 		}
@@ -6757,6 +6882,9 @@ public final class DroneSystem {
 		UncontrolledDroneState uncontrolledState = UNCONTROLLED_DRONES.get(root.getUUID());
 		if (!enabled && uncontrolledState != null) {
 			uncontrolledState.setAutoAimTarget(null);
+		}
+		if (!enabled) {
+			setPersistedDroneAutoAimTarget(root, null);
 		}
 		UUID controllerId = resolveAuthoritativeDroneControllerId(root.getUUID());
 		if (controllerId == null || !(root.level() instanceof ServerLevel level)) {
@@ -8080,6 +8208,8 @@ public final class DroneSystem {
 		private DroneAutoAimTarget autoAimTarget;
 		private long lastManualLookTick = Long.MIN_VALUE;
 		private long turretInputSuppressedUntilTick = Long.MIN_VALUE;
+		private long autoAimSelectionSuppressedUntilTick = Long.MIN_VALUE;
+		private long startupPositionSuppressedUntilTick = Long.MIN_VALUE;
 		private long startupRotationSuppressedUntilTick = Long.MIN_VALUE;
 
 		private DroneControlSession(
@@ -8206,6 +8336,7 @@ public final class DroneSystem {
 		}
 
 		private void acknowledgeStartupViewSync(long gameTime) {
+			this.startupPositionSuppressedUntilTick = Long.MIN_VALUE;
 			if (this.startupRotationSuppressedUntilTick == Long.MIN_VALUE) {
 				return;
 			}
@@ -8217,6 +8348,23 @@ public final class DroneSystem {
 					this.startupRotationSuppressedUntilTick,
 					gameTime + CONTROLLED_DRONE_TELEPORT_ACK_ROTATION_GRACE_TICKS
 			);
+		}
+
+		private void suppressStartupPositionUntil(long gameTime) {
+			if (gameTime != Long.MIN_VALUE) {
+				this.startupPositionSuppressedUntilTick = Math.max(this.startupPositionSuppressedUntilTick, gameTime);
+			}
+		}
+
+		private boolean shouldSuppressStartupPosition(long gameTime) {
+			if (this.startupPositionSuppressedUntilTick == Long.MIN_VALUE) {
+				return false;
+			}
+			if (gameTime == Long.MIN_VALUE || gameTime <= this.startupPositionSuppressedUntilTick) {
+				return true;
+			}
+			this.startupPositionSuppressedUntilTick = Long.MIN_VALUE;
+			return false;
 		}
 
 		private void recordManualLookDelta(float yawDelta, float pitchDelta, long gameTime) {
@@ -8232,6 +8380,21 @@ public final class DroneSystem {
 			return gameTime != Long.MIN_VALUE
 					&& this.lastManualLookTick != Long.MIN_VALUE
 					&& gameTime - this.lastManualLookTick <= DRONE_AUTO_AIM_MANUAL_SUPPRESSION_TICKS;
+		}
+
+		private void suppressAutoAimSelectionUntil(long gameTime) {
+			this.autoAimSelectionSuppressedUntilTick = Math.max(this.autoAimSelectionSuppressedUntilTick, gameTime);
+		}
+
+		private boolean shouldSuppressAutoAimSelection(long gameTime) {
+			if (this.autoAimSelectionSuppressedUntilTick == Long.MIN_VALUE) {
+				return false;
+			}
+			if (gameTime == Long.MIN_VALUE || gameTime <= this.autoAimSelectionSuppressedUntilTick) {
+				return true;
+			}
+			this.autoAimSelectionSuppressedUntilTick = Long.MIN_VALUE;
+			return false;
 		}
 
 		private int nextViewSyncTeleportId() {
