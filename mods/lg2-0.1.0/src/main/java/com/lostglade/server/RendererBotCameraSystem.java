@@ -17,6 +17,7 @@ import net.minecraft.core.registries.Registries;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
 import net.minecraft.network.protocol.game.ClientboundAnimatePacket;
+import net.minecraft.network.protocol.game.ClientboundBlockUpdatePacket;
 import net.minecraft.network.protocol.game.ClientboundBlockDestructionPacket;
 import net.minecraft.network.protocol.game.ClientboundBlockEventPacket;
 import net.minecraft.network.protocol.game.ClientboundDamageEventPacket;
@@ -25,6 +26,7 @@ import net.minecraft.network.protocol.game.ClientboundHurtAnimationPacket;
 import net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket;
 import net.minecraft.network.protocol.game.ClientboundLevelEventPacket;
 import net.minecraft.network.protocol.game.ClientboundLevelParticlesPacket;
+import net.minecraft.network.protocol.game.ClientboundLightUpdatePacket;
 import net.minecraft.network.protocol.game.ClientboundRemoveEntitiesPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityLinkPacket;
@@ -78,6 +80,8 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
@@ -125,6 +129,18 @@ public final class RendererBotCameraSystem {
 	private static final double STATIC_CAMERA_SIDE_SAFETY_MARGIN_CHUNKS = 2.0D;
 	private static final double SHARED_RENDER_RADIUS_BLOCKS = 96.0D;
 	private static final double SHARED_RENDER_RADIUS_SQ = SHARED_RENDER_RADIUS_BLOCKS * SHARED_RENDER_RADIUS_BLOCKS;
+	// Network handlers must not wait behind the server tick just to hand a frame
+	// to a screen.  Each stream itself coalesces to its newest frame, so this
+	// bounded worker pool improves latency without letting slow displays build an
+	// unbounded queue.
+	private static final ExecutorService LIVE_FRAME_DISPATCH_EXECUTOR = Executors.newFixedThreadPool(
+			Math.max(2, Math.min(4, Math.max(1, Runtime.getRuntime().availableProcessors() / 2))),
+			runnable -> {
+				Thread thread = new Thread(runnable, "lg2-renderer-bot-live-frame");
+				thread.setDaemon(true);
+				return thread;
+			}
+	);
 	private static final TicketType CAMERA_CHUNK_TICKET_TYPE = new TicketType(
 			0L,
 			TicketType.FLAG_LOADING | CAMERA_CHUNK_TICKET_UNIQUE_FLAG
@@ -207,28 +223,13 @@ public final class RendererBotCameraSystem {
 		ServerPlayNetworking.registerGlobalReceiver(
 				RendererBotPayloads.RendererBotLiveFrameC2SPayload.TYPE,
 				(payload, context) -> {
-					MinecraftServer server = context.player().level().getServer();
-					if (server == null) {
+					long receivedAtNanos = System.nanoTime();
+					ActiveLiveStream stream = ACTIVE_LIVE_STREAMS.get(payload.streamId());
+					if (stream == null || !stream.botUuid().equals(context.player().getUUID())) {
 						return;
 					}
-					long receivedAtNanos = System.nanoTime();
-					server.execute(() -> {
-						ActiveLiveStream stream = ACTIVE_LIVE_STREAMS.get(payload.streamId());
-						if (stream == null || !stream.botUuid().equals(context.player().getUUID())) {
-							return;
-						}
-						stream.markFrameReceived();
-						ActiveLiveStream current = ACTIVE_LIVE_STREAMS.get(payload.streamId());
-						if (current == null || !current.botUuid().equals(context.player().getUUID())) {
-							return;
-						}
-						try {
-							long clientFrameNanos = payload.clientFrameNanos() > 0L ? payload.clientFrameNanos() : receivedAtNanos;
-							current.onFrame().accept(new LiveStreamFrame(payload.pixels(), clientFrameNanos, receivedAtNanos));
-						} catch (Exception exception) {
-							Lg2.LOGGER.warn("Renderer bot live stream frame callback failed for {}", payload.streamId(), exception);
-						}
-					});
+					long clientFrameNanos = payload.clientFrameNanos() > 0L ? payload.clientFrameNanos() : receivedAtNanos;
+					stream.offerFrame(new LiveStreamFrame(payload.pixels(), clientFrameNanos, receivedAtNanos));
 				}
 		);
 		ServerPlayNetworking.registerGlobalReceiver(
@@ -1372,6 +1373,7 @@ public final class RendererBotCameraSystem {
 		}
 		ACTIVE_LIVE_STREAMS.remove(stream.streamId(), stream);
 		LIVE_STREAMS_BY_OWNER.remove(stream.ownerKey(), stream.streamId());
+		stream.clearPendingFrames();
 		ServerPlayer bot = stream.server().getPlayerList().getPlayer(stream.botUuid());
 		if (bot != null && ServerPlayNetworking.canSend(bot, RendererBotPayloads.RendererBotLiveStreamStopS2CPayload.TYPE)) {
 			ServerPlayNetworking.send(bot, new RendererBotPayloads.RendererBotLiveStreamStopS2CPayload(stream.streamId()));
@@ -2316,6 +2318,36 @@ public final class RendererBotCameraSystem {
 		MonitorYandexMapsClientTileRenderer.markChunkDirty(level, pos);
 	}
 
+	/**
+	 * Mirrors one changed block into every shadow session that already owns its
+	 * chunk.  A full {@code LevelChunkWithLight} packet here used to replace the
+	 * whole client chunk, invalidate all of its section meshes and occasionally
+	 * leave a live-camera frame with only the sky while those meshes rebuilt.
+	 */
+	public static void mirrorShadowBlockUpdate(ServerLevel level, BlockPos pos) {
+		if (level == null || pos == null) {
+			return;
+		}
+		mirrorTransientLevelPacket(level, pos, new ClientboundBlockUpdatePacket(level, pos));
+	}
+
+	/**
+	 * Light propagation is incremental too.  Sending this packet preserves the
+	 * already compiled terrain instead of reloading the whole chunk merely to
+	 * refresh its light arrays.
+	 */
+	public static void mirrorShadowLightUpdate(ServerLevel level, ChunkPos pos) {
+		if (level == null || pos == null) {
+			return;
+		}
+		BlockPos chunkOrigin = pos.getWorldPosition();
+		mirrorTransientLevelPacket(
+				level,
+				chunkOrigin,
+				new ClientboundLightUpdatePacket(pos, level.getChunkSource().getLightEngine(), null, null)
+		);
+	}
+
 	private static void syncShadowWorlds(MinecraftServer server) {
 		if (server == null) {
 			return;
@@ -2863,10 +2895,13 @@ public final class RendererBotCameraSystem {
 				.orElseThrow()
 				.identifier()
 				.toString();
+		// A radius change is a normal chunk-cache update, not a world change.
+		// Reinitialising here destroys the entire client shadow level, which made
+		// every camera chunk disappear and reload whenever its effective view
+		// window changed by even one chunk.
 		if (activeState.initialized()
 				&& Objects.equals(activeState.dimensionTypeId(), dimensionTypeId)
-				&& activeState.seed() == level.getSeed()
-				&& activeState.viewDistance() == desiredState.viewDistance()) {
+				&& activeState.seed() == level.getSeed()) {
 			return;
 		}
 		activeState.setInitialized(true);
@@ -2917,6 +2952,7 @@ public final class RendererBotCameraSystem {
 		}
 		activeState.setLastCenterChunkX(centerChunkX);
 		activeState.setLastCenterChunkZ(centerChunkZ);
+		activeState.setViewDistance(desiredState.viewDistance());
 		ServerPlayNetworking.send(
 				bot,
 				new RendererBotPayloads.RendererBotShadowViewS2CPayload(
@@ -4844,9 +4880,13 @@ public final class RendererBotCameraSystem {
 		private final LiveStreamSpec spec;
 		private final Consumer<LiveStreamFrame> onFrame;
 		private final Consumer<String> onFailure;
+		private final Object frameDeliveryLock = new Object();
 		private final long startedAtMillis;
 		private volatile long lastFrameAtMillis;
 		private volatile long lastDispatchAtMillis;
+		private LiveStreamFrame pendingFrame;
+		private long newestAcceptedClientFrameNanos;
+		private boolean frameDeliveryScheduled;
 
 		private ActiveLiveStream(
 				MinecraftServer server,
@@ -4867,6 +4907,9 @@ public final class RendererBotCameraSystem {
 			this.startedAtMillis = System.currentTimeMillis();
 			this.lastFrameAtMillis = 0L;
 			this.lastDispatchAtMillis = 0L;
+			this.pendingFrame = null;
+			this.newestAcceptedClientFrameNanos = 0L;
+			this.frameDeliveryScheduled = false;
 		}
 
 		private MinecraftServer server() {
@@ -4897,8 +4940,60 @@ public final class RendererBotCameraSystem {
 			return this.onFailure;
 		}
 
-		private void markFrameReceived() {
-			this.lastFrameAtMillis = System.currentTimeMillis();
+		private void offerFrame(LiveStreamFrame frame) {
+			if (frame == null || frame.pixels() == null || frame.pixels().length == 0) {
+				return;
+			}
+			boolean scheduleDelivery = false;
+			synchronized (this.frameDeliveryLock) {
+				long frameNanos = frame.clientFrameNanos() > 0L ? frame.clientFrameNanos() : frame.receivedAtNanos();
+				// Frames may complete GPU readback out of order when the client has
+				// several captures in flight.  Never let an older result overwrite
+				// a newer picture on a monitor.
+				if (frameNanos > 0L && frameNanos <= this.newestAcceptedClientFrameNanos) {
+					return;
+				}
+				if (frameNanos > 0L) {
+					this.newestAcceptedClientFrameNanos = frameNanos;
+				}
+				this.lastFrameAtMillis = System.currentTimeMillis();
+				this.pendingFrame = frame;
+				if (!this.frameDeliveryScheduled) {
+					this.frameDeliveryScheduled = true;
+					scheduleDelivery = true;
+				}
+			}
+			if (scheduleDelivery) {
+				LIVE_FRAME_DISPATCH_EXECUTOR.execute(this::deliverPendingFrames);
+			}
+		}
+
+		private void deliverPendingFrames() {
+			while (true) {
+				LiveStreamFrame frame;
+				synchronized (this.frameDeliveryLock) {
+					frame = this.pendingFrame;
+					this.pendingFrame = null;
+					if (frame == null) {
+						this.frameDeliveryScheduled = false;
+						return;
+					}
+				}
+				if (ACTIVE_LIVE_STREAMS.get(this.streamId) != this) {
+					return;
+				}
+				try {
+					this.onFrame.accept(frame);
+				} catch (Exception exception) {
+					Lg2.LOGGER.warn("Renderer bot live stream frame callback failed for {}", this.streamId, exception);
+				}
+			}
+		}
+
+		private void clearPendingFrames() {
+			synchronized (this.frameDeliveryLock) {
+				this.pendingFrame = null;
+			}
 		}
 
 		private long nextDueAtMillis() {

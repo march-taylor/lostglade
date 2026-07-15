@@ -23,6 +23,9 @@ import net.minecraft.resources.Identifier;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.ArrayDeque;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 
@@ -35,6 +38,17 @@ public final class RendererBotGpuCaptureBackend {
 	private static final RenderPipeline MAP_QUANTIZE_DITHER_PIPELINE = createPipeline("renderer_bot_map_quantize_dither", true);
 
 	private static final Object LOCK = new Object();
+	// Live streams used to allocate and destroy a GPU render target and a uniform
+	// buffer for every single frame.  Those allocations force expensive resource
+	// churn on several drivers and made the otherwise small map-sized capture run
+	// at only a few FPS.  A job stays checked out until its asynchronous readback
+	// completes, so this pool is safe even when several frames are in flight.
+	private static final int MAX_IDLE_QUANTIZE_JOBS_PER_SIZE = Math.clamp(
+			Integer.getInteger("lg2.rendererBotGpuCaptureIdleJobsPerSize", 3),
+			1,
+			6
+	);
+	private static final Map<QuantizeJobKey, ArrayDeque<QuantizeJob>> IDLE_QUANTIZE_JOBS = new HashMap<>();
 	private static PaletteTextureState paletteTextureState;
 	private static boolean disabledAfterFailure;
 
@@ -67,7 +81,7 @@ public final class RendererBotGpuCaptureBackend {
 		QuantizeJob job = null;
 		try {
 			PaletteTextureState paletteState = ensurePaletteTextureState();
-			job = new QuantizeJob(sourceTarget.width, sourceTarget.height, outputWidth, outputHeight);
+			job = acquireQuantizeJob(sourceTarget.width, sourceTarget.height, outputWidth, outputHeight);
 			renderQuantized(job, sourceTarget, paletteState, dither);
 			QuantizeJob activeJob = job;
 			Screenshot.takeScreenshot(job.outputTarget(), image -> {
@@ -76,17 +90,51 @@ public final class RendererBotGpuCaptureBackend {
 				} catch (Throwable throwable) {
 					future.completeExceptionally(throwable);
 				} finally {
-					activeJob.close();
+					releaseQuantizeJob(activeJob);
 				}
 			});
 			return future;
 		} catch (Throwable throwable) {
 			if (job != null) {
-				job.close();
+				releaseQuantizeJob(job);
 			}
 			disableAfterFailure(throwable);
 			future.completeExceptionally(throwable);
 			return future;
+		}
+	}
+
+	private static QuantizeJob acquireQuantizeJob(int sourceWidth, int sourceHeight, int outputWidth, int outputHeight) {
+		QuantizeJobKey key = new QuantizeJobKey(
+				Math.max(1, sourceWidth),
+				Math.max(1, sourceHeight),
+				Math.max(1, outputWidth),
+				Math.max(1, outputHeight)
+		);
+		synchronized (LOCK) {
+			ArrayDeque<QuantizeJob> idleJobs = IDLE_QUANTIZE_JOBS.get(key);
+			QuantizeJob job = idleJobs != null ? idleJobs.pollFirst() : null;
+			if (idleJobs != null && idleJobs.isEmpty()) {
+				IDLE_QUANTIZE_JOBS.remove(key);
+			}
+			return job != null ? job : new QuantizeJob(key);
+		}
+	}
+
+	private static void releaseQuantizeJob(QuantizeJob job) {
+		if (job == null) {
+			return;
+		}
+		boolean retained = false;
+		synchronized (LOCK) {
+			ArrayDeque<QuantizeJob> idleJobs = IDLE_QUANTIZE_JOBS.computeIfAbsent(job.key(), ignored -> new ArrayDeque<>());
+			if (idleJobs.size() < MAX_IDLE_QUANTIZE_JOBS_PER_SIZE) {
+				idleJobs.addFirst(job);
+				retained = true;
+			}
+		}
+		if (!retained) {
+			job.close();
 		}
 	}
 
@@ -199,14 +247,20 @@ public final class RendererBotGpuCaptureBackend {
 	}
 
 	private static final class QuantizeJob implements AutoCloseable {
+		private final QuantizeJobKey key;
 		private final TextureTarget outputTarget;
 		private final GpuBuffer paramsBuffer;
 
-		private QuantizeJob(int sourceWidth, int sourceHeight, int outputWidth, int outputHeight) {
-			int safeWidth = Math.max(1, outputWidth);
-			int safeHeight = Math.max(1, outputHeight);
+		private QuantizeJob(QuantizeJobKey key) {
+			this.key = key;
+			int safeWidth = key.outputWidth();
+			int safeHeight = key.outputHeight();
 			this.outputTarget = new TextureTarget("lg2_renderer_bot_quantized_capture", safeWidth, safeHeight, false);
-			this.paramsBuffer = createParamsBuffer(sourceWidth, sourceHeight, safeWidth, safeHeight);
+			this.paramsBuffer = createParamsBuffer(key.sourceWidth(), key.sourceHeight(), safeWidth, safeHeight);
+		}
+
+		private QuantizeJobKey key() {
+			return this.key;
 		}
 
 		private TextureTarget outputTarget() {
@@ -257,6 +311,9 @@ public final class RendererBotGpuCaptureBackend {
 					data
 			);
 		}
+	}
+
+	private record QuantizeJobKey(int sourceWidth, int sourceHeight, int outputWidth, int outputHeight) {
 	}
 
 	private record PaletteTextureState(GpuTexture texture, GpuTextureView textureView) {

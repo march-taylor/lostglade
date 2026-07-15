@@ -19,6 +19,7 @@ public final class DroneScreenLinkPolicyTest {
 		poweredLinkedScreensKeepDronesLoadedWithoutLivePreview();
 		liveCameraScreenApplyUsesAsyncPreparedPatches();
 		droneLiveStreamUsesPoseUpdatesInsteadOfShadowEntityCamera();
+		shadowWorldChangesUseIncrementalPackets();
 		cameraAppOffersControlButtonForFreeDrone();
 		unloadedDroneControlUsesRememberedLocation();
 		System.out.println("Drone screen-link policy checks passed");
@@ -59,8 +60,8 @@ public final class DroneScreenLinkPolicyTest {
 				"uncontrolled drones must hover while a powered linked screen is holding them"
 		);
 		require(
-				droneSystem.contains("boolean omnidirectionalChunkLoading = cameraAnchorUuid == null;"),
-				"loaded drone live feeds should only keep full omnidirectional chunk loading as a fallback when no follow anchor exists"
+				droneSystem.contains("boolean omnidirectionalChunkLoading = true;"),
+				"drone live feeds must keep a stable radial chunk window while the camera rotates"
 		);
 		require(
 				droneSystem.contains("if (root == null || !root.isAlive() || !isDroneHeldByScreen(root))"),
@@ -159,6 +160,33 @@ public final class DroneScreenLinkPolicyTest {
 				"drone system must expose camera-anchor detection for renderer live stream pose updates"
 		);
 	}
+
+	private static void shadowWorldChangesUseIncrementalPackets() throws Exception {
+		Path projectDir = Path.of("").toAbsolutePath();
+		String dirtyMixin = Files.readString(projectDir.resolve("src/main/java/com/lostglade/mixin/ServerChunkCacheRendererBotShadowDirtyMixin.java"));
+		String rendererBot = Files.readString(projectDir.resolve("src/main/java/com/lostglade/server/RendererBotCameraSystem.java"));
+		String packetCodec = Files.readString(projectDir.resolve("src/main/java/com/lostglade/network/RendererBotShadowPacketCodec.java"));
+
+		require(
+				dirtyMixin.contains("RendererBotCameraSystem.mirrorShadowBlockUpdate(level, pos);")
+						&& dirtyMixin.contains("RendererBotCameraSystem.mirrorShadowLightUpdate(level, new ChunkPos(pos.x(), pos.z()));"),
+				"shadow changes must mirror block and light deltas instead of marking entire chunks dirty"
+		);
+		require(
+				!dirtyMixin.contains("markShadowChunkDirty"),
+				"server block/light callbacks must not trigger full shadow chunk snapshots"
+		);
+		require(
+				rendererBot.contains("new ClientboundBlockUpdatePacket(level, pos)")
+						&& rendererBot.contains("new ClientboundLightUpdatePacket(pos, level.getChunkSource().getLightEngine(), null, null)"),
+				"renderer bot must emit vanilla incremental block and light packets"
+		);
+		require(
+				packetCodec.contains("CLIENTBOUND_BLOCK_UPDATE") && packetCodec.contains("CLIENTBOUND_LIGHT_UPDATE"),
+				"shadow packet codec must deliver incremental terrain updates to the renderer client"
+		);
+	}
+
 
 	private static void unloadedDroneControlUsesRememberedLocation() throws Exception {
 		Path projectDir = Path.of("").toAbsolutePath();

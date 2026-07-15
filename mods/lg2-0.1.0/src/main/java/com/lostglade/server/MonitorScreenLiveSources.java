@@ -117,7 +117,17 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
 final class MonitorScreenLiveSources {
+	private static final int[] MAP_PACKED_COLOR_ARGB = createMapPackedColorArgbLookup();
+
 	private MonitorScreenLiveSources() {
+	}
+
+	private static int[] createMapPackedColorArgbLookup() {
+		int[] lookup = new int[256];
+		for (int packedId = 0; packedId < lookup.length; packedId++) {
+			lookup[packedId] = 0xFF000000 | (MapColor.getColorFromPackedId(packedId) & 0xFFFFFF);
+		}
+		return lookup;
 	}
 
 	static boolean syncConnectedLiveCameraGalleryState(MinecraftServer server, ScreenComponent component, MediaRuntimeState state, List<LiveCameraReference> connectedCameraPositions) {
@@ -623,9 +633,7 @@ final class MonitorScreenLiveSources {
 		int[] argb = ((DataBufferInt) image.getRaster().getDataBuffer()).getData();
 		int pixelCount = Math.min(argb.length, pixels.length);
 		for (int index = 0; index < pixelCount; index++) {
-			int packedId = Byte.toUnsignedInt(pixels[index]);
-			int rgb = MapColor.getColorFromPackedId(packedId) & 0xFFFFFF;
-			argb[index] = 0xFF000000 | rgb;
+			argb[index] = MAP_PACKED_COLOR_ARGB[Byte.toUnsignedInt(pixels[index])];
 		}
 		return image;
 	}
@@ -652,9 +660,7 @@ final class MonitorScreenLiveSources {
 					int tileOffset = row * MAP_SIZE;
 					int imageOffset = (tileY * MAP_SIZE + row) * width + tileX * MAP_SIZE;
 					for (int column = 0; column < MAP_SIZE; column++) {
-						int packedId = Byte.toUnsignedInt(tile[tileOffset + column]);
-						int rgb = MapColor.getColorFromPackedId(packedId) & 0xFFFFFF;
-						argb[imageOffset + column] = 0xFF000000 | rgb;
+						argb[imageOffset + column] = MAP_PACKED_COLOR_ARGB[Byte.toUnsignedInt(tile[tileOffset + column])];
 					}
 				}
 			}

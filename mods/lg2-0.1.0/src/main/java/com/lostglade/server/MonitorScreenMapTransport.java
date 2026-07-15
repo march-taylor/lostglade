@@ -56,6 +56,21 @@ final class MonitorScreenMapTransport {
 	}
 
 	static void applyPatchToMap(MapItemSavedData mapData, MapPacketUpdate update) {
+		applyPatchToMap(mapData, update, true);
+	}
+
+	/**
+	 * Applies a transient live-video patch.  The pixels still live in memory for
+	 * newly tracking clients, but marking SavedData dirty for every 20 FPS frame
+	 * makes the server repeatedly schedule the same map data for disk saving.
+	 * Live feeds are recreated after restart, so persisting each intermediate
+	 * frame is wasted work and can starve the stream itself.
+	 */
+	static void applyTransientPatchToMap(MapItemSavedData mapData, MapPacketUpdate update) {
+		applyPatchToMap(mapData, update, false);
+	}
+
+	private static void applyPatchToMap(MapItemSavedData mapData, MapPacketUpdate update, boolean markDirty) {
 		if (mapData == null || update == null || mapData.colors == null || update.frame() == null) {
 			return;
 		}
@@ -67,7 +82,9 @@ final class MonitorScreenMapTransport {
 			int targetOffset = (update.startY() + row) * MAP_SIZE + update.startX();
 			System.arraycopy(update.frame(), sourceOffset, mapData.colors, targetOffset, update.width());
 		}
-		mapData.setDirty();
+		if (markDirty) {
+			mapData.setDirty();
+		}
 	}
 
 	static List<PreparedMapUpdate> prepareRenderedMapUpdates(RenderWork work, byte[][] renderedTiles) {
@@ -228,7 +245,7 @@ final class MonitorScreenMapTransport {
 			);
 			changed = true;
 			LAST_RENDERED_MAP_FRAMES.put(mapId.id(), tileFrame);
-			applyPatchToMap(mapData, update);
+			applyTransientPatchToMap(mapData, update);
 			changedUpdates.add(update);
 		}
 		if (mediaState != null) {

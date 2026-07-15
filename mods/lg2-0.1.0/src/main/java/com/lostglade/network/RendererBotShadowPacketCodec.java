@@ -12,6 +12,7 @@ import net.minecraft.network.protocol.PacketType;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
 import net.minecraft.network.protocol.game.ClientboundAddEntityPacket;
 import net.minecraft.network.protocol.game.ClientboundAnimatePacket;
+import net.minecraft.network.protocol.game.ClientboundBlockUpdatePacket;
 import net.minecraft.network.protocol.game.ClientboundBlockDestructionPacket;
 import net.minecraft.network.protocol.game.ClientboundBlockEventPacket;
 import net.minecraft.network.protocol.game.ClientboundBundlePacket;
@@ -22,6 +23,7 @@ import net.minecraft.network.protocol.game.ClientboundForgetLevelChunkPacket;
 import net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket;
 import net.minecraft.network.protocol.game.ClientboundLevelEventPacket;
 import net.minecraft.network.protocol.game.ClientboundLevelParticlesPacket;
+import net.minecraft.network.protocol.game.ClientboundLightUpdatePacket;
 import net.minecraft.network.protocol.game.ClientboundMoveEntityPacket;
 import net.minecraft.network.protocol.game.ClientboundMoveMinecartPacket;
 import net.minecraft.network.protocol.game.ClientboundProjectilePowerPacket;
@@ -58,6 +60,7 @@ public final class RendererBotShadowPacketCodec {
 	static {
 		register(GamePacketTypes.CLIENTBOUND_ADD_ENTITY, ClientboundAddEntityPacket.class);
 		register(GamePacketTypes.CLIENTBOUND_ANIMATE, ClientboundAnimatePacket.class);
+		register(GamePacketTypes.CLIENTBOUND_BLOCK_UPDATE, ClientboundBlockUpdatePacket.class);
 		register(GamePacketTypes.CLIENTBOUND_BLOCK_DESTRUCTION, ClientboundBlockDestructionPacket.class);
 		register(GamePacketTypes.CLIENTBOUND_BLOCK_EVENT, ClientboundBlockEventPacket.class);
 		register(GamePacketTypes.CLIENTBOUND_DAMAGE_EVENT, ClientboundDamageEventPacket.class);
@@ -73,6 +76,7 @@ public final class RendererBotShadowPacketCodec {
 		register(GamePacketTypes.CLIENTBOUND_HURT_ANIMATION, ClientboundHurtAnimationPacket.class);
 		register(GamePacketTypes.CLIENTBOUND_LEVEL_EVENT, ClientboundLevelEventPacket.class);
 		register(GamePacketTypes.CLIENTBOUND_LEVEL_PARTICLES, ClientboundLevelParticlesPacket.class);
+		register(GamePacketTypes.CLIENTBOUND_LIGHT_UPDATE, ClientboundLightUpdatePacket.class);
 		register(GamePacketTypes.CLIENTBOUND_MOVE_ENTITY_POS, ClientboundMoveEntityPacket.Pos.class);
 		register(GamePacketTypes.CLIENTBOUND_MOVE_ENTITY_POS_ROT, ClientboundMoveEntityPacket.PosRot.class);
 		register(GamePacketTypes.CLIENTBOUND_MOVE_ENTITY_ROT, ClientboundMoveEntityPacket.Rot.class);

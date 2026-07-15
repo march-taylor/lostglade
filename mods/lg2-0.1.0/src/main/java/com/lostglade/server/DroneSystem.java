@@ -1375,7 +1375,11 @@ public final class DroneSystem {
 			float cameraPitch = cameraAnchor != null ? cameraAnchor.getXRot() : resolveDroneCameraPitch(root);
 			UUID cameraAnchorUuid = cameraAnchor != null ? cameraAnchor.getUUID() : null;
 			Set<UUID> hiddenEntities = hiddenDroneCameraEntityUuids(root, null);
-			boolean omnidirectionalChunkLoading = cameraAnchorUuid == null;
+			// A drone camera can rotate every tick.  Its shadow world therefore must
+			// keep a stable radial chunk window: a directional frustum moves both the
+			// virtual cache centre and its edge on every yaw update, causing vanilla
+			// to evict/rebuild terrain while the picture is being captured.
+			boolean omnidirectionalChunkLoading = true;
 			if (controller != null && ACTIVE_SESSIONS.containsKey(controller.getUUID())) {
 				DroneControlSession session = ACTIVE_SESSIONS.get(controller.getUUID());
 				if (session != null

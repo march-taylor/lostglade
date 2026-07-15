@@ -20,21 +20,21 @@ public abstract class ServerChunkCacheRendererBotShadowDirtyMixin {
 	public abstract Level getLevel();
 
 	@Inject(method = "blockChanged", at = @At("TAIL"))
-	private void lg2$markRendererBotShadowChunkDirty(BlockPos pos, CallbackInfo ci) {
+	private void lg2$mirrorRendererBotShadowBlockUpdate(BlockPos pos, CallbackInfo ci) {
 		if (!(this.getLevel() instanceof ServerLevel level)) {
 			return;
 		}
 		if (pos == null) {
 			return;
 		}
-		RendererBotCameraSystem.markShadowChunkDirty(level, new ChunkPos(pos));
+		RendererBotCameraSystem.mirrorShadowBlockUpdate(level, pos);
 	}
 
 	@Inject(method = "onLightUpdate", at = @At("TAIL"))
-	private void lg2$markRendererBotShadowLightDirty(LightLayer type, SectionPos pos, CallbackInfo ci) {
+	private void lg2$mirrorRendererBotShadowLightUpdate(LightLayer type, SectionPos pos, CallbackInfo ci) {
 		if (!(this.getLevel() instanceof ServerLevel level) || pos == null) {
 			return;
 		}
-		RendererBotCameraSystem.markShadowChunkDirty(level, new ChunkPos(pos.x(), pos.z()));
+		RendererBotCameraSystem.mirrorShadowLightUpdate(level, new ChunkPos(pos.x(), pos.z()));
 	}
 }

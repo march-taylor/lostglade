@@ -53,6 +53,15 @@ public final class RendererBotClientCapture {
 	private static final int MAX_RENDER_WIDTH = Math.max(MIN_RENDER_WIDTH, Integer.getInteger("lg2.rendererBotMaxRenderWidth", 3072));
 	private static final int MAX_RENDER_HEIGHT = Math.max(MIN_RENDER_HEIGHT, Integer.getInteger("lg2.rendererBotMaxRenderHeight", 2048));
 	private static final int MAX_LIVE_STREAM_FPS = 20;
+	// A GPU readback is asynchronous and can take longer than one render tick.
+	// Keeping a small bounded window lets rendering, readback, palette conversion
+	// and network sending overlap instead of making every live frame wait for the
+	// previous one to finish.  The server discards late frames by capture time.
+	private static final int MAX_LIVE_STREAM_FRAMES_IN_FLIGHT = Math.clamp(
+			Integer.getInteger("lg2.rendererBotLiveFramesInFlight", 3),
+			1,
+			6
+	);
 	private static final long MAP_TILE_TIMEOUT_MS = Long.getLong("lg2.rendererBotMapTileTimeoutMs", 60_000L);
 	private static final long ITEM_ICON_TIMEOUT_MS = Long.getLong("lg2.rendererBotItemIconTimeoutMs", 30_000L);
 	private static final int MAP_TILE_WARMUP_FRAMES = Math.max(0, Integer.getInteger("lg2.rendererBotMapTileWarmupFrames", 8));
@@ -220,7 +229,7 @@ public final class RendererBotClientCapture {
 			}
 		}
 		for (LiveStreamSession liveStream : liveStreams) {
-			if (liveStream == null || liveStream.frameInFlight()) {
+			if (liveStream == null || !liveStream.canScheduleFrame()) {
 				continue;
 			}
 			if (now - liveStream.startedAtMillis() >= LOCAL_CAPTURE_TIMEOUT_MS && liveStream.lastFrameAtNanos() == 0L) {
@@ -486,7 +495,7 @@ public final class RendererBotClientCapture {
 				capturesToRender.add(capture);
 			}
 			for (LiveStreamSession liveStream : LIVE_STREAM_SESSIONS.values()) {
-				if (liveStream == null || liveStream.frameInFlight()) {
+				if (liveStream == null || !liveStream.canScheduleFrame()) {
 					continue;
 				}
 				if (liveStream.remainingWarmupFrames() > 0) {
@@ -1275,7 +1284,7 @@ public final class RendererBotClientCapture {
 	private static boolean markLiveStreamFrameInFlight(UUID streamId, long nowNanos) {
 		synchronized (LOCK) {
 			LiveStreamSession session = LIVE_STREAM_SESSIONS.get(streamId);
-			if (session == null || session.frameInFlight()) {
+			if (session == null || !session.canScheduleFrame()) {
 				return false;
 			}
 			session.markFrameInFlight(nowNanos);
@@ -1548,7 +1557,7 @@ public final class RendererBotClientCapture {
 		private final long startedAtMillis;
 		private int remainingWarmupFrames;
 		private long lastFrameAtNanos;
-		private boolean frameInFlight;
+		private int framesInFlight;
 		private LiveStreamPose pose;
 
 		private LiveStreamSession(
@@ -1560,7 +1569,7 @@ public final class RendererBotClientCapture {
 			this.startedAtMillis = startedAtMillis;
 			this.remainingWarmupFrames = remainingWarmupFrames;
 			this.lastFrameAtNanos = 0L;
-			this.frameInFlight = false;
+			this.framesInFlight = 0;
 		}
 
 		private RendererBotPayloads.RendererBotLiveStreamStartS2CPayload payload() {
@@ -1585,8 +1594,8 @@ public final class RendererBotClientCapture {
 			return this.lastFrameAtNanos;
 		}
 
-		private boolean frameInFlight() {
-			return this.frameInFlight;
+		private boolean canScheduleFrame() {
+			return this.framesInFlight < MAX_LIVE_STREAM_FRAMES_IN_FLIGHT;
 		}
 
 		private LiveStreamPose pose() {
@@ -1599,11 +1608,11 @@ public final class RendererBotClientCapture {
 
 		private void markFrameInFlight(long nowNanos) {
 			this.lastFrameAtNanos = nowNanos;
-			this.frameInFlight = true;
+			this.framesInFlight++;
 		}
 
 		private void clearFrameInFlight() {
-			this.frameInFlight = false;
+			this.framesInFlight = Math.max(0, this.framesInFlight - 1);
 		}
 	}
 
