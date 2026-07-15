@@ -439,45 +439,15 @@ final class MonitorMaxRuntime {
 	}
 
 	private static ObservedCallUiTarget findObservedCallUiTarget(ServerPlayer player) {
-		if (player == null || !(player.level() instanceof ServerLevel level)) {
+		ObservedScreenTouch target = findObservedScreenTouch(
+				player,
+				component -> component.viewMode() == ScreenViewMode.MAX || hasVisibleCall(component.runtimeKey())
+		);
+		if (target == null) {
 			return null;
 		}
-		Vec3 eye = player.getEyePosition();
-		Vec3 rayEnd = eye.add(player.getLookAngle().scale(MEDIA_CONTROL_DISTANCE));
-		ScreenComponent nearestComponent = null;
-		ItemFrame nearestFrame = null;
-		TileCoord nearestTile = null;
-		Vec3 nearestHit = null;
-		double nearestDistanceSqr = Double.POSITIVE_INFINITY;
-		for (ScreenComponent component : cachedComponents(level)) {
-			if (component == null || !component.powered() || (component.viewMode() != ScreenViewMode.MAX && !hasVisibleCall(component.runtimeKey()))) {
-				continue;
-			}
-			for (Map.Entry<ItemFrame, TileCoord> entry : component.frameCoords().entrySet()) {
-				ItemFrame frame = entry.getKey();
-				if (frame == null || !frame.isAlive()) {
-					continue;
-				}
-				Optional<Vec3> hit = frame.getBoundingBox().inflate(0.08D).clip(eye, rayEnd);
-				if (hit.isEmpty() || hit.get().distanceToSqr(eye) > MEDIA_CONTROL_DISTANCE * MEDIA_CONTROL_DISTANCE) {
-					continue;
-				}
-				double hitDistanceSqr = eye.distanceToSqr(hit.get());
-				if (hitDistanceSqr < nearestDistanceSqr) {
-					nearestDistanceSqr = hitDistanceSqr;
-					nearestComponent = component;
-					nearestFrame = frame;
-					nearestTile = entry.getValue();
-					nearestHit = hit.get();
-				}
-			}
-		}
-		if (nearestComponent == null || nearestFrame == null || nearestTile == null || nearestHit == null) {
-			return null;
-		}
-		UiLayout layout = createUiLayout(nearestComponent.width(), nearestComponent.height());
-		UiPoint touchPoint = screenTouchPoint(nearestFrame, player, nearestHit, nearestTile, nearestComponent.width(), nearestComponent.height());
-		return touchPoint == null ? null : new ObservedCallUiTarget(nearestComponent, layout, touchPoint);
+		ScreenComponent component = target.component();
+		return new ObservedCallUiTarget(component, createUiLayout(component.width(), component.height()), target.touchPoint());
 	}
 
 	private static boolean handleOverlayHotbarScroll(

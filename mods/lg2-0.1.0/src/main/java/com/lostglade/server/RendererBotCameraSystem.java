@@ -79,6 +79,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
 public final class RendererBotCameraSystem {
@@ -99,7 +100,16 @@ public final class RendererBotCameraSystem {
 	private static final float MAP_TILE_TOP_DOWN_PITCH = 90.0F;
 	private static final long LIVE_STREAM_STALE_MS = 1_500L;
 	private static final long MAP_TILE_CAPTURE_TIMEOUT_MS = 60_000L;
+	// Only one map job can own the shared shadow world, so a valid queued job may
+	// wait behind earlier tiles. It is bound to the renderer bot selected at
+	// admission; a selection change fails it immediately and releases its retry.
+	private static final long MAP_TILE_CHUNK_LOAD_TIMEOUT_MS = 45_000L;
+	private static final long MAP_TILE_SHADOW_RESYNC_INTERVAL_MS = 5_000L;
 	private static final int MAX_PENDING_MAP_TILE_CAPTURES = Math.max(1, Integer.getInteger("lg2.rendererBotMaxPendingMapTiles", 24));
+	// All map tile captures share one client shadow-world session.  Feeding it
+	// distant targets concurrently makes vanilla reject their chunk packets as
+	// out-of-range, so exactly one target owns that session at a time.
+	private static final int MAX_ACTIVE_MAP_TILE_SHADOW_TARGETS = 1;
 	private static final long ITEM_ICON_CAPTURE_TIMEOUT_MS = 30_000L;
 	private static final long AUDIO_CAPTURE_STALE_MS = 8_000L;
 	private static final long LIVE_STREAM_ORPHAN_CLEANUP_MS = 15_000L;
@@ -124,7 +134,9 @@ public final class RendererBotCameraSystem {
 	private static final Map<UUID, PendingVideoRecording> PENDING_VIDEO_RECORDINGS = new ConcurrentHashMap<>();
 	private static final Map<UUID, ActiveLiveStream> ACTIVE_LIVE_STREAMS = new ConcurrentHashMap<>();
 	private static final Map<String, UUID> LIVE_STREAMS_BY_OWNER = new ConcurrentHashMap<>();
+	private static final Object MAP_TILE_QUEUE_LOCK = new Object();
 	private static final Map<UUID, PendingMapTileCapture> PENDING_MAP_TILE_CAPTURES = new ConcurrentHashMap<>();
+	private static final AtomicLong NEXT_MAP_TILE_SEQUENCE = new AtomicLong();
 	private static final Map<UUID, PendingItemIconCapture> PENDING_ITEM_ICON_CAPTURES = new ConcurrentHashMap<>();
 	private static final Map<UUID, ActiveAudioCapture> ACTIVE_AUDIO_CAPTURES = new ConcurrentHashMap<>();
 	private static final Map<String, UUID> AUDIO_CAPTURES_BY_OWNER = new ConcurrentHashMap<>();
@@ -616,15 +628,13 @@ public final class RendererBotCameraSystem {
 			future.completeExceptionally(new IllegalStateException("Клиент камеры не поддерживает тайлы карты"));
 			return future;
 		}
-		if (PENDING_MAP_TILE_CAPTURES.size() >= MAX_PENDING_MAP_TILE_CAPTURES) {
-			future.completeExceptionally(new IllegalStateException("Очередь тайлов карты занята"));
-			return future;
-		}
-
+		int safePriorityScore = Math.max(0, priorityScore);
 		UUID requestId = UUID.randomUUID();
 		UUID renderSessionId = resolveMapRenderSessionId(level.dimension());
 		int clampedTileSize = Math.max(1, tileSize);
 		double safeBlocksPerPixel = Math.max(1.0D / 16.0D, blocksPerPixel);
+		long queuedAtMillis = System.currentTimeMillis();
+		double worldCenterDistanceSquared = mapTileWorldCenterDistanceSquared(centerX, centerZ);
 		PendingMapTileCapture capture = new PendingMapTileCapture(
 				requestId,
 				renderSessionId,
@@ -638,33 +648,67 @@ public final class RendererBotCameraSystem {
 				tileZ,
 				clampedTileSize,
 				safeBlocksPerPixel,
-				Math.max(0, priorityScore),
+				safePriorityScore,
 				activeView,
+				queuedAtMillis,
+				NEXT_MAP_TILE_SEQUENCE.getAndIncrement(),
+				worldCenterDistanceSquared,
 				future
 		);
-		PENDING_MAP_TILE_CAPTURES.put(requestId, capture);
-		future.orTimeout(MAP_TILE_CAPTURE_TIMEOUT_MS, TimeUnit.MILLISECONDS).exceptionally(throwable -> {
-			PENDING_MAP_TILE_CAPTURES.remove(requestId, capture);
-			return null;
-		});
-		ServerPlayNetworking.send(
-				bot,
-				new RendererBotPayloads.RendererBotMapTileRequestS2CPayload(
-						requestId,
-						renderSessionId,
-						level.dimension().identifier().toString(),
-						clampedTileSize,
-						Math.max(0, lod),
-						tileX,
-						tileZ,
-						centerX,
-						centerZ,
-						safeBlocksPerPixel,
-						Math.max(0, priorityScore),
-						activeView
-				)
-		);
+		PendingMapTileCapture displaced = null;
+		boolean admitted;
+		synchronized (MAP_TILE_QUEUE_LOCK) {
+			boolean displacedRemoved = false;
+			if (PENDING_MAP_TILE_CAPTURES.size() >= MAX_PENDING_MAP_TILE_CAPTURES) {
+				displaced = findLessPreferredWaitingMapTile(capture);
+				if (displaced != null) {
+					displacedRemoved = PENDING_MAP_TILE_CAPTURES.remove(displaced.requestId(), displaced);
+					if (!displacedRemoved) {
+						displaced = null;
+					}
+				}
+			}
+			admitted = PENDING_MAP_TILE_CAPTURES.size() < MAX_PENDING_MAP_TILE_CAPTURES || displacedRemoved;
+			if (admitted) {
+				PENDING_MAP_TILE_CAPTURES.put(requestId, capture);
+			}
+		}
+		if (!admitted) {
+			future.completeExceptionally(new IllegalStateException("Очередь тайлов карты занята"));
+			return future;
+		}
+		future.whenComplete((pixels, throwable) -> PENDING_MAP_TILE_CAPTURES.remove(requestId, capture));
+		if (displaced != null) {
+			displaced.pixelsFuture().completeExceptionally(new IllegalStateException("Тайл карты вытеснен более приоритетной очередью"));
+		}
 		return future;
+	}
+
+	private static double mapTileWorldCenterDistanceSquared(double centerX, double centerZ) {
+		if (!Double.isFinite(centerX) || !Double.isFinite(centerZ)) {
+			return Double.POSITIVE_INFINITY;
+		}
+		double distance = centerX * centerX + centerZ * centerZ;
+		return Double.isFinite(distance) ? distance : Double.POSITIVE_INFINITY;
+	}
+
+	private static PendingMapTileCapture findLessPreferredWaitingMapTile(PendingMapTileCapture incoming) {
+		if (incoming == null) {
+			return null;
+		}
+		PendingMapTileCapture candidate = null;
+		for (PendingMapTileCapture pending : PENDING_MAP_TILE_CAPTURES.values()) {
+			if (pending == null
+					|| pending.clientRequestSent()
+					|| pending.pixelsFuture().isDone()
+					|| compareMapTileCapturePriority(pending, incoming) <= 0) {
+				continue;
+			}
+			if (candidate == null || compareMapTileCapturePriority(pending, candidate) > 0) {
+				candidate = pending;
+			}
+		}
+		return candidate;
 	}
 
 	public static CompletableFuture<byte[]> requestItemIcon(MinecraftServer server, ItemStack stack, int iconSize) {
@@ -1378,6 +1422,21 @@ public final class RendererBotCameraSystem {
 		for (Map.Entry<UUID, PendingMapTileCapture> entry : PENDING_MAP_TILE_CAPTURES.entrySet()) {
 			PendingMapTileCapture capture = entry.getValue();
 			if (capture == null || !botUuid.equals(capture.botUuid())) {
+				continue;
+			}
+			if (PENDING_MAP_TILE_CAPTURES.remove(entry.getKey(), capture)) {
+				capture.pixelsFuture().completeExceptionally(failure);
+			}
+		}
+	}
+
+	private static void failMapTileCapturesExceptBot(UUID selectedBotUuid, String message) {
+		IllegalStateException failure = new IllegalStateException(message == null || message.isBlank()
+				? "Клиент камеры для тайла карты недоступен"
+				: message);
+		for (Map.Entry<UUID, PendingMapTileCapture> entry : PENDING_MAP_TILE_CAPTURES.entrySet()) {
+			PendingMapTileCapture capture = entry.getValue();
+			if (capture == null || (selectedBotUuid != null && selectedBotUuid.equals(capture.botUuid()))) {
 				continue;
 			}
 			if (PENDING_MAP_TILE_CAPTURES.remove(entry.getKey(), capture)) {
@@ -2261,7 +2320,21 @@ public final class RendererBotCameraSystem {
 		if (server == null) {
 			return;
 		}
-		Map<ShadowSyncKey, ShadowDesiredState> desiredStates = collectDesiredShadowStates(server);
+		ServerPlayer selectedBot = selectBot(server);
+		// A capture has a shadow session on one client only. If configuration or
+		// readiness selects another bot (or none), the current sync pass can never
+		// send it. Fail it now so its map tile is retried instead of holding a
+		// pending slot forever.
+		failMapTileCapturesExceptBot(
+				selectedBot != null ? selectedBot.getUUID() : null,
+				selectedBot == null
+						? "Клиент камеры для тайла карты недоступен"
+						: "Активный клиент камеры сменился во время рендера тайла карты"
+		);
+		List<PendingMapTileCapture> activeMapTiles = selectedBot == null
+				? List.of()
+				: activeMapTileShadowTargets(selectedBot.getUUID());
+		Map<ShadowSyncKey, ShadowDesiredState> desiredStates = collectDesiredShadowStates(server, activeMapTiles);
 		Set<ChunkTicketKey> trackedChunks = collectTrackedShadowChunks(desiredStates.values());
 		syncShadowChunkTickets(server, desiredStates.values());
 		Set<ChunkTicketKey> consumedDirtyChunks = new HashSet<>();
@@ -2273,6 +2346,9 @@ public final class RendererBotCameraSystem {
 			}
 			syncShadowState(server, bot, key, entry.getValue(), consumedDirtyChunks);
 		}
+		// Send the render payload only after the selected target has a ticket and
+		// its shadow chunks were pushed to the renderer bot in this tick.
+		dispatchReadyMapTileRequests(server, activeMapTiles, desiredStates);
 
 		Set<ShadowSyncKey> staleKeys = new LinkedHashSet<>(ACTIVE_SHADOW_SYNC_STATES.keySet());
 		staleKeys.removeAll(desiredStates.keySet());
@@ -2285,6 +2361,119 @@ public final class RendererBotCameraSystem {
 			return;
 		}
 		DIRTY_SHADOW_CHUNKS.removeIf(key -> key == null || !trackedChunks.contains(key));
+		// Add retry dirties after the normal cleanup so a lost client chunk is
+		// guaranteed to be pushed again on the following tick.
+		resyncStalledMapTileShadows(server, activeMapTiles);
+	}
+
+	private static void dispatchReadyMapTileRequests(
+			MinecraftServer server,
+			List<PendingMapTileCapture> activeMapTiles,
+			Map<ShadowSyncKey, ShadowDesiredState> desiredStates
+	) {
+		if (server == null || activeMapTiles == null || activeMapTiles.isEmpty()) {
+			return;
+		}
+		ServerPlayer bot = selectBot(server);
+		if (bot == null) {
+			return;
+		}
+		for (PendingMapTileCapture capture : activeMapTiles) {
+			if (!isPendingMapTileCapture(capture)
+					|| !bot.getUUID().equals(capture.botUuid())
+					|| capture.clientRequestSent()
+					|| desiredStates == null
+					|| !desiredStates.containsKey(new ShadowSyncKey(bot.getUUID(), capture.renderSessionId()))) {
+				continue;
+			}
+			ServerLevel level = server.getLevel(capture.dimension());
+			if (level == null) {
+				failMapTileCapture(capture.requestId(), capture, "Renderer bot map tile target is unavailable");
+				continue;
+			}
+			if (!mapTileChunksLoaded(level, capture)) {
+				if (capture.shadowTargetLoadTimedOut(System.currentTimeMillis())) {
+					failMapTileCapture(capture.requestId(), capture, "Тайм-аут загрузки чанков для тайла карты");
+				}
+				continue;
+			}
+			if (!ServerPlayNetworking.canSend(bot, RendererBotPayloads.RendererBotShadowLevelInitS2CPayload.TYPE)
+					|| !ServerPlayNetworking.canSend(bot, RendererBotPayloads.RendererBotShadowChunkDataS2CPayload.TYPE)
+					|| !ServerPlayNetworking.canSend(bot, RendererBotPayloads.RendererBotMapTileRequestS2CPayload.TYPE)) {
+				failMapTileCapture(capture.requestId(), capture, "Клиент камеры не поддерживает тайлы карты");
+				continue;
+			}
+			try {
+				ServerPlayNetworking.send(bot, mapTileRequestPayload(capture));
+				capture.markClientRequestSent(System.currentTimeMillis());
+				capture.armClientTimeout();
+			} catch (RuntimeException exception) {
+				failMapTileCapture(capture.requestId(), capture, "Не удалось отправить тайл карты клиенту камеры");
+			}
+		}
+	}
+
+	private static void resyncStalledMapTileShadows(MinecraftServer server, List<PendingMapTileCapture> activeMapTiles) {
+		if (server == null || activeMapTiles == null || activeMapTiles.isEmpty()) {
+			return;
+		}
+		long now = System.currentTimeMillis();
+		for (PendingMapTileCapture capture : activeMapTiles) {
+			if (!isPendingMapTileCapture(capture) || !capture.shouldResyncShadow(now)) {
+				continue;
+			}
+			ShadowDimensionSyncState state = ACTIVE_SHADOW_SYNC_STATES.get(
+					new ShadowSyncKey(capture.botUuid(), capture.renderSessionId())
+			);
+			ServerLevel level = server.getLevel(capture.dimension());
+			if (state == null || level == null) {
+				continue;
+			}
+			LongIterator chunks = state.trackedChunks().iterator();
+			while (chunks.hasNext()) {
+				DIRTY_SHADOW_CHUNKS.add(new ChunkTicketKey(level.dimension(), chunks.nextLong()));
+			}
+			state.forceViewResend();
+			capture.markShadowResynced(now);
+			Lg2.LOGGER.debug("Resending shadow chunks for stalled Yandex map tile {}", capture.requestId());
+		}
+	}
+
+	private static boolean mapTileChunksLoaded(ServerLevel level, PendingMapTileCapture capture) {
+		if (level == null || capture == null) {
+			return false;
+		}
+		double halfBlocks = Math.max(1, capture.tileSize())
+				* Math.max(1.0D / 16.0D, capture.blocksPerPixel()) * 0.5D;
+		int minChunkX = SectionPos.blockToSectionCoord(Mth.floor(capture.centerX() - halfBlocks));
+		int maxChunkX = SectionPos.blockToSectionCoord(Mth.floor(capture.centerX() + halfBlocks - 1.0E-6D));
+		int minChunkZ = SectionPos.blockToSectionCoord(Mth.floor(capture.centerZ() - halfBlocks));
+		int maxChunkZ = SectionPos.blockToSectionCoord(Mth.floor(capture.centerZ() + halfBlocks - 1.0E-6D));
+		for (int chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ++) {
+			for (int chunkX = minChunkX; chunkX <= maxChunkX; chunkX++) {
+				if (level.getChunkSource().getChunkNow(chunkX, chunkZ) == null) {
+					return false;
+				}
+			}
+		}
+		return true;
+	}
+
+	private static RendererBotPayloads.RendererBotMapTileRequestS2CPayload mapTileRequestPayload(PendingMapTileCapture capture) {
+		return new RendererBotPayloads.RendererBotMapTileRequestS2CPayload(
+				capture.requestId(),
+				capture.renderSessionId(),
+				capture.dimension().identifier().toString(),
+				capture.tileSize(),
+				capture.lod(),
+				capture.tileX(),
+				capture.tileZ(),
+				capture.centerX(),
+				capture.centerZ(),
+				capture.blocksPerPixel(),
+				capture.priorityScore(),
+				capture.activeView()
+		);
 	}
 
 	private static Set<ChunkTicketKey> collectTrackedShadowChunks(Iterable<ShadowDesiredState> desiredStates) {
@@ -2362,7 +2551,10 @@ public final class RendererBotCameraSystem {
 		desiredRefs.merge(new CameraChunkTicketKey(dimension, center.toLong(), clampedRadius), 1, Integer::sum);
 	}
 
-	private static Map<ShadowSyncKey, ShadowDesiredState> collectDesiredShadowStates(MinecraftServer server) {
+	private static Map<ShadowSyncKey, ShadowDesiredState> collectDesiredShadowStates(
+			MinecraftServer server,
+			List<PendingMapTileCapture> activeMapTiles
+	) {
 		Map<ShadowSyncKey, ShadowDesiredState> desiredStates = new HashMap<>();
 		ServerPlayer bot = selectBot(server);
 		if (server == null || bot == null) {
@@ -2449,16 +2641,16 @@ public final class RendererBotCameraSystem {
 			accumulateShadowDesiredState(desiredStates, botUuid, capture.renderSessionId(), target, viewDistance, Set.of(), false, false);
 		}
 
-		for (Map.Entry<UUID, PendingMapTileCapture> entry : PENDING_MAP_TILE_CAPTURES.entrySet()) {
-			PendingMapTileCapture capture = entry.getValue();
-			if (capture == null || !botUuid.equals(capture.botUuid()) || capture.pixelsFuture().isDone()) {
+		for (PendingMapTileCapture capture : activeMapTiles == null ? List.<PendingMapTileCapture>of() : activeMapTiles) {
+			if (!isPendingMapTileCapture(capture) || !botUuid.equals(capture.botUuid())) {
 				continue;
 			}
 			ServerLevel level = server.getLevel(capture.dimension());
 			if (level == null) {
-				failMapTileCapture(entry.getKey(), capture, "Renderer bot map tile target is unavailable");
+				failMapTileCapture(capture.requestId(), capture, "Renderer bot map tile target is unavailable");
 				continue;
 			}
+			capture.markShadowTargetActive(System.currentTimeMillis());
 			ScheduledServiceTarget target = new ScheduledServiceTarget(
 					level,
 					capture.centerX(),
@@ -2522,6 +2714,66 @@ public final class RendererBotCameraSystem {
 		return desiredStates;
 	}
 
+	private static List<PendingMapTileCapture> activeMapTileShadowTargets(UUID botUuid) {
+		if (botUuid == null || PENDING_MAP_TILE_CAPTURES.isEmpty()) {
+			return List.of();
+		}
+		List<PendingMapTileCapture> candidates = new ArrayList<>();
+		for (PendingMapTileCapture capture : PENDING_MAP_TILE_CAPTURES.values()) {
+			if (capture != null
+					&& botUuid.equals(capture.botUuid())
+					&& !capture.pixelsFuture().isDone()) {
+				candidates.add(capture);
+			}
+		}
+		candidates.sort(RendererBotCameraSystem::compareMapTileCapturePriority);
+		if (candidates.size() <= MAX_ACTIVE_MAP_TILE_SHADOW_TARGETS) {
+			return candidates;
+		}
+		return new ArrayList<>(candidates.subList(0, MAX_ACTIVE_MAP_TILE_SHADOW_TARGETS));
+	}
+
+	private static boolean isPendingMapTileCapture(PendingMapTileCapture capture) {
+		return capture != null
+				&& !capture.pixelsFuture().isDone()
+				&& PENDING_MAP_TILE_CAPTURES.get(capture.requestId()) == capture;
+	}
+
+	private static int compareMapTileCapturePriority(PendingMapTileCapture left, PendingMapTileCapture right) {
+		if (left == right) {
+			return 0;
+		}
+		if (left == null) {
+			return 1;
+		}
+		if (right == null) {
+			return -1;
+		}
+		// Once a payload has reached the client its chunks must stay owned by
+		// the same shadow session until the capture finishes.
+		if (left.clientRequestSent() != right.clientRequestSent()) {
+			return left.clientRequestSent() ? -1 : 1;
+		}
+		int priority = Integer.compare(right.priorityScore(), left.priorityScore());
+		if (priority != 0) {
+			return priority;
+		}
+		// New geography is rendered from the world origin outward.  This must be
+		// part of admission itself (not just the producer's iteration order),
+		// otherwise a full queue can strand central tiles behind far-away ones.
+		if (left.priorityScore() >= 2) {
+			int distance = Double.compare(left.worldCenterDistanceSquared(), right.worldCenterDistanceSquared());
+			if (distance != 0) {
+				return distance;
+			}
+		}
+		if (left.activeView() != right.activeView()) {
+			return left.activeView() ? -1 : 1;
+		}
+		int queuedAt = Long.compare(left.queuedAtMillis(), right.queuedAtMillis());
+		return queuedAt != 0 ? queuedAt : Long.compare(left.sequence(), right.sequence());
+	}
+
 	private static void accumulateShadowDesiredState(
 			Map<ShadowSyncKey, ShadowDesiredState> desiredStates,
 			UUID botUuid,
@@ -2573,7 +2825,11 @@ public final class RendererBotCameraSystem {
 			return;
 		}
 		desiredState.setItemDisplaysOnly(true);
-		desiredState.addPassiveTarget(target, viewDistance, Set.of(), true, false);
+		// Region inventory intentionally requests unloaded saved chunks.  A
+		// passive target only mirrors chunks that happen to be loaded already,
+		// which leaves the client waiting forever.  The admission gate above
+		// guarantees that this ticket belongs to one map target only.
+		desiredState.addTarget(target, viewDistance, Set.of(), true, false);
 	}
 
 	private static void syncShadowState(
@@ -2619,6 +2875,11 @@ public final class RendererBotCameraSystem {
 		activeState.setViewDistance(desiredState.viewDistance());
 		activeState.trackedChunks().clear();
 		activeState.trackedEntities().clear();
+		// Level init recreates the client shadow level with a temporary 0,0 view.
+		// Force the following ShadowView even when the server centre did not move;
+		// otherwise the client may reject every subsequently sent chunk as outside
+		// its stale view after a view-distance/dimension reinitialisation.
+		activeState.forceViewResend();
 		ServerPlayNetworking.send(
 				bot,
 				new RendererBotPayloads.RendererBotShadowLevelInitS2CPayload(
@@ -3968,6 +4229,11 @@ public final class RendererBotCameraSystem {
 		private void setLastCenterChunkZ(int lastCenterChunkZ) {
 			this.lastCenterChunkZ = lastCenterChunkZ;
 		}
+
+		private void forceViewResend() {
+			this.lastCenterChunkX = Integer.MIN_VALUE;
+			this.lastCenterChunkZ = Integer.MIN_VALUE;
+		}
 	}
 
 	private record ShadowTrackedEntity(
@@ -4200,7 +4466,16 @@ public final class RendererBotCameraSystem {
 		private final double blocksPerPixel;
 		private final int priorityScore;
 		private final boolean activeView;
+		private final long queuedAtMillis;
+		private final long sequence;
+		private final double worldCenterDistanceSquared;
 		private final CompletableFuture<byte[]> pixelsFuture;
+		private volatile boolean clientRequestSent;
+		private volatile boolean clientTimeoutArmed;
+		private volatile long shadowTargetStartedAtMillis;
+		private volatile long shadowTargetLastActiveAtMillis;
+		private volatile long clientRequestSentAtMillis;
+		private volatile long lastShadowResyncAtMillis;
 
 		private PendingMapTileCapture(
 				UUID requestId,
@@ -4217,6 +4492,9 @@ public final class RendererBotCameraSystem {
 				double blocksPerPixel,
 				int priorityScore,
 				boolean activeView,
+				long queuedAtMillis,
+				long sequence,
+				double worldCenterDistanceSquared,
 				CompletableFuture<byte[]> pixelsFuture
 		) {
 			this.requestId = requestId;
@@ -4233,7 +4511,16 @@ public final class RendererBotCameraSystem {
 			this.blocksPerPixel = blocksPerPixel;
 			this.priorityScore = priorityScore;
 			this.activeView = activeView;
+			this.queuedAtMillis = queuedAtMillis;
+			this.sequence = sequence;
+			this.worldCenterDistanceSquared = worldCenterDistanceSquared;
 			this.pixelsFuture = pixelsFuture;
+			this.clientRequestSent = false;
+			this.clientTimeoutArmed = false;
+			this.shadowTargetStartedAtMillis = 0L;
+			this.shadowTargetLastActiveAtMillis = 0L;
+			this.clientRequestSentAtMillis = 0L;
+			this.lastShadowResyncAtMillis = 0L;
 		}
 
 		private UUID requestId() {
@@ -4290,6 +4577,64 @@ public final class RendererBotCameraSystem {
 
 		private boolean activeView() {
 			return this.activeView;
+		}
+
+		private long queuedAtMillis() {
+			return this.queuedAtMillis;
+		}
+
+		private long sequence() {
+			return this.sequence;
+		}
+
+		private double worldCenterDistanceSquared() {
+			return this.worldCenterDistanceSquared;
+		}
+
+		private boolean clientRequestSent() {
+			return this.clientRequestSent;
+		}
+
+		private void markShadowTargetActive(long now) {
+			if (now <= 0L || this.clientRequestSent) {
+				return;
+			}
+			// If a higher-priority target temporarily took the shared session, this
+			// capture starts a fresh chunk-load attempt when it regains ownership.
+			if (this.shadowTargetLastActiveAtMillis <= 0L || now - this.shadowTargetLastActiveAtMillis > 250L) {
+				this.shadowTargetStartedAtMillis = now;
+			}
+			this.shadowTargetLastActiveAtMillis = now;
+		}
+
+		private boolean shadowTargetLoadTimedOut(long now) {
+			return !this.clientRequestSent
+					&& this.shadowTargetStartedAtMillis > 0L
+					&& now - this.shadowTargetStartedAtMillis >= MAP_TILE_CHUNK_LOAD_TIMEOUT_MS;
+		}
+
+		private void markClientRequestSent(long now) {
+			this.clientRequestSent = true;
+			this.clientRequestSentAtMillis = Math.max(1L, now);
+		}
+
+		private synchronized void armClientTimeout() {
+			if (this.clientTimeoutArmed || this.pixelsFuture.isDone()) {
+				return;
+			}
+			this.clientTimeoutArmed = true;
+			this.pixelsFuture.orTimeout(MAP_TILE_CAPTURE_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+		}
+
+		private boolean shouldResyncShadow(long now) {
+			return this.clientRequestSent
+					&& this.clientRequestSentAtMillis > 0L
+					&& now - this.clientRequestSentAtMillis >= MAP_TILE_SHADOW_RESYNC_INTERVAL_MS
+					&& (this.lastShadowResyncAtMillis <= 0L || now - this.lastShadowResyncAtMillis >= MAP_TILE_SHADOW_RESYNC_INTERVAL_MS);
+		}
+
+		private void markShadowResynced(long now) {
+			this.lastShadowResyncAtMillis = now;
 		}
 
 		private CompletableFuture<byte[]> pixelsFuture() {

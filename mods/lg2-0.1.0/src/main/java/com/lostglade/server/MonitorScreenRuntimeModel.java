@@ -722,7 +722,8 @@ enum PlayerUiIcon {
 	DIRECTIONS_2_LINE("/monitor/ui_icons/directions_2_line.png"),
 	SEND_PLANE("/monitor/ui_icons/send_plane.png"),
 	NOTIFICATION("/monitor/ui_icons/notification.png"),
-	TARGET("/monitor/ui_icons/target.png");
+	TARGET("/monitor/ui_icons/target.png"),
+	BASE_STATION_2("/monitor/ui_icons/base_station_2.png");
 
 	private final String resourcePath;
 

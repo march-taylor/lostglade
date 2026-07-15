@@ -3,6 +3,7 @@ package com.lostglade.client;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
 import net.minecraft.util.Mth;
@@ -60,6 +61,40 @@ final class RendererBotTopDownMapRenderer {
 		return true;
 	}
 
+	/**
+	 * A chunk packet being present does not mean that its section mesh has made
+	 * it through the client's asynchronous renderer yet.  Capturing in that
+	 * small window produces a perfectly valid screenshot of just the sky.  For
+	 * a top-down tile, wait until each non-air surface section in the requested
+	 * footprint is compiled and visible in the shadow renderer.
+	 */
+	static boolean isTerrainReadyForCapture(Minecraft client, TileRequest request) {
+		return terrainReadiness(client, request) != TerrainReadiness.NOT_READY;
+	}
+
+	/**
+	 * Used after a capture to distinguish an expected empty/void view from a
+	 * frame in which real terrain did not reach the render target at all.
+	 */
+	static boolean expectsTerrain(Minecraft client, TileRequest request) {
+		TerrainReadiness readiness = terrainReadiness(client, request);
+		return readiness == TerrainReadiness.READY || readiness == TerrainReadiness.NOT_READY;
+	}
+
+	static void rebuildTerrain(Minecraft client, TileRequest request) {
+		if (client == null || request == null) {
+			return;
+		}
+		RendererBotShadowWorldManager.ShadowRenderSession session = RendererBotShadowWorldManager.resolveRenderSession(request.sessionId());
+		if (session == null || session.levelRenderer() == null) {
+			return;
+		}
+		// This is intentionally reserved for a capture whose depth buffer proves
+		// that the world geometry was absent.  It is much cheaper than accepting a
+		// corrupt map tile and leaves normal map capture on the incremental path.
+		session.levelRenderer().allChanged();
+	}
+
 	static boolean renderToTarget(Minecraft client, TileRequest request, Consumer<RenderTarget> renderTargetConsumer) {
 		ClientLevel level = resolveLevel(client, request);
 		if (level == null
@@ -110,6 +145,59 @@ final class RendererBotTopDownMapRenderer {
 		}
 		RendererBotShadowWorldManager.ShadowRenderSession session = RendererBotShadowWorldManager.resolveRenderSession(request.sessionId());
 		return session == null ? null : session.level();
+	}
+
+	private static TerrainReadiness terrainReadiness(Minecraft client, TileRequest request) {
+		if (client == null || request == null) {
+			return TerrainReadiness.NOT_READY;
+		}
+		RendererBotShadowWorldManager.ShadowRenderSession session = RendererBotShadowWorldManager.resolveRenderSession(request.sessionId());
+		ClientLevel level = session == null ? null : session.level();
+		LevelRenderer levelRenderer = session == null ? null : session.levelRenderer();
+		if (level == null || levelRenderer == null) {
+			return TerrainReadiness.NOT_READY;
+		}
+		double blocksPerPixel = safeBlocksPerPixel(request.blocksPerPixel());
+		double halfWidth = request.width() * blocksPerPixel * 0.5D;
+		double halfHeight = request.height() * blocksPerPixel * 0.5D;
+		int minBlockX = Mth.floor(request.centerX() - halfWidth);
+		int maxBlockX = Mth.floor(request.centerX() + halfWidth - 1.0E-6D);
+		int minBlockZ = Mth.floor(request.centerZ() - halfHeight);
+		int maxBlockZ = Mth.floor(request.centerZ() + halfHeight - 1.0E-6D);
+		int minChunkX = SectionPos.blockToSectionCoord(minBlockX);
+		int maxChunkX = SectionPos.blockToSectionCoord(maxBlockX);
+		int minChunkZ = SectionPos.blockToSectionCoord(minBlockZ);
+		int maxChunkZ = SectionPos.blockToSectionCoord(maxBlockZ);
+		boolean foundSurface = false;
+		for (int chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ++) {
+			for (int chunkX = minChunkX; chunkX <= maxChunkX; chunkX++) {
+				LevelChunk chunk = level.getChunkSource().getChunk(chunkX, chunkZ, ChunkStatus.FULL, false);
+				if (chunk == null) {
+					return TerrainReadiness.NOT_READY;
+				}
+				int fromX = Math.max(minBlockX, SectionPos.sectionToBlockCoord(chunkX));
+				int toX = Math.min(maxBlockX, SectionPos.sectionToBlockCoord(chunkX) + 15);
+				int fromZ = Math.max(minBlockZ, SectionPos.sectionToBlockCoord(chunkZ));
+				int toZ = Math.min(maxBlockZ, SectionPos.sectionToBlockCoord(chunkZ) + 15);
+				for (int z = fromZ; z <= toZ; z++) {
+					for (int x = fromX; x <= toX; x++) {
+						int surfaceY = chunk.getHeight(Heightmap.Types.WORLD_SURFACE, x & 15, z & 15) - 1;
+						if (surfaceY < level.getMinY() || surfaceY >= level.getMaxY()) {
+							continue;
+						}
+						BlockPos surface = new BlockPos(x, surfaceY, z);
+						if (level.getBlockState(surface).isAir()) {
+							continue;
+						}
+						foundSurface = true;
+						if (!levelRenderer.isSectionCompiledAndVisible(surface)) {
+							return TerrainReadiness.NOT_READY;
+						}
+					}
+				}
+			}
+		}
+		return foundSurface ? TerrainReadiness.READY : TerrainReadiness.EMPTY;
 	}
 
 	private static double safeBlocksPerPixel(double blocksPerPixel) {
@@ -184,5 +272,11 @@ final class RendererBotTopDownMapRenderer {
 	}
 
 	record TileRequest(UUID sessionId, String dimensionId, double centerX, double centerZ, int width, int height, double blocksPerPixel) {
+	}
+
+	private enum TerrainReadiness {
+		NOT_READY,
+		EMPTY,
+		READY
 	}
 }

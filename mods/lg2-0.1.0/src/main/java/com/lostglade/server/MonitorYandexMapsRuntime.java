@@ -4,6 +4,10 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.lostglade.server.map.TextureAssetManager;
 import com.lostglade.server.monitor.MonitorApp;
+import com.mojang.brigadier.Command;
+import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
+import net.minecraft.commands.CommandSourceStack;
+import net.minecraft.commands.Commands;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.PlayerChatMessage;
@@ -12,6 +16,7 @@ import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.permissions.Permissions;
 import net.minecraft.world.entity.decoration.ItemFrame;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
@@ -42,7 +47,7 @@ import java.util.concurrent.TimeUnit;
 
 import static com.lostglade.server.MonitorScreenSystem.*;
 
-final class MonitorYandexMapsRuntime {
+public final class MonitorYandexMapsRuntime {
 	private static final double DEFAULT_BLOCKS_PER_PIXEL = 2.0D;
 	private static final double MIN_BLOCKS_PER_PIXEL = 1.0D / 256.0D;
 	private static final double MAX_BLOCKS_PER_PIXEL = 512.0D;
@@ -59,14 +64,52 @@ final class MonitorYandexMapsRuntime {
 	private static final Map<ScreenRuntimeKey, YandexMapState> STATES = new ConcurrentHashMap<>();
 	private static final Map<UUID, BufferedImage> ITEM_MARKER_ICON_CACHE = new ConcurrentHashMap<>();
 	private static final Set<UUID> PENDING_MARKER_ICON_RENDERS = ConcurrentHashMap.newKeySet();
+	private static final Set<MarkerHeadRequest> PENDING_MARKER_HEAD_REQUESTS = ConcurrentHashMap.newKeySet();
 	private static final Map<String, BufferedImage> LEGACY_ITEM_MARKER_ICON_CACHE = new ConcurrentHashMap<>();
 	private static final Map<UUID, PendingMarkerTitleRequest> PENDING_MARKER_TITLES = new ConcurrentHashMap<>();
 	private static final TextureAssetManager MAP_ASSETS = TextureAssetManager.get();
 	private static final Identifier DEFAULT_MARKER_ICON_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "map/decorations/red_banner");
 	private static final BufferedImage EMPTY_MARKER_ICON = new BufferedImage(MAP_MARKER_ICON_SIZE, MAP_MARKER_ICON_SIZE, BufferedImage.TYPE_INT_ARGB);
 	private static volatile BufferedImage defaultMarkerIcon;
+	private static volatile boolean gpsEnabled = true;
 
 	private MonitorYandexMapsRuntime() {
+	}
+
+	public static void register() {
+		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> dispatcher.register(
+				Commands.literal("yandexmaps")
+						.requires(source -> source.permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER))
+						.then(Commands.literal("gps")
+								.then(Commands.literal("on").executes(context -> setGpsEnabled(context.getSource(), true)))
+								.then(Commands.literal("off").executes(context -> setGpsEnabled(context.getSource(), false)))
+								.then(Commands.literal("status").executes(context -> sendGpsStatus(context.getSource())))
+						)
+		));
+	}
+
+	static boolean isGpsEnabled() {
+		return gpsEnabled;
+	}
+
+	private static int setGpsEnabled(CommandSourceStack source, boolean enabled) {
+		gpsEnabled = enabled;
+		for (Map.Entry<ScreenRuntimeKey, YandexMapState> entry : STATES.entrySet()) {
+			YandexMapState state = entry.getValue();
+			if (state != null) {
+				synchronized (state) {
+					state.version++;
+				}
+			}
+			requestRuntimeRender(source.getServer(), entry.getKey());
+		}
+		source.sendSuccess(() -> Component.literal("GPS Яндекс-карт " + (enabled ? "включён" : "выключен")), true);
+		return Command.SINGLE_SUCCESS;
+	}
+
+	private static int sendGpsStatus(CommandSourceStack source) {
+		source.sendSuccess(() -> Component.literal("GPS Яндекс-карт: " + (gpsEnabled ? "включён" : "выключен")), false);
+		return Command.SINGLE_SUCCESS;
 	}
 
 	static void clearRuntime() {
@@ -187,6 +230,9 @@ final class MonitorYandexMapsRuntime {
 		if (server == null || component == null) {
 			return emptySnapshot();
 		}
+		// Snapshot capture runs on the server thread.  Publish the immutable cache
+		// location here so the later UI compositor never has to touch server state.
+		MonitorYandexMapsClientTileRenderer.configure(server);
 		YandexMapState state = STATES.computeIfAbsent(component.runtimeKey(), ignored -> new YandexMapState());
 		double centerX;
 		double centerZ;
@@ -287,31 +333,33 @@ final class MonitorYandexMapsRuntime {
 		YandexMapsVisualSnapshot effectiveSnapshot = snapshot;
 		BufferedImage frame = snapshot != null ? snapshot.frame() : null;
 		if (frame == null && snapshot != null && server != null && runtimeKey != null) {
-			ServerLevel level = mapLevel(server);
-			if (level != null) {
-				MonitorYandexMapsClientTileRenderer.Frame rendered = MonitorYandexMapsClientTileRenderer.render(
-						server,
-						level,
-						snapshot.centerX(),
-						snapshot.centerZ(),
-						Math.max(1, layout.canvasWidth()),
-						Math.max(1, layout.canvasHeight()),
-						snapshot.zoomBlocks(),
-						() -> notifyTileReady(server, runtimeKey),
-						runtimeKey
-				);
-				frame = rendered.image();
-				effectiveSnapshot = new YandexMapsVisualSnapshot(
-						snapshot.version(),
-						frame,
-						rendered.status(),
-						snapshot.dimensionLabel(),
-						snapshot.centerX(),
-						snapshot.centerZ(),
-						snapshot.zoomBlocks(),
-						rendered.healthy()
-				);
-			}
+			MonitorYandexMapsClientTileRenderer.Frame rendered = MonitorYandexMapsClientTileRenderer.render(
+					server,
+					MAP_DIMENSION,
+					snapshot.centerX(),
+					snapshot.centerZ(),
+					Math.max(1, layout.canvasWidth()),
+					Math.max(1, layout.canvasHeight()),
+					snapshot.zoomBlocks(),
+					() -> notifyTileReady(server, runtimeKey),
+					runtimeKey
+			);
+			frame = rendered.image();
+			effectiveSnapshot = new YandexMapsVisualSnapshot(
+					snapshot.version(),
+					frame,
+					rendered.status(),
+					snapshot.dimensionLabel(),
+					snapshot.centerX(),
+					snapshot.centerZ(),
+					snapshot.zoomBlocks(),
+					rendered.healthy()
+			);
+		}
+		if (!isGpsEnabled()) {
+			drawMapFrameNearest(graphics, gpsUnavailableFrameForCanvas(canvas), canvas);
+			drawMapHeader(graphics, layout, app, effectiveSnapshot);
+			return;
 		}
 		if (frame != null) {
 			drawMapFrameNearest(graphics, frame, canvas);
@@ -351,9 +399,12 @@ final class MonitorYandexMapsRuntime {
 		if (server == null) {
 			return false;
 		}
-		if (mediaCloseRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+		if (yandexCloseRect(layout).contains(touchPoint.x(), touchPoint.y())) {
 			deactivateRuntime(component.runtimeKey());
 			applyTransientComponentViewState(server, level, component, ScreenViewMode.HOME, component.launcherPage());
+			return true;
+		}
+		if (!isGpsEnabled()) {
 			return true;
 		}
 		YandexMapState state = STATES.computeIfAbsent(component.runtimeKey(), ignored -> new YandexMapState());
@@ -563,45 +614,15 @@ final class MonitorYandexMapsRuntime {
 	}
 
 	private static ObservedYandexMapUiTarget findObservedYandexMapUiTarget(ServerPlayer player) {
-		if (player == null || !(player.level() instanceof ServerLevel level)) {
+		ObservedScreenTouch target = findObservedScreenTouch(
+				player,
+				component -> component.viewMode() == ScreenViewMode.YANDEX_MAPS
+		);
+		if (target == null) {
 			return null;
 		}
-		Vec3 eye = player.getEyePosition();
-		Vec3 rayEnd = eye.add(player.getLookAngle().scale(MEDIA_CONTROL_DISTANCE));
-		ScreenComponent nearestComponent = null;
-		ItemFrame nearestFrame = null;
-		TileCoord nearestTile = null;
-		Vec3 nearestHit = null;
-		double nearestDistanceSqr = Double.POSITIVE_INFINITY;
-		for (ScreenComponent component : cachedComponents(level)) {
-			if (component == null || !component.powered() || component.viewMode() != ScreenViewMode.YANDEX_MAPS) {
-				continue;
-			}
-			for (Map.Entry<ItemFrame, TileCoord> entry : component.frameCoords().entrySet()) {
-				ItemFrame frame = entry.getKey();
-				if (frame == null || !frame.isAlive()) {
-					continue;
-				}
-				Optional<Vec3> hit = frame.getBoundingBox().inflate(0.08D).clip(eye, rayEnd);
-				if (hit.isEmpty() || hit.get().distanceToSqr(eye) > MEDIA_CONTROL_DISTANCE * MEDIA_CONTROL_DISTANCE) {
-					continue;
-				}
-				double hitDistanceSqr = eye.distanceToSqr(hit.get());
-				if (hitDistanceSqr < nearestDistanceSqr) {
-					nearestDistanceSqr = hitDistanceSqr;
-					nearestComponent = component;
-					nearestFrame = frame;
-					nearestTile = entry.getValue();
-					nearestHit = hit.get();
-				}
-			}
-		}
-		if (nearestComponent == null || nearestFrame == null || nearestTile == null || nearestHit == null) {
-			return null;
-		}
-		UiLayout layout = createUiLayout(nearestComponent.width(), nearestComponent.height());
-		UiPoint touchPoint = screenTouchPoint(nearestFrame, player, nearestHit, nearestTile, nearestComponent.width(), nearestComponent.height());
-		return touchPoint == null ? null : new ObservedYandexMapUiTarget(nearestComponent, layout, touchPoint);
+		ScreenComponent component = target.component();
+		return new ObservedYandexMapUiTarget(component, createUiLayout(component.width(), component.height()), target.touchPoint());
 	}
 
 	static void notifyTileReady(MinecraftServer server, ScreenRuntimeKey key) {
@@ -635,15 +656,15 @@ final class MonitorYandexMapsRuntime {
 		boolean ultra = ultraCompactScreenLayout(layout);
 		int inset = ultra ? Math.max(2, layout.unit() / 3) : clampInt(layout.unit() / 2, 4, 10);
 		int height = ultra ? clampInt(layout.unit() * 2 + 4, 12, 16) : clampInt(layout.unit() * 3, 30, 46);
-		int headerX = ultra ? mediaCloseRect(layout).right() + mediaHeaderControlGap(layout) : canvas.x() + inset;
+		UiRect close = yandexCloseRect(layout);
+		int headerX = close.right() + mediaHeaderControlGap(layout);
 		UiRect header = new UiRect(
-				headerX,
-				canvas.y() + inset,
+			headerX,
+			canvas.y() + inset,
 				Math.min(canvas.right() - headerX - inset, ultra ? clampInt(layout.unit() * 24, 88, 124) : clampInt(layout.unit() * 24, 168, 310)),
 				height
 		);
-		fillRoundedRect(graphics, header, header.height(), new Color(250, 252, 248, 226));
-		strokeRoundedRect(graphics, header, header.height(), 1.0F, new Color(0, 0, 0, 36));
+		fillRoundedRect(graphics, header, header.height(), new Color(255, 255, 255, 244));
 		int iconInset = ultra ? Math.max(2, header.height() / 7) : 4;
 		UiRect iconRect = new UiRect(header.x() + iconInset, header.y() + iconInset, header.height() - iconInset * 2, header.height() - iconInset * 2);
 		drawAppIcon(graphics, app, iconRect, 0);
@@ -656,7 +677,17 @@ final class MonitorYandexMapsRuntime {
 			drawVerticalText(graphics, "Яндекс Карты", new UiRect(iconRect.right() + 6, header.y() + 1, header.right() - iconRect.right() - 10, header.height() / 2), new Color(30, 34, 36), Font.BOLD, clampInt(layout.unit() - 1, 9, 13));
 			drawVerticalText(graphics, coords, new UiRect(iconRect.right() + 6, header.y() + header.height() / 2 - 2, header.right() - iconRect.right() - 10, header.height() / 2), new Color(78, 86, 92), Font.PLAIN, clampInt(layout.unit() - 3, 7, 10));
 		}
-		drawMediaCloseButton(graphics, mediaCloseRect(layout), layout);
+		fillRoundedRect(graphics, close, close.height(), new Color(255, 255, 255, 244));
+		drawCloseGlyph(graphics, mediaChromeIconRect(close, layout), new Color(16, 18, 20, 244));
+	}
+
+	private static UiRect yandexCloseRect(UiLayout layout) {
+		UiRect canvas = mediaCanvasRect(layout);
+		boolean ultra = ultraCompactScreenLayout(layout);
+		int inset = ultra ? Math.max(2, layout.unit() / 3) : clampInt(layout.unit() / 2, 4, 10);
+		int height = ultra ? clampInt(layout.unit() * 2 + 4, 12, 16) : clampInt(layout.unit() * 3, 30, 46);
+		int width = ultra ? height : height + clampInt(layout.unit(), 7, 14);
+		return new UiRect(canvas.x() + inset, canvas.y() + inset, width, height);
 	}
 
 	private static void drawZoomControls(Graphics2D graphics, UiLayout layout) {
@@ -1028,7 +1059,11 @@ final class MonitorYandexMapsRuntime {
 		drawMarkerEditorTitleHeader(graphics, layout, titleRect, marker.title());
 		drawCloseGlyph(graphics, mediaChromeIconRect(closeRect, layout), new Color(248, 251, 255, 236));
 
-		BufferedImage creatorHead = PlayerHeadRenderSystem.resolveHead(server, marker.creatorUuid(), marker.creatorName(), markerImageReadyCallback(server, runtimeKey));
+		// drawScreen runs on MonitorScreenSystem's worker.  It may compose an
+		// already-resolved head, but the player-list lookup that refreshes it is
+		// explicitly queued back onto the server thread.
+		BufferedImage creatorHead = PlayerHeadRenderSystem.cachedHead(marker.creatorUuid(), marker.creatorName());
+		requestMarkerCreatorHead(marker, server, runtimeKey);
 		drawMarkerEditorCreatorCard(graphics, layout, creatorRect, creatorHead, marker.creatorName());
 		drawMarkerEditorIconField(graphics, layout, iconRect, marker, server, runtimeKey);
 		drawMarkerEditorCoordinatesRow(graphics, layout, coordinatesRect, marker, markerCoordinateLabel(marker));
@@ -1485,8 +1520,27 @@ final class MonitorYandexMapsRuntime {
 		if (markerId == null || !PENDING_MARKER_ICON_RENDERS.add(markerId)) {
 			return;
 		}
+		// ItemStack decoding and renderer-bot submission both touch live server
+		// state.  Marker painting is a worker task, so it only enqueues this
+		// server-thread operation.
+		server.execute(() -> requestMarkerItemIconOnServer(marker, server, runtimeKey));
+	}
+
+	private static void requestMarkerItemIconOnServer(YandexMapMarkerStore.YandexMapMarker marker, MinecraftServer server, ScreenRuntimeKey runtimeKey) {
+		if (marker == null || server == null || runtimeKey == null) {
+			return;
+		}
+		UUID markerId = marker.markerId();
+		if (markerId == null) {
+			return;
+		}
 		String requestedIconKey = marker.iconCacheKey();
-		ItemStack iconStack = YandexMapMarkerStore.markerIconStack(server, marker);
+		YandexMapMarkerStore.YandexMapMarker current = YandexMapMarkerStore.marker(markerId);
+		if (current == null || !Objects.equals(current.iconCacheKey(), requestedIconKey)) {
+			PENDING_MARKER_ICON_RENDERS.remove(markerId);
+			return;
+		}
+		ItemStack iconStack = YandexMapMarkerStore.markerIconStack(server, current);
 		if (iconStack.isEmpty()) {
 			ITEM_MARKER_ICON_CACHE.put(markerId, EMPTY_MARKER_ICON);
 			PENDING_MARKER_ICON_RENDERS.remove(markerId);
@@ -1495,8 +1549,8 @@ final class MonitorYandexMapsRuntime {
 		RendererBotCameraSystem.requestItemIcon(server, iconStack, MAP_MARKER_ICON_SIZE).whenComplete((pixels, throwable) ->
 				server.execute(() -> {
 					try {
-						YandexMapMarkerStore.YandexMapMarker current = YandexMapMarkerStore.marker(markerId);
-						if (current == null || !Objects.equals(current.iconCacheKey(), requestedIconKey)) {
+						YandexMapMarkerStore.YandexMapMarker completedMarker = YandexMapMarkerStore.marker(markerId);
+						if (completedMarker == null || !Objects.equals(completedMarker.iconCacheKey(), requestedIconKey)) {
 							return;
 						}
 						if (throwable != null) {
@@ -1515,6 +1569,39 @@ final class MonitorYandexMapsRuntime {
 					}
 				})
 		);
+	}
+
+	private static void requestMarkerCreatorHead(YandexMapMarkerStore.YandexMapMarker marker, MinecraftServer server, ScreenRuntimeKey runtimeKey) {
+		if (marker == null || server == null || runtimeKey == null || marker.creatorUuid() == null) {
+			return;
+		}
+		if (PlayerHeadRenderSystem.hasCachedHead(marker.creatorUuid(), marker.creatorName())) {
+			return;
+		}
+		MarkerHeadRequest request = new MarkerHeadRequest(marker.markerId(), runtimeKey);
+		if (!PENDING_MARKER_HEAD_REQUESTS.add(request)) {
+			return;
+		}
+		server.execute(() -> {
+			try {
+				YandexMapMarkerStore.YandexMapMarker current = YandexMapMarkerStore.marker(marker.markerId());
+				if (current == null || !Objects.equals(current.creatorUuid(), marker.creatorUuid())) {
+					PENDING_MARKER_HEAD_REQUESTS.remove(request);
+					return;
+				}
+				boolean loading = PlayerHeadRenderSystem.requestHead(server, current.creatorUuid(), current.creatorName(), () -> {
+					PENDING_MARKER_HEAD_REQUESTS.remove(request);
+					server.execute(() -> requestRuntimeRender(server, runtimeKey));
+				});
+				if (!loading) {
+					// Cached image or no usable skin property: no asynchronous callback
+					// exists to release this request.
+					PENDING_MARKER_HEAD_REQUESTS.remove(request);
+				}
+			} catch (RuntimeException exception) {
+				PENDING_MARKER_HEAD_REQUESTS.remove(request);
+			}
+		});
 	}
 
 	private static void invalidateMarkerIcon(UUID markerId) {
@@ -1887,6 +1974,24 @@ final class MonitorYandexMapsRuntime {
 		return image;
 	}
 
+	private static BufferedImage gpsUnavailableFrameForCanvas(UiRect canvas) {
+		return gpsUnavailableFrame(Math.max(1, canvas.width()), Math.max(1, canvas.height()));
+	}
+
+	private static BufferedImage gpsUnavailableFrame(int width, int height) {
+		BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+		Graphics2D graphics = image.createGraphics();
+		configureMapGraphics(graphics);
+		graphics.setColor(Color.BLACK);
+		graphics.fillRect(0, 0, width, height);
+		int iconSize = Math.max(24, Math.min(width, height) / 5);
+		int centerY = height / 2 - iconSize / 4;
+		drawPlayerUiIcon(graphics, new UiRect(width / 2 - iconSize / 2, centerY - iconSize / 2, iconSize, iconSize), PlayerUiIcon.BASE_STATION_2, Color.WHITE);
+		drawCenteredText(graphics, "GPS спутник не найден", new UiRect(8, centerY + iconSize / 2 + 8, Math.max(1, width - 16), Math.max(16, iconSize / 2)), Color.WHITE, Font.PLAIN, Math.max(9, Math.min(width, height) / 13));
+		graphics.dispose();
+		return image;
+	}
+
 	private static void configureMapGraphics(Graphics2D graphics) {
 		graphics.setRenderingHint(RenderingHints.KEY_ALPHA_INTERPOLATION, RenderingHints.VALUE_ALPHA_INTERPOLATION_SPEED);
 		graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
@@ -1926,6 +2031,9 @@ final class MonitorYandexMapsRuntime {
 			ScreenRuntimeKey screenKey,
 			UUID markerId
 	) {
+	}
+
+	private record MarkerHeadRequest(UUID markerId, ScreenRuntimeKey screenKey) {
 	}
 
 	private record ObservedYandexMapUiTarget(

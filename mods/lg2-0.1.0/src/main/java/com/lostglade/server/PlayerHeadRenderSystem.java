@@ -33,6 +33,10 @@ final class PlayerHeadRenderSystem {
 	private static final long RETRY_COOLDOWN_MS = TimeUnit.SECONDS.toMillis(45L);
 	private static final BufferedImage EMPTY_HEAD = new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
 	private static final Map<String, BufferedImage> HEAD_CACHE = new ConcurrentHashMap<>();
+	// The UI compositor can safely use this identity cache without looking at
+	// the player list.  Resolving a skin property itself remains server-thread
+	// work and is requested explicitly below.
+	private static final Map<String, BufferedImage> HEAD_BY_IDENTITY = new ConcurrentHashMap<>();
 	private static final Map<String, BufferedImage> PLACEHOLDER_CACHE = new ConcurrentHashMap<>();
 	private static final Map<String, Long> RETRY_AT_MS = new ConcurrentHashMap<>();
 	private static final Map<String, CopyOnWriteArrayList<Runnable>> READY_CALLBACKS = new ConcurrentHashMap<>();
@@ -43,6 +47,7 @@ final class PlayerHeadRenderSystem {
 
 	static void clearRuntime() {
 		HEAD_CACHE.clear();
+		HEAD_BY_IDENTITY.clear();
 		PLACEHOLDER_CACHE.clear();
 		RETRY_AT_MS.clear();
 		READY_CALLBACKS.clear();
@@ -53,23 +58,57 @@ final class PlayerHeadRenderSystem {
 		HeadLookup lookup = resolveLookup(server, playerId, playerName);
 		BufferedImage cached = HEAD_CACHE.get(lookup.cacheKey());
 		if (cached != null) {
+			HEAD_BY_IDENTITY.put(lookup.identity(), cached);
 			return cached == EMPTY_HEAD ? placeholderHead(lookup.playerName()) : cached;
 		}
-		if (lookup.skinProperty() != null) {
-			if (onReady != null) {
-				READY_CALLBACKS.computeIfAbsent(lookup.cacheKey(), ignored -> new CopyOnWriteArrayList<>()).add(onReady);
-			}
-			maybeStartLoad(lookup);
-		}
+		queueHeadLoad(lookup, onReady);
 		return placeholderHead(lookup.playerName());
+	}
+
+	/**
+	 * Returns a cached head (or a deterministic placeholder) without touching
+	 * MinecraftServer.  It is safe for MonitorScreenSystem's render executor.
+	 */
+	static BufferedImage cachedHead(UUID playerId, String playerName) {
+		BufferedImage cached = HEAD_BY_IDENTITY.get(identityKey(playerId, playerName));
+		return cached == null || cached == EMPTY_HEAD ? placeholderHead(playerName) : cached;
+	}
+
+	static boolean hasCachedHead(UUID playerId, String playerName) {
+		return HEAD_BY_IDENTITY.containsKey(identityKey(playerId, playerName));
+	}
+
+	/**
+	 * Must be called from the server thread.  It resolves the current skin
+	 * property and starts the asynchronous image fetch when needed.
+	 */
+	static boolean requestHead(MinecraftServer server, UUID playerId, String playerName, Runnable onReady) {
+		HeadLookup lookup = resolveLookup(server, playerId, playerName);
+		BufferedImage cached = HEAD_CACHE.get(lookup.cacheKey());
+		if (cached != null) {
+			HEAD_BY_IDENTITY.put(lookup.identity(), cached);
+			return false;
+		}
+		return queueHeadLoad(lookup, onReady);
+	}
+
+	private static boolean queueHeadLoad(HeadLookup lookup, Runnable onReady) {
+		if (lookup == null || lookup.skinProperty() == null) {
+			return false;
+		}
+		if (onReady != null) {
+			READY_CALLBACKS.computeIfAbsent(lookup.cacheKey(), ignored -> new CopyOnWriteArrayList<>()).add(onReady);
+		}
+		maybeStartLoad(lookup);
+		return true;
 	}
 
 	private static HeadLookup resolveLookup(MinecraftServer server, UUID playerId, String playerName) {
 		String safeName = sanitizeName(playerName);
 		Property property = resolveSkinProperty(server, playerId);
 		int propertyHash = property == null ? 0 : Objects.hash(property.name(), property.value(), property.signature());
-		String identity = playerId != null ? playerId.toString() : safeName.toLowerCase(Locale.ROOT);
-		return new HeadLookup(identity + ":" + Integer.toHexString(propertyHash), property, safeName);
+		String identity = identityKey(playerId, safeName);
+		return new HeadLookup(identity, identity + ":" + Integer.toHexString(propertyHash), property, safeName);
 	}
 
 	private static Property resolveSkinProperty(MinecraftServer server, UUID playerId) {
@@ -115,6 +154,7 @@ final class PlayerHeadRenderSystem {
 			head = buildHeadImage(lookup.skinProperty());
 			if (head != null) {
 				HEAD_CACHE.put(lookup.cacheKey(), head);
+				HEAD_BY_IDENTITY.put(lookup.identity(), head);
 				RETRY_AT_MS.remove(lookup.cacheKey());
 			} else {
 				RETRY_AT_MS.put(lookup.cacheKey(), now + RETRY_COOLDOWN_MS);
@@ -262,7 +302,12 @@ final class PlayerHeadRenderSystem {
 		return trimmed.isEmpty() ? "Player" : trimmed;
 	}
 
+	private static String identityKey(UUID playerId, String playerName) {
+		return playerId != null ? playerId.toString() : sanitizeName(playerName).toLowerCase(Locale.ROOT);
+	}
+
 	private record HeadLookup(
+			String identity,
 			String cacheKey,
 			Property skinProperty,
 			String playerName

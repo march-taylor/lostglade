@@ -2008,41 +2008,15 @@ public final class MonitorSupportRuntime {
 		if (player == null || level == null) {
 			return null;
 		}
-		Vec3 eye = player.getEyePosition();
-		Vec3 rayEnd = eye.add(player.getLookAngle().scale(MEDIA_CONTROL_DISTANCE));
-		ScreenComponent nearestComponent = null;
-		ItemFrame nearestFrame = null;
-		TileCoord nearestTile = null;
-		Vec3 nearestHit = null;
-		double nearestDistanceSqr = Double.POSITIVE_INFINITY;
-		for (ScreenComponent component : cachedComponents(level)) {
-			if (component == null || !component.powered() || component.viewMode() != ScreenViewMode.SUPPORT) {
-				continue;
-			}
-			for (Map.Entry<ItemFrame, TileCoord> entry : component.frameCoords().entrySet()) {
-				ItemFrame frame = entry.getKey();
-				if (frame == null || !frame.isAlive()) {
-					continue;
-				}
-				Optional<Vec3> hit = frame.getBoundingBox().inflate(0.08D).clip(eye, rayEnd);
-				if (hit.isEmpty() || hit.get().distanceToSqr(eye) > MEDIA_CONTROL_DISTANCE * MEDIA_CONTROL_DISTANCE) {
-					continue;
-				}
-				double hitDistanceSqr = eye.distanceToSqr(hit.get());
-				if (hitDistanceSqr < nearestDistanceSqr) {
-					nearestDistanceSqr = hitDistanceSqr;
-					nearestComponent = component;
-					nearestFrame = frame;
-					nearestTile = entry.getValue();
-					nearestHit = hit.get();
-				}
-			}
-		}
-		if (nearestComponent == null || nearestFrame == null || nearestTile == null || nearestHit == null) {
+		ObservedScreenTouch target = findObservedScreenTouch(
+				player,
+				component -> component.viewMode() == ScreenViewMode.SUPPORT
+		);
+		if (target == null) {
 			return null;
 		}
-		UiPoint touchPoint = screenTouchPoint(nearestFrame, player, nearestHit, nearestTile, nearestComponent.width(), nearestComponent.height());
-		return touchPoint == null ? null : new ObservedSupportUiTarget(nearestComponent, createUiLayout(nearestComponent.width(), nearestComponent.height()), touchPoint);
+		ScreenComponent component = target.component();
+		return new ObservedSupportUiTarget(component, createUiLayout(component.width(), component.height()), target.touchPoint());
 	}
 
 	private static int onlineMinecraftOperatorCount(MinecraftServer server) {

@@ -14,13 +14,19 @@ import net.minecraft.world.level.storage.LevelResource;
 import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferInt;
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.DirectoryStream;
+import java.nio.file.StandardOpenOption;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.FileTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -29,6 +35,10 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 final class MonitorYandexMapsClientTileRenderer {
 	private static final int TILE_SIZE = MonitorScreenSystem.MAP_SIZE;
@@ -45,7 +55,6 @@ final class MonitorYandexMapsClientTileRenderer {
 	private static final int MAX_MISSING_TILES_PER_DIMENSION = 65_536;
 	private static final int MAX_BASE_TILE_REQUESTS_PER_FRAME = 4;
 	private static final int RENDERER_BOT_MAP_TILE_PRIORITY_SCORE = 0;
-	private static final int MIN_LOD_REBUILT_FROM_BASE_CHILDREN = MIN_LOD + 1;
 	private static final int VISIBLE_DISCOVERY_CHUNK_SCAN_LIMIT = Math.max(16, Integer.getInteger("lg2.yandexMapVisibleDiscoveryChunkScanLimit", 512));
 	private static final long BACKGROUND_REFRESH_INTERVAL_TICKS = 20L;
 	private static final int BACKGROUND_BASE_TILE_REQUESTS_PER_PASS_MIN = Math.max(1, Integer.getInteger("lg2.yandexMapBackgroundBaseTileRequestsPerPassMin", 2));
@@ -54,11 +63,42 @@ final class MonitorYandexMapsClientTileRenderer {
 	private static final long BACKGROUND_STALE_BACKLOG_MS = 90L * 60_000L;
 	private static final int MAX_DIRTY_BASE_TILES_PER_DIMENSION = 32_768;
 	private static final long BASE_TILE_REFRESH_MS = 30L * 60_000L;
-	private static final String CACHE_DIR_NAME = "lg2-yandex-map-client-tiles-v12";
+	private static final long PROGRESS_LOG_INTERVAL_MS = 60_000L;
+	// A base tile can make several ancestors dirty in a burst.  Coalescing the
+	// work briefly turns those bursts into one downsample per LOD key instead of
+	// repeatedly rebuilding the same 128x128 image.
+	private static final long LOD_BUILD_COALESCE_MS = Math.max(0L, Long.getLong("lg2.yandexMapLodBuildCoalesceMs", 125L));
+	// LOD synthesis is independent of the game thread.  Keep two cores for
+	// ticking/networking, then use up to eight low-priority workers so distant
+	// zoom levels catch up alongside base-tile captures.  Servers can tune this
+	// with -Dlg2.yandexMapLodBuildThreads=N.
+	private static final int LOD_BUILD_THREADS = Mth.clamp(
+			Integer.getInteger(
+					"lg2.yandexMapLodBuildThreads",
+					Math.max(1, Math.min(8, Runtime.getRuntime().availableProcessors() - 2))
+			),
+			1,
+			8
+	);
+	private static final ExecutorService LOD_BUILD_EXECUTOR = Executors.newFixedThreadPool(LOD_BUILD_THREADS, runnable -> {
+		Thread thread = new Thread(runnable, "lg2-yandex-map-lod");
+		thread.setDaemon(true);
+		thread.setPriority(Math.max(Thread.MIN_PRIORITY, Thread.NORM_PRIORITY - 1));
+		return thread;
+	});
+	// v13 invalidates tiles captured before map jobs acquired a real server
+	// chunk-ticket.  Those files can be structurally valid yet contain the
+	// black/partial output of the broken passive-shadow pipeline.
+	private static final String CACHE_DIR_NAME = "lg2-yandex-map-client-tiles-v13";
 	private static final int MISSING_RGB = 0x18242B;
 	private static final Object LOCK = new Object();
 	private static final Map<WorldCacheKey, DimensionTileCache> CACHES = new LinkedHashMap<>(8, 0.75F, true);
 	private static volatile Path persistentRoot;
+	// These immutable snapshots are published by the server thread in
+	// configure().  The monitor compositor runs on a separate executor and
+	// must not read MinecraftServer/ServerLevel state just to find its cache.
+	private static volatile Path configuredWorldRoot;
+	private static volatile boolean rendererBotReady;
 
 	private MonitorYandexMapsClientTileRenderer() {
 	}
@@ -67,13 +107,19 @@ final class MonitorYandexMapsClientTileRenderer {
 		if (server == null) {
 			return;
 		}
-		persistentRoot = server.getWorldPath(LevelResource.ROOT).resolve("data").resolve(CACHE_DIR_NAME);
+		Path worldRoot = server.getWorldPath(LevelResource.ROOT).toAbsolutePath().normalize();
+		configuredWorldRoot = worldRoot;
+		persistentRoot = worldRoot.resolve("data").resolve(CACHE_DIR_NAME);
 	}
 
 	static void tick(MinecraftServer server) {
-		if (server == null
-				|| !RendererBotCameraSystem.hasReadyBot(server)
-				|| Math.floorMod(server.getTickCount(), BACKGROUND_REFRESH_INTERVAL_TICKS) != 0) {
+		if (server == null) {
+			rendererBotReady = false;
+			return;
+		}
+		configure(server);
+		rendererBotReady = RendererBotCameraSystem.hasReadyBot(server);
+		if (!rendererBotReady || Math.floorMod(server.getTickCount(), BACKGROUND_REFRESH_INTERVAL_TICKS) != 0) {
 			return;
 		}
 		List<DimensionTileCache> caches;
@@ -108,6 +154,9 @@ final class MonitorYandexMapsClientTileRenderer {
 				progressed |= cache.refreshDirtyBaseTiles(server, budget);
 			}
 		} while (progressed && budget.hasRemaining());
+		for (DimensionTileCache cache : caches) {
+			cache.logProgressIfDue();
+		}
 	}
 
 	static void onChunkLoad(ServerLevel level, LevelChunk chunk) {
@@ -122,6 +171,16 @@ final class MonitorYandexMapsClientTileRenderer {
 	}
 
 	static void deactivateView(ScreenRuntimeKey key) {
+		if (key == null) {
+			return;
+		}
+		synchronized (LOCK) {
+			for (DimensionTileCache cache : CACHES.values()) {
+				if (cache != null) {
+					cache.removeActiveView(key);
+				}
+			}
+		}
 	}
 
 	static void clear(ResourceKey<Level> dimension) {
@@ -150,11 +209,12 @@ final class MonitorYandexMapsClientTileRenderer {
 			deleteDirectory(dataRoot.resolve("lg2-yandex-map-client-tiles-v5"));
 			deleteDirectory(dataRoot.resolve("lg2-yandex-map-client-tiles-v6"));
 			deleteDirectory(dataRoot.resolve("lg2-yandex-map-client-tiles-v7"));
-				deleteDirectory(dataRoot.resolve("lg2-yandex-map-client-tiles-v8"));
-				deleteDirectory(dataRoot.resolve("lg2-yandex-map-client-tiles-v9"));
-				deleteDirectory(dataRoot.resolve("lg2-yandex-map-client-tiles-v10"));
-				deleteDirectory(dataRoot.resolve("lg2-yandex-map-client-tiles-v11"));
-			}
+			deleteDirectory(dataRoot.resolve("lg2-yandex-map-client-tiles-v8"));
+			deleteDirectory(dataRoot.resolve("lg2-yandex-map-client-tiles-v9"));
+			deleteDirectory(dataRoot.resolve("lg2-yandex-map-client-tiles-v10"));
+			deleteDirectory(dataRoot.resolve("lg2-yandex-map-client-tiles-v11"));
+			deleteDirectory(dataRoot.resolve("lg2-yandex-map-client-tiles-v12"));
+		}
 		clear(null);
 	}
 
@@ -167,7 +227,10 @@ final class MonitorYandexMapsClientTileRenderer {
 			return;
 		}
 		configure(server);
-		cacheFor(worldCacheKey(server, level)).markChunkDirty(pos, System.currentTimeMillis(), discoveryOnly);
+		WorldCacheKey worldKey = worldCacheKey(server, level);
+		if (worldKey != null) {
+			cacheFor(worldKey).markChunkDirty(pos, System.currentTimeMillis(), discoveryOnly);
+		}
 	}
 
 	private static void markChunkDiscovered(ServerLevel level, ChunkPos pos) {
@@ -179,7 +242,10 @@ final class MonitorYandexMapsClientTileRenderer {
 			return;
 		}
 		configure(server);
-		cacheFor(worldCacheKey(server, level)).markChunkDiscovered(pos, System.currentTimeMillis());
+		WorldCacheKey worldKey = worldCacheKey(server, level);
+		if (worldKey != null) {
+			cacheFor(worldKey).markChunkDiscovered(pos, System.currentTimeMillis());
+		}
 	}
 
 	private static void deleteDirectory(Path root) {
@@ -200,20 +266,7 @@ final class MonitorYandexMapsClientTileRenderer {
 
 	static Frame render(
 			MinecraftServer server,
-			ServerLevel level,
-			double centerX,
-			double centerZ,
-			int width,
-			int height,
-			double blocksPerPixel,
-			Runnable onTileReady
-	) {
-		return render(server, level, centerX, centerZ, width, height, blocksPerPixel, onTileReady, null);
-	}
-
-	static Frame render(
-			MinecraftServer server,
-			ServerLevel level,
+			ResourceKey<Level> dimension,
 			double centerX,
 			double centerZ,
 			int width,
@@ -222,28 +275,41 @@ final class MonitorYandexMapsClientTileRenderer {
 			Runnable onTileReady,
 			ScreenRuntimeKey activeViewKey
 	) {
-		if (server == null || level == null || width <= 0 || height <= 0 || !Double.isFinite(blocksPerPixel) || blocksPerPixel <= 0.0D) {
+		if (server == null || dimension == null || width <= 0 || height <= 0 || !Double.isFinite(blocksPerPixel) || blocksPerPixel <= 0.0D) {
 			return Frame.failure(null, "Карта недоступна");
 		}
-		if (!isMapDimension(level.dimension())) {
+		if (!isMapDimension(dimension)) {
 			return Frame.failure(null, "Карта доступна только в верхнем мире");
 		}
-		configure(server);
-		WorldCacheKey worldKey = worldCacheKey(server, level);
+		WorldCacheKey worldKey = configuredWorldCacheKey(dimension);
+		if (worldKey == null) {
+			return Frame.failure(null, "Карта инициализируется");
+		}
 		double safeBlocksPerPixel = snapBlocksPerPixel(blocksPerPixel);
 		int lod = lodForBlocksPerPixel(safeBlocksPerPixel);
 		double tileBlocksPerPixel = blocksPerPixelForLod(lod);
 		double worldLeft = centerX - width * safeBlocksPerPixel * 0.5D;
 		double worldTop = centerZ - height * safeBlocksPerPixel * 0.5D;
 		DimensionTileCache cache = cacheFor(worldKey);
+		cache.registerActiveView(activeViewKey, onTileReady);
 		List<TileKey> visibleTiles = visibleTiles(lod, tileBlocksPerPixel, worldLeft, worldTop, width, height, safeBlocksPerPixel, centerX, centerZ);
-		cache.discoverLoadedViewportBaseTiles(level, worldLeft, worldTop, width, height, safeBlocksPerPixel, System.currentTimeMillis());
-		cache.buildVisibleTilesFromAvailableChildren(visibleTiles);
-		TileRequestBudget budget = new TileRequestBudget(MAX_BASE_TILE_REQUESTS_PER_FRAME);
-		boolean progressed;
-		do {
-			progressed = cache.refreshDirtyBaseTiles(server, budget, onTileReady);
-		} while (progressed && budget.hasRemaining());
+		// render() is called from MonitorScreenSystem's render executor.  Only
+		// publish its immutable viewport here; discovery, chunk tickets and bot
+		// requests are drained on the server thread below.
+		cache.enqueueVisibleWork(server, new VisibleWork(
+				activeViewKey,
+				worldLeft,
+				worldTop,
+				width,
+				height,
+				safeBlocksPerPixel,
+				List.copyOf(visibleTiles),
+				onTileReady
+		));
+		// A screen can have hundreds of thousands of pixels but usually only a
+		// handful of tiles. Resolve those tiles once, then keep the compositor
+		// entirely lock-free and free of repeated disk/missing-cache probes.
+		Map<TileKey, TileImage> frameTiles = cache.snapshotTiles(visibleTiles);
 
 		BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
 		int[] pixels = ((DataBufferInt) image.getRaster().getDataBuffer()).getData();
@@ -253,7 +319,7 @@ final class MonitorYandexMapsClientTileRenderer {
 			int row = screenY * width;
 			for (int screenX = 0; screenX < width; screenX++) {
 				double worldX = worldLeft + (screenX + 0.5D) * safeBlocksPerPixel;
-				int rgb = cache.sample(worldX, worldZ, lod);
+				int rgb = cache.sampleSnapshot(frameTiles, worldX, worldZ, lod);
 				if (rgb < 0) {
 					rgb = MISSING_RGB;
 					missingPixels++;
@@ -263,7 +329,7 @@ final class MonitorYandexMapsClientTileRenderer {
 		}
 		String status;
 		boolean needsCamera = missingPixels > 0 || cache.pendingBaseTileCount() > 0;
-		if (!RendererBotCameraSystem.hasReadyBot(server) && needsCamera) {
+		if (!rendererBotReady && needsCamera) {
 			status = "Нет клиента камеры";
 		} else if (needsCamera) {
 			status = "Очередь карты: " + cache.pendingBaseTileCount() + " тайл.";
@@ -298,7 +364,9 @@ final class MonitorYandexMapsClientTileRenderer {
 	}
 
 	static int rendererBotMapTilePriorityScore(int internalPriorityScore) {
-		return RENDERER_BOT_MAP_TILE_PRIORITY_SCORE;
+		// This value orders only map-tile work on the renderer client.  It is not
+		// used to raise the priority of the renderer bot's other camera work.
+		return Math.max(RENDERER_BOT_MAP_TILE_PRIORITY_SCORE, internalPriorityScore);
 	}
 
 	static boolean rendererBotMapTileActiveView(boolean activeView) {
@@ -312,10 +380,19 @@ final class MonitorYandexMapsClientTileRenderer {
 	}
 
 	private static WorldCacheKey worldCacheKey(MinecraftServer server, ServerLevel level) {
-		return new WorldCacheKey(
-				server.getWorldPath(LevelResource.ROOT).toAbsolutePath().normalize(),
-				level.dimension()
-		);
+		return server == null || level == null ? null : worldCacheKey(server, level.dimension());
+	}
+
+	private static WorldCacheKey worldCacheKey(MinecraftServer server, ResourceKey<Level> dimension) {
+		if (server == null || dimension == null) {
+			return null;
+		}
+		return new WorldCacheKey(server.getWorldPath(LevelResource.ROOT).toAbsolutePath().normalize(), dimension);
+	}
+
+	private static WorldCacheKey configuredWorldCacheKey(ResourceKey<Level> dimension) {
+		Path worldRoot = configuredWorldRoot;
+		return worldRoot == null || dimension == null ? null : new WorldCacheKey(worldRoot, dimension);
 	}
 
 	private static int backgroundBaseTileRequestsPerPass(MinecraftServer server, int pendingBaseTiles, long oldestPendingAt) {
@@ -404,9 +481,17 @@ final class MonitorYandexMapsClientTileRenderer {
 		COMPLETE
 	}
 
-	private record TileImage(byte[] pixels, long renderedAt, boolean complete) {
+	private record TileImage(byte[] pixels, long renderedAt, long availableAt, boolean complete, boolean needsCaptureVerification) {
 		private TileImage(byte[] pixels, long renderedAt) {
-			this(pixels, renderedAt, true);
+			this(pixels, renderedAt, renderedAt, true, false);
+		}
+
+		private TileImage(byte[] pixels, long renderedAt, boolean complete) {
+			this(pixels, renderedAt, renderedAt, complete, false);
+		}
+
+		private TileImage(byte[] pixels, long renderedAt, long availableAt, boolean complete) {
+			this(pixels, renderedAt, availableAt, complete, false);
 		}
 
 		private boolean valid() {
@@ -426,17 +511,164 @@ final class MonitorYandexMapsClientTileRenderer {
 		}
 	}
 
+	private static boolean isUniformRgbFrame(byte[] pixels) {
+		if (pixels == null || pixels.length < RGB_BYTES_PER_PIXEL) {
+			return false;
+		}
+		byte red = pixels[0];
+		byte green = pixels[1];
+		byte blue = pixels[2];
+		for (int offset = RGB_BYTES_PER_PIXEL; offset + 2 < pixels.length; offset += RGB_BYTES_PER_PIXEL) {
+			if (pixels[offset] != red || pixels[offset + 1] != green || pixels[offset + 2] != blue) {
+				return false;
+			}
+		}
+		return true;
+	}
+
 	private static final class DimensionTileCache {
 		private final WorldCacheKey worldKey;
 		private final LinkedHashMap<TileKey, TileImage> tiles = new LinkedHashMap<>(512, 0.75F, true);
 		private final Map<TileKey, TileImage> tileLookup = new ConcurrentHashMap<>();
 		private final Set<TileKey> missingTiles = ConcurrentHashMap.newKeySet();
 		private final Set<TileKey> inFlight = ConcurrentHashMap.newKeySet();
+		// A lower-priority refresh must not slip through merely because every new
+		// tile is currently waiting on the renderer bot or on its retry backoff.
+		private final Set<TileKey> inFlightNewBaseTiles = ConcurrentHashMap.newKeySet();
+		private final Object lodBuildLock = new Object();
+		private final Set<TileKey> lodBuildsInFlight = ConcurrentHashMap.newKeySet();
+		private final Set<TileKey> lodBuildsDirty = ConcurrentHashMap.newKeySet();
+		// Every saved base tile registers its small parent chain here.  It lets a
+		// visible coarse tile request only the branches which actually contain
+		// world data, instead of recursively probing all 4^lod possible leaves.
+		private final Set<TileKey> knownLodCoverage = ConcurrentHashMap.newKeySet();
 		private final Map<TileKey, Long> dirtyAfter = new ConcurrentHashMap<>();
+		private final Map<TileKey, Long> retryAfter = new ConcurrentHashMap<>();
+		private final Map<TileKey, Integer> failedAttempts = new ConcurrentHashMap<>();
 		private final LinkedHashMap<TileKey, DirtyTileState> pendingBaseTiles = new LinkedHashMap<>();
+		private final Set<ChunkPos> deferredChunkDiscoveries = ConcurrentHashMap.newKeySet();
+		private final Map<ScreenRuntimeKey, Runnable> activeViewCallbacks = new ConcurrentHashMap<>();
+		// The screen compositor may render several monitors concurrently.  Keep
+		// only each monitor's newest viewport, then consume that compact batch on
+		// the server thread.  This is the boundary between thread-safe image/cache
+		// sampling and all Minecraft world/network access.
+		private final Object visibleWorkLock = new Object();
+		private final Map<ScreenRuntimeKey, VisibleWork> pendingVisibleWorkByView = new LinkedHashMap<>();
+		private VisibleWork pendingAnonymousVisibleWork;
+		private boolean visibleWorkDrainQueued;
+		private volatile boolean savedTileQueueInitialized;
+		private final AtomicLong savedChunksDiscovered = new AtomicLong();
+		private final AtomicLong newBaseTilesQueued = new AtomicLong();
+		private final AtomicLong newBaseTilesRendered = new AtomicLong();
+		private volatile long lastProgressLogAt;
 
 		private DimensionTileCache(WorldCacheKey worldKey) {
 			this.worldKey = worldKey;
+			this.savedTileQueueInitialized = false;
+			CompletableFuture.runAsync(this::discoverSavedBaseTiles);
+		}
+
+		private void registerActiveView(ScreenRuntimeKey key, Runnable onTileReady) {
+			if (key != null && onTileReady != null) {
+				this.activeViewCallbacks.put(key, onTileReady);
+			}
+		}
+
+		private void removeActiveView(ScreenRuntimeKey key) {
+			if (key != null) {
+				this.activeViewCallbacks.remove(key);
+				synchronized (this.visibleWorkLock) {
+					this.pendingVisibleWorkByView.remove(key);
+				}
+			}
+		}
+
+		private void notifyActiveViews() {
+			for (Runnable callback : List.copyOf(this.activeViewCallbacks.values())) {
+				notifyReady(callback);
+			}
+		}
+
+		private void enqueueVisibleWork(MinecraftServer server, VisibleWork work) {
+			if (server == null || work == null) {
+				return;
+			}
+			boolean scheduleDrain = false;
+			synchronized (this.visibleWorkLock) {
+				if (work.viewKey() == null) {
+					this.pendingAnonymousVisibleWork = work;
+				} else {
+					this.pendingVisibleWorkByView.put(work.viewKey(), work);
+				}
+				if (!this.visibleWorkDrainQueued) {
+					this.visibleWorkDrainQueued = true;
+					scheduleDrain = true;
+				}
+			}
+			if (scheduleDrain) {
+				server.execute(() -> drainVisibleWork(server));
+			}
+		}
+
+		private void drainVisibleWork(MinecraftServer server) {
+			List<VisibleWork> workItems;
+			synchronized (this.visibleWorkLock) {
+				workItems = new ArrayList<>(this.pendingVisibleWorkByView.values());
+				this.pendingVisibleWorkByView.clear();
+				if (this.pendingAnonymousVisibleWork != null) {
+					workItems.add(this.pendingAnonymousVisibleWork);
+					this.pendingAnonymousVisibleWork = null;
+				}
+			}
+			try {
+				if (server == null || workItems.isEmpty()) {
+					return;
+				}
+				ServerLevel level = server.getLevel(this.worldKey.dimension());
+				if (level == null) {
+					return;
+				}
+				List<Runnable> readyCallbacks = new ArrayList<>(workItems.size());
+				for (VisibleWork work : workItems) {
+					if (work == null) {
+						continue;
+					}
+					discoverLoadedViewportBaseTiles(
+							level,
+							work.worldLeft(),
+							work.worldTop(),
+							work.width(),
+							work.height(),
+							work.blocksPerPixel(),
+							System.currentTimeMillis()
+					);
+					buildVisibleTilesFromAvailableChildren(work.visibleTiles(), work.onTileReady());
+					if (work.onTileReady() != null) {
+						readyCallbacks.add(work.onTileReady());
+					}
+				}
+				Runnable readyCallback = readyCallbacks.isEmpty() ? null : () -> {
+					for (Runnable callback : readyCallbacks) {
+						notifyReady(callback);
+					}
+				};
+				TileRequestBudget budget = new TileRequestBudget(MAX_BASE_TILE_REQUESTS_PER_FRAME);
+				boolean progressed;
+				do {
+					progressed = refreshDirtyBaseTiles(server, budget, readyCallback);
+				} while (progressed && budget.hasRemaining());
+			} finally {
+				boolean reschedule;
+				synchronized (this.visibleWorkLock) {
+					reschedule = this.pendingAnonymousVisibleWork != null || !this.pendingVisibleWorkByView.isEmpty();
+					if (!reschedule) {
+						this.visibleWorkDrainQueued = false;
+					}
+				}
+				if (reschedule && server != null) {
+					server.execute(() -> drainVisibleWork(server));
+				}
+			}
 		}
 
 		private boolean hasUsableTile(TileKey key) {
@@ -470,49 +702,33 @@ final class MonitorYandexMapsClientTileRenderer {
 				return false;
 			}
 			if (this.inFlight.contains(key)) {
-				queuePendingBaseTile(key, this.dirtyAfter.getOrDefault(key, System.currentTimeMillis()), pending.discoveryOnly());
+				queuePendingBaseTile(key, this.dirtyAfter.getOrDefault(key, System.currentTimeMillis()), pending.discoveryOnly(), pending.countedAsNew());
 				return false;
 			}
-			if (key.lod() == MIN_LOD && !isBaseTileAreaLoaded(level, key)) {
-				budget.tryConsume();
-				return true;
-			}
 			if (hasUsableTile(key) && !isStale(key)) {
+				this.retryAfter.remove(key);
+				this.failedAttempts.remove(key);
+				if (pending.countedAsNew()) {
+					this.newBaseTilesRendered.incrementAndGet();
+				}
 				clearDirtyMarkerIfCovered(key, System.currentTimeMillis());
 				return true;
 			}
 			int usedBefore = budget.used();
-			requestTile(server, level, key, budget, onTileReady, pending.priorityScore(), false);
+			requestTile(server, level, key, budget, onTileReady, pending, false);
 			if (budget.used() == usedBefore) {
-				queuePendingBaseTile(key, this.dirtyAfter.getOrDefault(key, System.currentTimeMillis()), pending.discoveryOnly());
+				queuePendingBaseTile(key, this.dirtyAfter.getOrDefault(key, System.currentTimeMillis()), pending.discoveryOnly(), pending.countedAsNew());
 				return false;
 			}
 			return true;
 		}
 
-		private void requestTile(MinecraftServer server, ServerLevel level, TileKey key, TileRequestBudget budget, Runnable onTileReady, int priorityScore, boolean activeView) {
-			if (server == null || level == null || key == null || budget == null) {
+		private void requestTile(MinecraftServer server, ServerLevel level, TileKey key, TileRequestBudget budget, Runnable onTileReady, PendingBaseTile pending, boolean activeView) {
+			if (server == null || level == null || key == null || budget == null || pending == null) {
 				return;
 			}
 			if (key.lod() > DIRECT_RENDER_MAX_LOD) {
-				TileBuildResult buildResult = buildFromChildren(key, System.currentTimeMillis());
-				if (buildResult == TileBuildResult.COMPLETE) {
-					notifyReady(onTileReady);
-					return;
-				}
-				if (buildResult == TileBuildResult.PARTIAL) {
-					notifyReady(onTileReady);
-				}
-				for (TileKey child : childKeys(key)) {
-					if (!budget.hasRemaining()) {
-						return;
-					}
-					requestTile(server, level, child, budget, onTileReady, priorityScore, activeView);
-				}
-				TileBuildResult rebuiltResult = buildFromChildren(key, System.currentTimeMillis());
-				if (rebuiltResult != TileBuildResult.NONE) {
-					notifyReady(onTileReady);
-				}
+				scheduleLodBuild(key, onTileReady);
 				return;
 			}
 			if (hasUsableTile(key) && !isStale(key)) {
@@ -520,6 +736,9 @@ final class MonitorYandexMapsClientTileRenderer {
 			}
 			if (!budget.tryConsume() || !this.inFlight.add(key)) {
 				return;
+			}
+			if (!pending.renderedBefore()) {
+				this.inFlightNewBaseTiles.add(key);
 			}
 			long requestStartedAt = System.currentTimeMillis();
 			double bpp = blocksPerPixelForLod(key.lod());
@@ -535,30 +754,52 @@ final class MonitorYandexMapsClientTileRenderer {
 					centerZ,
 					TILE_SIZE,
 					bpp,
-					rendererBotMapTilePriorityScore(priorityScore),
+					rendererBotMapTilePriorityScore(pending.priorityScore()),
 					rendererBotMapTileActiveView(activeView)
 			);
 			future.whenComplete((pixels, throwable) -> {
 				try {
 					if (throwable != null) {
 						Lg2.LOGGER.debug("Yandex map tile render failed at lod {} {},{}: {}", key.lod(), key.tileX(), key.tileZ(), throwable.toString());
+						requeueFailedBaseTile(pending);
 						return;
 					}
 					if (pixels == null || pixels.length < TILE_RGB_BYTES) {
+						requeueFailedBaseTile(pending);
 						return;
 					}
-					TileImage image = new TileImage(Arrays.copyOf(pixels, TILE_RGB_BYTES), requestStartedAt);
+					long completedAt = System.currentTimeMillis();
+					TileImage image = new TileImage(Arrays.copyOf(pixels, TILE_RGB_BYTES), requestStartedAt, completedAt, true);
 					storeTile(key, image, requestStartedAt);
-					rebuildAncestors(key);
+					this.retryAfter.remove(key);
+					this.failedAttempts.remove(key);
+					if (pending.countedAsNew()) {
+						this.newBaseTilesRendered.incrementAndGet();
+					}
+					rebuildAncestors(key, onTileReady);
 					Long remainingDirtyAt = remainingDirtyAt(key, requestStartedAt);
 					if (remainingDirtyAt != null && key.lod() == MIN_LOD) {
 						queuePendingBaseTile(key, remainingDirtyAt, false);
 					}
 				} finally {
 					this.inFlight.remove(key);
+					this.inFlightNewBaseTiles.remove(key);
 					notifyReady(onTileReady);
+					notifyActiveViews();
 				}
 			});
+		}
+
+		private void requeueFailedBaseTile(PendingBaseTile pending) {
+			if (pending == null || pending.key() == null || pending.key().lod() != MIN_LOD) {
+				return;
+			}
+			TileKey key = pending.key();
+			int attempt = this.failedAttempts.merge(key, 1, Integer::sum);
+			long retryDelay = Math.min(30_000L, 1_000L << Math.min(5, Math.max(0, attempt - 1)));
+			long now = System.currentTimeMillis();
+			this.retryAfter.put(key, now + retryDelay);
+			queuePendingBaseTile(key, now, pending.discoveryOnly(), pending.countedAsNew());
 		}
 
 		private boolean isStale(TileKey key) {
@@ -570,6 +811,9 @@ final class MonitorYandexMapsClientTileRenderer {
 			if (image == null || !image.valid()) {
 				return true;
 			}
+			if (image.needsCaptureVerification()) {
+				return true;
+			}
 			if (!image.complete()) {
 				return true;
 			}
@@ -579,7 +823,7 @@ final class MonitorYandexMapsClientTileRenderer {
 		private boolean isOutdated(TileKey key, TileImage image, long now) {
 			Long dirtyAt = this.dirtyAfter.get(key);
 			return (dirtyAt != null && image.renderedAt() < dirtyAt)
-					|| now - image.renderedAt() > BASE_TILE_REFRESH_MS;
+					|| now - image.availableAt() > BASE_TILE_REFRESH_MS;
 		}
 
 		private TileImage imageFor(TileKey key) {
@@ -599,17 +843,30 @@ final class MonitorYandexMapsClientTileRenderer {
 			return loaded;
 		}
 
-		private int sample(double worldX, double worldZ, int lod) {
-			return sampleAtLod(worldX, worldZ, lod);
+		private Map<TileKey, TileImage> snapshotTiles(List<TileKey> keys) {
+			if (keys == null || keys.isEmpty()) {
+				return Map.of();
+			}
+			Map<TileKey, TileImage> snapshot = new HashMap<>(keys.size());
+			for (TileKey key : keys) {
+				if (key == null) {
+					continue;
+				}
+				TileImage image = imageFor(key);
+				if (image != null && image.valid()) {
+					snapshot.put(key, image);
+				}
+			}
+			return snapshot.isEmpty() ? Map.of() : Map.copyOf(snapshot);
 		}
 
-		private int sampleAtLod(double worldX, double worldZ, int lod) {
-			if (lod < MIN_LOD || lod > MAX_LOD) {
+		private int sampleSnapshot(Map<TileKey, TileImage> snapshot, double worldX, double worldZ, int lod) {
+			if (snapshot == null || snapshot.isEmpty() || lod < MIN_LOD || lod > MAX_LOD) {
 				return -1;
 			}
 			TileKey key = tileKeyAt(lod, worldX, worldZ);
-			TileImage image = imageFor(key);
-			if (image == null) {
+			TileImage image = snapshot.get(key);
+			if (image == null || !image.valid()) {
 				return -1;
 			}
 			double tileSize = tileWorldSize(lod);
@@ -634,14 +891,14 @@ final class MonitorYandexMapsClientTileRenderer {
 			int index = 0;
 			for (TileKey child : childKeys(key)) {
 				TileImage image = imageFor(child);
-				if ((image == null || !image.valid()) && child.lod() == MIN_LOD_REBUILT_FROM_BASE_CHILDREN) {
-					TileBuildResult childBuildResult = buildFromChildren(child, buildStartedAt);
-					if (childBuildResult != TileBuildResult.NONE) {
-						image = imageFor(child);
-					}
-				}
 				if (image == null || !image.valid()) {
-					complete = false;
+					// Once the region header scan has completed, an absent branch that
+					// is not in the coverage index is known-empty, not "still loading".
+					// That lets sparse but stable far LODs become persistable without
+					// writing transient partial tiles to disk.
+					if (!this.savedTileQueueInitialized || this.knownLodCoverage.contains(child)) {
+						complete = false;
+					}
 				} else {
 					children[index] = image;
 					availableChildren++;
@@ -681,16 +938,8 @@ final class MonitorYandexMapsClientTileRenderer {
 			return complete ? TileBuildResult.COMPLETE : TileBuildResult.PARTIAL;
 		}
 
-		private void rebuildAncestors(TileKey key) {
-			long buildStartedAt = System.currentTimeMillis();
-			TileKey parent = parentKey(key);
-			while (parent != null) {
-				TileBuildResult result = buildFromChildren(parent, buildStartedAt);
-				if (result != TileBuildResult.COMPLETE) {
-					return;
-				}
-				parent = parentKey(parent);
-			}
+		private void rebuildAncestors(TileKey key, Runnable onTileReady) {
+			scheduleLodBuild(parentKey(key), onTileReady);
 		}
 
 		private List<TileKey> childKeys(TileKey key) {
@@ -719,11 +968,27 @@ final class MonitorYandexMapsClientTileRenderer {
 			cacheTile(key, image, true, freshnessCutoffMillis);
 		}
 
-		private void cacheTile(TileKey key, TileImage image, boolean persist, long freshnessCutoffMillis) {
+		private boolean cacheTile(TileKey key, TileImage image, boolean persist, long freshnessCutoffMillis) {
 			if (key == null || image == null || !image.valid()) {
-				return;
+				return false;
 			}
 			synchronized (LOCK) {
+				TileImage existing = this.tileLookup.get(key);
+				// A background partial LOD must never replace a complete tile which
+				// finished while that background task was sampling its children.
+				// Keeping the older complete image is preferable to making a far zoom
+				// regress into a hole; the next complete build will replace it.
+				if (!image.complete() && existing != null && existing.valid() && existing.complete()) {
+					return false;
+				}
+				if (image.complete()
+						&& existing != null
+						&& existing.valid()
+						&& existing.complete()
+						&& (existing.renderedAt() > image.renderedAt()
+								|| (existing.renderedAt() == image.renderedAt() && existing.availableAt() >= image.availableAt()))) {
+					return false;
+				}
 				this.tiles.put(key, image);
 				this.tileLookup.put(key, image);
 				this.missingTiles.remove(key);
@@ -741,6 +1006,7 @@ final class MonitorYandexMapsClientTileRenderer {
 			if (persist && image.complete()) {
 				persistTile(key, image);
 			}
+			return true;
 		}
 
 		private void trimToBudget() {
@@ -770,7 +1036,7 @@ final class MonitorYandexMapsClientTileRenderer {
 				return null;
 			}
 			Path path = tilePath(this.worldKey, key);
-			if (path == null || !Files.isRegularFile(path)) {
+			if (!isStoredTileFileUsable(path)) {
 				return null;
 			}
 			try {
@@ -779,7 +1045,12 @@ final class MonitorYandexMapsClientTileRenderer {
 					return null;
 				}
 				long modifiedAt = Files.getLastModifiedTime(path).toMillis();
-				return new TileImage(Arrays.copyOf(pixels, TILE_RGB_BYTES), modifiedAt);
+				byte[] frame = Arrays.copyOf(pixels, TILE_RGB_BYTES);
+				// The legacy raw cache has no capture-validity metadata. Verify an
+				// exactly uniform base frame once with the depth-aware client path:
+				// it might be sky, but may equally be a real flat block/display.
+				boolean needsCaptureVerification = key.lod() == MIN_LOD && isUniformRgbFrame(frame);
+				return new TileImage(frame, modifiedAt, modifiedAt, true, needsCaptureVerification);
 			} catch (IOException exception) {
 				Lg2.LOGGER.debug("Failed to load Yandex map tile {}", path, exception);
 				return null;
@@ -800,7 +1071,7 @@ final class MonitorYandexMapsClientTileRenderer {
 				} catch (IOException ignored) {
 					Files.move(tmp, path, StandardCopyOption.REPLACE_EXISTING);
 				}
-				Files.setLastModifiedTime(path, FileTime.fromMillis(Math.max(0L, image.renderedAt())));
+				Files.setLastModifiedTime(path, FileTime.fromMillis(Math.max(0L, image.availableAt())));
 			} catch (IOException exception) {
 				Lg2.LOGGER.debug("Failed to persist Yandex map tile {}", path, exception);
 			}
@@ -903,14 +1174,68 @@ final class MonitorYandexMapsClientTileRenderer {
 			}
 		}
 
-		private void buildVisibleTilesFromAvailableChildren(List<TileKey> visibleTiles) {
+		private void buildVisibleTilesFromAvailableChildren(List<TileKey> visibleTiles, Runnable onTileReady) {
 			if (visibleTiles == null || visibleTiles.isEmpty()) {
 				return;
 			}
-			long buildStartedAt = System.currentTimeMillis();
 			for (TileKey key : visibleTiles) {
 				if (key != null && key.lod() > MIN_LOD && needsTileCompletion(key)) {
-					buildFromChildren(key, buildStartedAt);
+					scheduleLodBuild(key, onTileReady);
+				}
+			}
+		}
+
+		private void scheduleLodBuild(TileKey key, Runnable onTileReady) {
+			if (key == null || key.lod() <= MIN_LOD) {
+				return;
+			}
+			synchronized (this.lodBuildLock) {
+				if (!this.lodBuildsInFlight.add(key)) {
+					this.lodBuildsDirty.add(key);
+					return;
+				}
+			}
+			CompletableFuture.runAsync(() -> {
+				try {
+					TileBuildResult result = buildFromChildren(key, System.currentTimeMillis());
+					if (result != TileBuildResult.COMPLETE) {
+						// A cached partial parent must keep asking its known descendants
+						// to improve.  Without this, eviction of an intermediate LOD made
+						// a far-away map turn black again until the user zoomed in.
+						scheduleMissingKnownLodChildren(key, onTileReady);
+					}
+					if (result != TileBuildResult.NONE) {
+						notifyReady(onTileReady);
+						notifyActiveViews();
+						scheduleLodBuild(parentKey(key), onTileReady);
+					}
+				} finally {
+					boolean requeue;
+					synchronized (this.lodBuildLock) {
+						this.lodBuildsInFlight.remove(key);
+						requeue = this.lodBuildsDirty.remove(key);
+					}
+					if (requeue) {
+						scheduleLodBuild(key, onTileReady);
+					}
+				}
+			}, CompletableFuture.delayedExecutor(LOD_BUILD_COALESCE_MS, TimeUnit.MILLISECONDS, LOD_BUILD_EXECUTOR));
+		}
+
+		private void scheduleMissingKnownLodChildren(TileKey key, Runnable onTileReady) {
+			if (key == null || key.lod() <= MIN_LOD) {
+				return;
+			}
+			for (TileKey child : childKeys(key)) {
+				if (child == null || child.lod() <= MIN_LOD || !this.knownLodCoverage.contains(child)) {
+					continue;
+				}
+				TileImage image = imageFor(child);
+				// A valid partial child already has all currently-known pixels.  It
+				// will be rebuilt by the base-tile completion that changes it; asking
+				// for it again here creates an LOD parent/child ping-pong forever.
+				if (image == null || !image.valid()) {
+					scheduleLodBuild(child, onTileReady);
 				}
 			}
 		}
@@ -934,6 +1259,22 @@ final class MonitorYandexMapsClientTileRenderer {
 			if (pos == null) {
 				return;
 			}
+			synchronized (LOCK) {
+				// Keep discoveries that occur before the region files are fully
+				// inventoried so the final merge cannot lose a just-generated chunk.
+				// They are also admitted immediately below: waiting for a large MCA
+				// scan used to guarantee a black map during startup.
+				if (!this.savedTileQueueInitialized) {
+					this.deferredChunkDiscoveries.add(pos);
+				}
+			}
+			queueChunkDiscovered(pos, discoveredAt);
+		}
+
+		private void queueChunkDiscovered(ChunkPos pos, long discoveredAt) {
+			if (pos == null) {
+				return;
+			}
 			long minTileX = floorToLong(((double) (pos.x << 4)) / BASE_TILE_BLOCK_SPAN);
 			long maxTileX = floorToLong(((double) ((pos.x << 4) + 15)) / BASE_TILE_BLOCK_SPAN);
 			long minTileZ = floorToLong(((double) (pos.z << 4)) / BASE_TILE_BLOCK_SPAN);
@@ -948,7 +1289,23 @@ final class MonitorYandexMapsClientTileRenderer {
 			}
 		}
 
+		private void addChunkBaseTiles(ChunkPos pos, Set<TileKey> target) {
+			if (pos == null || target == null) {
+				return;
+			}
+			long minTileX = floorToLong(((double) (pos.x << 4)) / BASE_TILE_BLOCK_SPAN);
+			long maxTileX = floorToLong(((double) ((pos.x << 4) + 15)) / BASE_TILE_BLOCK_SPAN);
+			long minTileZ = floorToLong(((double) (pos.z << 4)) / BASE_TILE_BLOCK_SPAN);
+			long maxTileZ = floorToLong(((double) ((pos.z << 4) + 15)) / BASE_TILE_BLOCK_SPAN);
+			for (long tileZ = minTileZ; tileZ <= maxTileZ; tileZ++) {
+				for (long tileX = minTileX; tileX <= maxTileX; tileX++) {
+					target.add(new TileKey(MIN_LOD, tileX, tileZ));
+				}
+			}
+		}
+
 		private void markTileDirtyCascade(TileKey key, long dirtyAt, boolean discoveryOnly) {
+			rememberKnownBaseTile(key);
 			TileKey current = key;
 			while (current != null) {
 				this.dirtyAfter.merge(current, dirtyAt, Math::max);
@@ -958,20 +1315,45 @@ final class MonitorYandexMapsClientTileRenderer {
 		}
 
 		private boolean queueMissingBaseTile(TileKey key, long discoveredAt) {
-			if (key == null || key.lod() != MIN_LOD || hasUsableTile(key) || tileWasRenderedBefore(key)) {
+			rememberKnownBaseTile(key);
+			if (key == null || key.lod() != MIN_LOD) {
+				return false;
+			}
+			TileImage image = imageFor(key);
+			boolean needsCaptureVerification = image != null && image.needsCaptureVerification();
+			if ((!needsCaptureVerification && hasUsableTile(key))
+					|| (!needsCaptureVerification && tileWasRenderedBefore(key))) {
 				return false;
 			}
 			synchronized (LOCK) {
-				if (this.pendingBaseTiles.containsKey(key)) {
+				DirtyTileState existing = this.pendingBaseTiles.get(key);
+				if (existing != null) {
+					// A dirty/load event may have enqueued this tile while the region
+					// inventory was still running.  Preserve its history but make the
+					// progress accounting reflect that it is genuinely new terrain.
+					if (!existing.countedAsNew()) {
+						this.pendingBaseTiles.put(
+								key,
+								new DirtyTileState(
+										existing.firstMarkedAt(),
+										Math.max(existing.lastMarkedAt(), discoveredAt),
+										existing.discoveryOnly(),
+										false,
+										true
+								)
+						);
+						this.newBaseTilesQueued.incrementAndGet();
+					}
 					return true;
 				}
-				this.pendingBaseTiles.put(key, new DirtyTileState(discoveredAt, discoveredAt, true, false));
-				trimPendingBaseTilesLocked();
+				this.pendingBaseTiles.put(key, new DirtyTileState(discoveredAt, discoveredAt, true, false, true));
+				this.newBaseTilesQueued.incrementAndGet();
 			}
 			return true;
 		}
 
 		private void queueLoadedStaleBaseTile(TileKey key, long discoveredAt) {
+			rememberKnownBaseTile(key);
 			if (key == null || key.lod() != MIN_LOD) {
 				return;
 			}
@@ -980,11 +1362,15 @@ final class MonitorYandexMapsClientTileRenderer {
 				return;
 			}
 			Long dirtyAt = this.dirtyAfter.get(key);
-			long queuedAt = dirtyAt != null && dirtyAt > image.renderedAt() ? dirtyAt : image.renderedAt();
+			long queuedAt = dirtyAt != null && dirtyAt > image.renderedAt() ? dirtyAt : image.availableAt();
 			queuePendingBaseTile(key, queuedAt, true);
 		}
 
 		private void queuePendingBaseTile(TileKey key, long dirtyAt, boolean discoveryOnly) {
+			queuePendingBaseTile(key, dirtyAt, discoveryOnly, false);
+		}
+
+		private void queuePendingBaseTile(TileKey key, long dirtyAt, boolean discoveryOnly, boolean countedAsNew) {
 			if (key == null || key.lod() != MIN_LOD) {
 				return;
 			}
@@ -992,7 +1378,7 @@ final class MonitorYandexMapsClientTileRenderer {
 				DirtyTileState existing = this.pendingBaseTiles.get(key);
 				boolean renderedBefore = existing != null ? existing.renderedBefore() : tileWasRenderedBefore(key);
 				if (existing == null) {
-					this.pendingBaseTiles.put(key, new DirtyTileState(dirtyAt, dirtyAt, discoveryOnly, renderedBefore));
+					this.pendingBaseTiles.put(key, new DirtyTileState(dirtyAt, dirtyAt, discoveryOnly, renderedBefore, countedAsNew));
 				} else {
 					this.pendingBaseTiles.put(
 							key,
@@ -1000,52 +1386,60 @@ final class MonitorYandexMapsClientTileRenderer {
 									Math.min(existing.firstMarkedAt(), dirtyAt),
 									Math.max(existing.lastMarkedAt(), dirtyAt),
 									existing.discoveryOnly() && discoveryOnly,
-									existing.renderedBefore() || renderedBefore
+									existing.renderedBefore() || renderedBefore,
+									existing.countedAsNew() || countedAsNew
 							)
 					);
 				}
-				trimPendingBaseTilesLocked();
+				if (renderedBefore) {
+					trimPendingBaseTilesLocked();
+				}
+			}
+		}
+
+		private void rememberKnownBaseTile(TileKey key) {
+			if (key == null || key.lod() != MIN_LOD) {
+				return;
+			}
+			TileKey current = key;
+			while (current != null) {
+				this.knownLodCoverage.add(current);
+				current = parentKey(current);
 			}
 		}
 
 		private void trimPendingBaseTilesLocked() {
 			while (this.pendingBaseTiles.size() > MAX_DIRTY_BASE_TILES_PER_DIMENSION) {
 				TileKey renderedKey = null;
-				TileKey farthestNewKey = null;
-				double farthestNewDistance = Double.NEGATIVE_INFINITY;
 				for (Map.Entry<TileKey, DirtyTileState> entry : this.pendingBaseTiles.entrySet()) {
 					DirtyTileState state = entry.getValue();
 					if (state != null && state.renderedBefore()) {
 						renderedKey = entry.getKey();
 						break;
 					}
-					if (state != null) {
-						double distance = baseTileDistanceSquaredToWorldCenter(entry.getKey());
-						if (distance > farthestNewDistance) {
-							farthestNewDistance = distance;
-							farthestNewKey = entry.getKey();
-						}
-					}
 				}
 				if (renderedKey != null) {
 					this.pendingBaseTiles.remove(renderedKey);
 					continue;
 				}
-				if (farthestNewKey != null) {
-					this.pendingBaseTiles.remove(farthestNewKey);
-					continue;
-				}
-				Iterator<Map.Entry<TileKey, DirtyTileState>> iterator = this.pendingBaseTiles.entrySet().iterator();
-				if (!iterator.hasNext()) {
-					return;
-				}
-				iterator.next();
-				iterator.remove();
+				// New world tiles are never discarded. They are the source of truth
+				// for a full map; losing one here used to leave a permanent hole.
+				return;
 			}
 		}
 
 		private PendingBaseTile pollNextPendingBaseTile() {
 			synchronized (LOCK) {
+				long now = System.currentTimeMillis();
+				boolean unresolvedNewTile = !this.inFlightNewBaseTiles.isEmpty();
+				if (!unresolvedNewTile) {
+					for (DirtyTileState state : this.pendingBaseTiles.values()) {
+						if (state != null && !state.renderedBefore()) {
+							unresolvedNewTile = true;
+							break;
+						}
+					}
+				}
 				TileKey bestKey = null;
 				DirtyTileState bestState = null;
 				int bestScore = Integer.MIN_VALUE;
@@ -1058,7 +1452,20 @@ final class MonitorYandexMapsClientTileRenderer {
 						iterator.remove();
 						continue;
 					}
+					Long retryAt = this.retryAfter.get(key);
+					if (retryAt != null && retryAt > now) {
+						continue;
+					}
+					if (retryAt != null) {
+						this.retryAfter.remove(key, retryAt);
+					}
 					int score = tilePriorityScore(state);
+					// Strict admission barrier: new world geometry must finish (or
+					// explicitly retry) before a changed/maintenance tile can become
+					// visible.  This is stronger than merely sorting the current map.
+					if (unresolvedNewTile && score < 2) {
+						continue;
+					}
 					if (bestKey == null
 							|| score > bestScore
 							|| (score == bestScore && shouldPreferPendingTile(key, state, bestKey, bestState))) {
@@ -1073,7 +1480,13 @@ final class MonitorYandexMapsClientTileRenderer {
 					return null;
 				}
 				this.pendingBaseTiles.remove(selectedKey);
-				return new PendingBaseTile(selectedKey, selectedState.discoveryOnly(), bestScore);
+				return new PendingBaseTile(
+						selectedKey,
+						selectedState.discoveryOnly(),
+						selectedState.renderedBefore(),
+						selectedState.countedAsNew(),
+						bestScore
+				);
 			}
 		}
 
@@ -1081,7 +1494,12 @@ final class MonitorYandexMapsClientTileRenderer {
 			if (state == null) {
 				return Integer.MIN_VALUE;
 			}
-			return state.renderedBefore() ? 0 : 1;
+			if (!state.renderedBefore()) {
+				return 2;
+			}
+			// A dirty notification represents an actual world change.  A
+			// discovery-only entry is the 30-minute maintenance refresh.
+			return state.discoveryOnly() ? 0 : 1;
 		}
 
 		private boolean shouldPreferPendingTile(TileKey key, DirtyTileState state, TileKey bestKey, DirtyTileState bestState) {
@@ -1100,10 +1518,178 @@ final class MonitorYandexMapsClientTileRenderer {
 					return distance < bestDistance;
 				}
 			}
-			if (state.firstMarkedAt() != bestState.firstMarkedAt()) {
-				return state.firstMarkedAt() < bestState.firstMarkedAt();
+			double distance = baseTileDistanceSquaredToWorldCenter(key);
+			double bestDistance = baseTileDistanceSquaredToWorldCenter(bestKey);
+			int priority = tilePriorityScore(state);
+			if (priority >= 2) {
+				// The initial map grows as an exact, deterministic radius around
+				// world centre; time of filesystem discovery cannot disturb it.
+				if (Double.compare(distance, bestDistance) != 0) {
+					return distance < bestDistance;
+				}
+			} else if (priority == 1) {
+				// For updates, render the change that has been quiet longest.  It
+				// avoids wasting a renderer pass on a chunk that is still changing
+				// and naturally coalesces bursts into one final image.
+				if (state.lastMarkedAt() != bestState.lastMarkedAt()) {
+					return state.lastMarkedAt() < bestState.lastMarkedAt();
+				}
+				if (Double.compare(distance, bestDistance) != 0) {
+					return distance < bestDistance;
+				}
+			} else {
+				// Maintenance is oldest-first, with a deterministic central tie-break.
+				if (state.firstMarkedAt() != bestState.firstMarkedAt()) {
+					return state.firstMarkedAt() < bestState.firstMarkedAt();
+				}
+				if (Double.compare(distance, bestDistance) != 0) {
+					return distance < bestDistance;
+				}
 			}
-			return baseTileDistanceSquaredToWorldCenter(key) < baseTileDistanceSquaredToWorldCenter(bestKey);
+			if (key.tileZ() != bestKey.tileZ()) {
+				return key.tileZ() < bestKey.tileZ();
+			}
+			return key.tileX() < bestKey.tileX();
+		}
+
+		private void discoverSavedBaseTiles() {
+			Lg2.LOGGER.info("Yandex map: scanning saved world regions for unrendered tiles");
+			Set<TileKey> savedBaseTiles = new HashSet<>();
+			try {
+				Path regionFolder = regionFolder(this.worldKey);
+				if (regionFolder != null && Files.isDirectory(regionFolder)) {
+					try (DirectoryStream<Path> files = Files.newDirectoryStream(regionFolder, "r.*.*.mca")) {
+						for (Path regionFile : files) {
+							RegionCoordinates region = parseRegionCoordinates(regionFile.getFileName().toString());
+							if (region != null) {
+								discoverRegionBaseTiles(regionFile, region, savedBaseTiles);
+							}
+						}
+					}
+					catch (IOException exception) {
+						Lg2.LOGGER.debug("Failed to scan Yandex map region directory {}", regionFolder, exception);
+					}
+				}
+			} finally {
+				finishInitialBaseTileInventory(savedBaseTiles);
+				logProgress(true);
+				notifyActiveViews();
+			}
+		}
+
+		private void finishInitialBaseTileInventory(Set<TileKey> savedBaseTiles) {
+			queueInitialBaseTiles(savedBaseTiles);
+			while (true) {
+				Set<ChunkPos> deferred;
+				synchronized (LOCK) {
+					deferred = new HashSet<>(this.deferredChunkDiscoveries);
+					this.deferredChunkDiscoveries.clear();
+				}
+				if (!deferred.isEmpty()) {
+					Set<TileKey> deferredTiles = new HashSet<>();
+					for (ChunkPos pos : deferred) {
+						addChunkBaseTiles(pos, deferredTiles);
+					}
+					queueInitialBaseTiles(deferredTiles);
+					continue;
+				}
+				synchronized (LOCK) {
+					if (this.deferredChunkDiscoveries.isEmpty()) {
+						this.savedTileQueueInitialized = true;
+						return;
+					}
+				}
+			}
+		}
+
+		private void queueInitialBaseTiles(Set<TileKey> baseTiles) {
+			if (baseTiles == null || baseTiles.isEmpty()) {
+				return;
+			}
+			List<TileKey> orderedTiles = new ArrayList<>(baseTiles);
+			orderedTiles.sort(Comparator
+					.comparingDouble(this::baseTileDistanceSquaredToWorldCenter)
+					.thenComparingLong(TileKey::tileZ)
+					.thenComparingLong(TileKey::tileX));
+			long discoveredAt = System.currentTimeMillis();
+			for (TileKey key : orderedTiles) {
+				if (!queueMissingBaseTile(key, discoveredAt)) {
+					queueLoadedStaleBaseTile(key, discoveredAt);
+				}
+			}
+		}
+
+		private void discoverRegionBaseTiles(Path regionFile, RegionCoordinates region, Set<TileKey> savedBaseTiles) {
+			try (FileChannel channel = FileChannel.open(regionFile, StandardOpenOption.READ)) {
+				if (channel.size() < 4096L) {
+					return;
+				}
+				ByteBuffer header = ByteBuffer.allocate(4096).order(ByteOrder.BIG_ENDIAN);
+				while (header.hasRemaining() && channel.read(header) >= 0) {
+					// Read the complete region location table.
+				}
+				if (header.hasRemaining()) {
+					return;
+				}
+				header.flip();
+				for (int index = 0; index < 1024; index++) {
+					int location = header.getInt();
+					if ((location >>> 8) == 0 || (location & 0xFF) == 0) {
+						continue;
+					}
+					int chunkX = (region.x() << 5) + (index & 31);
+					int chunkZ = (region.z() << 5) + (index >> 5);
+					this.savedChunksDiscovered.incrementAndGet();
+					addChunkBaseTiles(new ChunkPos(chunkX, chunkZ), savedBaseTiles);
+				}
+			} catch (IOException exception) {
+				Lg2.LOGGER.debug("Failed to scan Yandex map region file {}", regionFile, exception);
+			}
+		}
+
+		private void logProgressIfDue() {
+			long now = System.currentTimeMillis();
+			if (now - this.lastProgressLogAt >= PROGRESS_LOG_INTERVAL_MS) {
+				logProgress(false);
+			}
+		}
+
+		private void logProgress(boolean force) {
+			long now = System.currentTimeMillis();
+			synchronized (LOCK) {
+				if (!force && now - this.lastProgressLogAt < PROGRESS_LOG_INTERVAL_MS) {
+					return;
+				}
+				long queuedNew = 0;
+				long queuedChanges = 0;
+				long queuedMaintenance = 0;
+				for (DirtyTileState state : this.pendingBaseTiles.values()) {
+					if (state == null) {
+						continue;
+					}
+					if (!state.renderedBefore()) {
+						queuedNew++;
+					} else if (state.discoveryOnly()) {
+						queuedMaintenance++;
+					} else {
+						queuedChanges++;
+					}
+				}
+				if (!force && queuedNew == 0 && queuedChanges == 0 && queuedMaintenance == 0) {
+					return;
+				}
+				this.lastProgressLogAt = now;
+				long queuedTotal = this.newBaseTilesQueued.get();
+				long renderedTotal = this.newBaseTilesRendered.get();
+				int activeTotal = this.inFlight.size();
+				int activeNew = this.inFlightNewBaseTiles.size();
+				int percent = queuedTotal <= 0 ? 100 : (int) Math.min(100L, renderedTotal * 100L / queuedTotal);
+				Lg2.LOGGER.info(
+						"Yandex map: {} saved chunks found; new tiles {}/{} ({}%), queued: {} new, {} changed, {} maintenance; active: {} ({} new)",
+						this.savedChunksDiscovered.get(), renderedTotal, queuedTotal, percent,
+						queuedNew, queuedChanges, queuedMaintenance, activeTotal, activeNew
+				);
+			}
 		}
 
 		private double baseTileDistanceSquaredToWorldCenter(TileKey key) {
@@ -1116,30 +1702,22 @@ final class MonitorYandexMapsClientTileRenderer {
 			return centerX * centerX + centerZ * centerZ;
 		}
 
-		private boolean isBaseTileAreaLoaded(ServerLevel level, TileKey key) {
-			if (level == null || key == null || key.lod() != MIN_LOD) {
-				return false;
-			}
-			int blockX = Mth.floor(key.tileX() * BASE_TILE_BLOCK_SPAN);
-			int blockZ = Mth.floor(key.tileZ() * BASE_TILE_BLOCK_SPAN);
-			int chunkX = SectionPos.blockToSectionCoord(blockX);
-			int chunkZ = SectionPos.blockToSectionCoord(blockZ);
-			return level.getChunkSource().getChunkNow(chunkX, chunkZ) != null;
-		}
-
 		private boolean tileWasRenderedBefore(TileKey key) {
 			if (key == null) {
 				return false;
 			}
 			TileImage cached = this.tileLookup.get(key);
 			if (cached != null && cached.valid()) {
+				if (cached.needsCaptureVerification()) {
+					return false;
+				}
 				return true;
 			}
 			if (this.missingTiles.contains(key)) {
 				return false;
 			}
 			Path path = tilePath(this.worldKey, key);
-			return path != null && Files.isRegularFile(path);
+			return isStoredTileFileUsable(path);
 		}
 
 		private void clearDirtyMarkerIfCovered(TileKey key, long freshnessCutoffMillis) {
@@ -1164,22 +1742,86 @@ final class MonitorYandexMapsClientTileRenderer {
 		}
 	}
 
-	private record DirtyTileState(long firstMarkedAt, long lastMarkedAt, boolean discoveryOnly, boolean renderedBefore) {
+	private record DirtyTileState(
+			long firstMarkedAt,
+			long lastMarkedAt,
+			boolean discoveryOnly,
+			boolean renderedBefore,
+			boolean countedAsNew
+	) {
 	}
 
-	private record PendingBaseTile(TileKey key, boolean discoveryOnly, int priorityScore) {
+	private record PendingBaseTile(
+			TileKey key,
+			boolean discoveryOnly,
+			boolean renderedBefore,
+			boolean countedAsNew,
+			int priorityScore
+	) {
+	}
+
+	private record VisibleWork(
+			ScreenRuntimeKey viewKey,
+			double worldLeft,
+			double worldTop,
+			int width,
+			int height,
+			double blocksPerPixel,
+			List<TileKey> visibleTiles,
+			Runnable onTileReady
+	) {
+	}
+
+	private record RegionCoordinates(int x, int z) {
+	}
+
+	private static Path regionFolder(WorldCacheKey worldKey) {
+		if (worldKey == null || worldKey.root() == null || worldKey.dimension() == null) {
+			return null;
+		}
+		if (Level.OVERWORLD.equals(worldKey.dimension())) {
+			return worldKey.root().resolve("region");
+		}
+		var id = worldKey.dimension().identifier();
+		return worldKey.root().resolve("dimensions").resolve(id.getNamespace()).resolve(id.getPath()).resolve("region");
+	}
+
+	private static RegionCoordinates parseRegionCoordinates(String fileName) {
+		if (fileName == null) {
+			return null;
+		}
+		String[] parts = fileName.split("\\.");
+		if (parts.length != 4 || !"r".equals(parts[0]) || !"mca".equals(parts[3])) {
+			return null;
+		}
+		try {
+			return new RegionCoordinates(Integer.parseInt(parts[1]), Integer.parseInt(parts[2]));
+		} catch (NumberFormatException ignored) {
+			return null;
+		}
 	}
 
 	private static Path tilePath(WorldCacheKey worldKey, TileKey key) {
-		Path root = persistentRoot;
-		if (root == null || worldKey == null || worldKey.dimension() == null || key == null) {
+		if (worldKey == null || worldKey.root() == null || worldKey.dimension() == null || key == null) {
 			return null;
 		}
+		Path root = worldKey.root().resolve("data").resolve(CACHE_DIR_NAME);
 		String dimension = sanitizePathPart(worldKey.dimension().identifier().toString());
 		return root.resolve(dimension)
 				.resolve("lod-" + key.lod())
 				.resolve(Long.toString(Math.floorDiv(key.tileX(), 256L)))
 				.resolve(key.tileX() + "_" + key.tileZ() + ".bin");
+	}
+
+	private static boolean isStoredTileFileUsable(Path path) {
+		if (path == null || !Files.isRegularFile(path)) {
+			return false;
+		}
+		try {
+			return Files.size(path) >= TILE_RGB_BYTES;
+		} catch (IOException ignored) {
+			return false;
+		}
 	}
 
 	private static String sanitizePathPart(String raw) {

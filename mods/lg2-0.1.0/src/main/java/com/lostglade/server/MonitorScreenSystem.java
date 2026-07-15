@@ -126,6 +126,7 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Predicate;
 
 public final class MonitorScreenSystem {
 	static final String IT_SCREEN = "it_screen";
@@ -237,6 +238,20 @@ public final class MonitorScreenSystem {
 	static final Composite PRESERVE_TRANSPARENCY_COMPOSITE = AlphaComposite.getInstance(AlphaComposite.SRC_ATOP);
 
 	private record DebugAimTarget(ScreenRuntimeKey runtimeKey, UiPoint point, double distanceSqr) {
+	}
+
+	/**
+	 * The single authoritative result for passive screen interactions (hover and
+	 * hotbar scrolling).  Unlike an item-frame AABB hit, this is calculated at
+	 * the same display plane that is used for an actual screen click.
+	 */
+	static record ObservedScreenTouch(
+			ScreenComponent component,
+			ItemFrame frame,
+			TileCoord tileCoord,
+			UiPoint touchPoint,
+			double distanceSqr
+	) {
 	}
 
 	private MonitorScreenSystem() {
@@ -815,39 +830,8 @@ public final class MonitorScreenSystem {
 	}
 
 	private static DebugAimTarget findDebugAimTarget(ServerPlayer player) {
-		if (player == null || !(player.level() instanceof ServerLevel level)) {
-			return null;
-		}
-		Vec3 eye = player.getEyePosition();
-		Vec3 look = player.getLookAngle();
-		DebugAimTarget nearestTarget = null;
-		for (ScreenComponent component : cachedComponents(level)) {
-			if (component == null || !component.powered()) {
-				continue;
-			}
-			for (Map.Entry<ItemFrame, TileCoord> entry : component.frameCoords().entrySet()) {
-				ItemFrame frame = entry.getKey();
-				if (frame == null || !frame.isAlive()) {
-					continue;
-				}
-				Vec3 hit = screenPlaneIntersection(frame.blockPosition(), frame.getDirection(), eye, look, MEDIA_CONTROL_DISTANCE);
-				if (boundedScreenSurfacePoint(frame.blockPosition(), frame.getDirection(), hit) == null) {
-					continue;
-				}
-				double distanceSqr = eye.distanceToSqr(hit);
-				if (distanceSqr > MEDIA_CONTROL_DISTANCE * MEDIA_CONTROL_DISTANCE) {
-					continue;
-				}
-				if (nearestTarget != null && distanceSqr >= nearestTarget.distanceSqr()) {
-					continue;
-				}
-				UiPoint point = screenTouchPoint(frame, player, entry.getValue(), component.width(), component.height());
-				if (point != null) {
-					nearestTarget = new DebugAimTarget(component.runtimeKey(), point, distanceSqr);
-				}
-			}
-		}
-		return nearestTarget;
+		ObservedScreenTouch target = findObservedScreenTouch(player, component -> component.powered());
+		return target == null ? null : new DebugAimTarget(target.component().runtimeKey(), target.touchPoint(), target.distanceSqr());
 	}
 
 	private static boolean sameDebugAimPoint(UiPoint previousPoint, UiPoint nextPoint) {
@@ -1151,76 +1135,60 @@ public final class MonitorScreenSystem {
 	}
 
 	static ScreenComponent findObservedMediaComponent(ServerPlayer player) {
-		if (player == null || !(player.level() instanceof ServerLevel level)) {
-			return null;
-		}
-		Vec3 eye = player.getEyePosition();
-		Vec3 rayEnd = eye.add(player.getLookAngle().scale(MEDIA_CONTROL_DISTANCE));
-		ScreenComponent nearest = null;
-		double nearestDistanceSqr = Double.POSITIVE_INFINITY;
-
-		for (ScreenComponent component : cachedComponents(level)) {
-			if (component == null || !isPlayerMode(component.viewMode()) || !component.powered()) {
-				continue;
-			}
-			double hitDistanceSqr = observedComponentHitDistanceSqr(component, eye, rayEnd);
-			if (Double.isFinite(hitDistanceSqr) && hitDistanceSqr < nearestDistanceSqr) {
-				nearestDistanceSqr = hitDistanceSqr;
-				nearest = component;
-			}
-		}
-		return nearest;
+		ObservedScreenTouch target = findObservedScreenTouch(player, component -> isPlayerMode(component.viewMode()));
+		return target == null ? null : target.component();
 	}
 
 	static ScreenComponent findObservedScrollableComponent(ServerPlayer player) {
-		if (player == null || !(player.level() instanceof ServerLevel level)) {
+		ObservedScreenTouch target = findObservedScreenTouch(
+				player,
+				component -> component.viewMode() == ScreenViewMode.HOME
+						|| component.viewMode() == ScreenViewMode.YANDEX_MAPS
+						|| isPlayerMode(component.viewMode())
+		);
+		return target == null ? null : target.component();
+	}
+
+	static ObservedScreenTouch findObservedScreenTouch(ServerPlayer player, Predicate<ScreenComponent> componentFilter) {
+		if (player == null || !(player.level() instanceof ServerLevel level) || componentFilter == null) {
 			return null;
 		}
 		Vec3 eye = player.getEyePosition();
-		Vec3 rayEnd = eye.add(player.getLookAngle().scale(MEDIA_CONTROL_DISTANCE));
-		ScreenComponent nearest = null;
-		double nearestDistanceSqr = Double.POSITIVE_INFINITY;
+		Vec3 rayDirection = player.getLookAngle();
+		if (!Double.isFinite(rayDirection.lengthSqr()) || rayDirection.lengthSqr() <= 1.0E-12D) {
+			return null;
+		}
 
+		ObservedScreenTouch nearestTarget = null;
 		for (ScreenComponent component : cachedComponents(level)) {
-			if (component == null || !component.powered()) {
+			if (component == null || !component.powered() || !componentFilter.test(component)) {
 				continue;
 			}
-			if (component.viewMode() != ScreenViewMode.HOME
-					&& component.viewMode() != ScreenViewMode.YANDEX_MAPS
-					&& !isPlayerMode(component.viewMode())) {
-				continue;
-			}
-			double hitDistanceSqr = observedComponentHitDistanceSqr(component, eye, rayEnd);
-			if (Double.isFinite(hitDistanceSqr) && hitDistanceSqr < nearestDistanceSqr) {
-				nearestDistanceSqr = hitDistanceSqr;
-				nearest = component;
-			}
-		}
-		return nearest;
-	}
-
-	static double observedComponentHitDistanceSqr(ScreenComponent component, Vec3 start, Vec3 end) {
-		if (component == null || start == null || end == null) {
-			return Double.POSITIVE_INFINITY;
-		}
-		Vec3 delta = end.subtract(start);
-		double maxDistance = delta.length();
-		if (!Double.isFinite(maxDistance) || maxDistance <= 1.0E-6D) {
-			return Double.POSITIVE_INFINITY;
-		}
-		Vec3 rayDirection = delta.scale(1.0D / maxDistance);
-		double nearestDistanceSqr = Double.POSITIVE_INFINITY;
-		for (ItemFrame frame : component.frameCoords().keySet()) {
-			if (!frame.isAlive()) {
-				continue;
-			}
-			Vec3 hit = screenPlaneIntersection(frame.blockPosition(), frame.getDirection(), start, rayDirection, maxDistance);
-			if (boundedScreenSurfacePoint(frame.blockPosition(), frame.getDirection(), hit) != null
-					&& hit.distanceToSqr(start) <= MEDIA_CONTROL_DISTANCE * MEDIA_CONTROL_DISTANCE) {
-				nearestDistanceSqr = Math.min(nearestDistanceSqr, start.distanceToSqr(hit));
+			for (Map.Entry<ItemFrame, TileCoord> entry : component.frameCoords().entrySet()) {
+				ItemFrame frame = entry.getKey();
+				TileCoord tileCoord = entry.getValue();
+				if (frame == null || !frame.isAlive() || tileCoord == null) {
+					continue;
+				}
+				Vec3 hit = screenPlaneIntersection(frame.blockPosition(), frame.getDirection(), eye, rayDirection, MEDIA_CONTROL_DISTANCE);
+				PlacementSurfacePoint surface = boundedScreenSurfacePoint(frame.blockPosition(), frame.getDirection(), hit);
+				if (surface == null) {
+					continue;
+				}
+				double distanceSqr = eye.distanceToSqr(hit);
+				if (!Double.isFinite(distanceSqr) || distanceSqr > MEDIA_CONTROL_DISTANCE * MEDIA_CONTROL_DISTANCE) {
+					continue;
+				}
+				if (nearestTarget != null && distanceSqr >= nearestTarget.distanceSqr()) {
+					continue;
+				}
+				UiPoint point = screenPointFromSurface(surface, tileCoord, component.width(), component.height());
+				if (point != null) {
+					nearestTarget = new ObservedScreenTouch(component, frame, tileCoord, point, distanceSqr);
+				}
 			}
 		}
-		return nearestDistanceSqr;
+		return nearestTarget;
 	}
 
 	static int normalizeHotbarDelta(int previousSlot, int currentSlot) {
