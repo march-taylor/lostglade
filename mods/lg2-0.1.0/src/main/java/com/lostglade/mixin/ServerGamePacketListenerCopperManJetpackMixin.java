@@ -1,6 +1,7 @@
 package com.lostglade.mixin;
 
 import com.lostglade.server.ServerRaceSystem;
+import net.minecraft.network.protocol.game.ServerboundPlayerCommandPacket;
 import net.minecraft.network.protocol.game.ServerboundPlayerInputPacket;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.network.ServerGamePacketListenerImpl;
@@ -33,6 +34,19 @@ public abstract class ServerGamePacketListenerCopperManJetpackMixin {
 		}
 		ServerRaceSystem.handleCopperManJetpackInput(this.player, packet.input());
 		ServerRaceSystem.handleMilkMouseInput(this.player, packet.input());
+		ServerRaceSystem.handleKilkaSalmonInput(this.player, packet.input());
+	}
+
+	@Inject(method = "handlePlayerCommand", at = @At("HEAD"))
+	private void lg2$trackKilkaSalmonSprintCommand(ServerboundPlayerCommandPacket packet, CallbackInfo ci) {
+		if (packet == null) {
+			return;
+		}
+		if (packet.getAction() == ServerboundPlayerCommandPacket.Action.START_SPRINTING) {
+			ServerRaceSystem.handleKilkaSalmonSprintCommand(this.player, true);
+		} else if (packet.getAction() == ServerboundPlayerCommandPacket.Action.STOP_SPRINTING) {
+			ServerRaceSystem.handleKilkaSalmonSprintCommand(this.player, false);
+		}
 	}
 
 	@Inject(method = "handlePlayerInput", at = @At("TAIL"))

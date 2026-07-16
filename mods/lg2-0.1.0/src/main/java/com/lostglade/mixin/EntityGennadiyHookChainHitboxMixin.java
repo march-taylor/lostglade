@@ -1,5 +1,7 @@
 package com.lostglade.mixin;
 
+import com.lostglade.server.ServerRaceSystem;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityDimensions;
 import net.minecraft.world.entity.Pose;
@@ -19,10 +21,12 @@ public abstract class EntityGennadiyHookChainHitboxMixin {
 	private static final String DRONE_DISPLAY_TAG = "lg2_drone_display";
 	private static final String MONITOR_DISPLAY_TAG = "lg2_monitor_display";
 	private static final String TROJAN_ROOSTER_DISPLAY_TAG = "lg2_trojan_rooster_display";
+	private static final String KILKA_SHNYAGA_BEACON_DISPLAY_TAG = "lg2.kilka_sea_beacon_link";
 	private static final EntityDimensions ZERO_DIMENSIONS = EntityDimensions.fixed(0.0F, 0.0F);
 
 	@Inject(method = "getDimensions", at = @At("HEAD"), cancellable = true)
 	private void lg2$zeroGennadiyHookChainDimensions(Pose pose, CallbackInfoReturnable<EntityDimensions> cir) {
+		Entity entity = (Entity) (Object) this;
 		if (lg2$hasZeroHitboxTag()) {
 			cir.setReturnValue(ZERO_DIMENSIONS);
 		}
@@ -30,6 +34,7 @@ public abstract class EntityGennadiyHookChainHitboxMixin {
 
 	@Inject(method = "makeBoundingBox(Lnet/minecraft/world/phys/Vec3;)Lnet/minecraft/world/phys/AABB;", at = @At("HEAD"), cancellable = true)
 	private void lg2$zeroGennadiyHookChainBoundingBox(Vec3 position, CallbackInfoReturnable<AABB> cir) {
+		Entity entity = (Entity) (Object) this;
 		if (lg2$hasZeroHitboxTag()) {
 			cir.setReturnValue(new AABB(position.x, position.y, position.z, position.x, position.y, position.z));
 		}
@@ -37,6 +42,7 @@ public abstract class EntityGennadiyHookChainHitboxMixin {
 
 	@Inject(method = "isPickable", at = @At("HEAD"), cancellable = true)
 	private void lg2$blockGennadiyHookChainPicking(CallbackInfoReturnable<Boolean> cir) {
+		Entity entity = (Entity) (Object) this;
 		if (lg2$hasZeroHitboxTag()) {
 			cir.setReturnValue(false);
 		}
@@ -44,6 +50,7 @@ public abstract class EntityGennadiyHookChainHitboxMixin {
 
 	@Inject(method = "isPushable", at = @At("HEAD"), cancellable = true)
 	private void lg2$blockGennadiyHookChainPush(CallbackInfoReturnable<Boolean> cir) {
+		Entity entity = (Entity) (Object) this;
 		if (lg2$hasZeroHitboxTag()) {
 			cir.setReturnValue(false);
 		}
@@ -51,6 +58,7 @@ public abstract class EntityGennadiyHookChainHitboxMixin {
 
 	@Inject(method = "canBeHitByProjectile", at = @At("HEAD"), cancellable = true)
 	private void lg2$blockGennadiyHookChainProjectileHit(CallbackInfoReturnable<Boolean> cir) {
+		Entity entity = (Entity) (Object) this;
 		if (lg2$hasZeroHitboxTag()) {
 			cir.setReturnValue(false);
 		}
@@ -58,6 +66,7 @@ public abstract class EntityGennadiyHookChainHitboxMixin {
 
 	@Inject(method = "isAttackable", at = @At("HEAD"), cancellable = true)
 	private void lg2$blockGennadiyHookChainAttack(CallbackInfoReturnable<Boolean> cir) {
+		Entity entity = (Entity) (Object) this;
 		if (lg2$hasZeroHitboxTag()) {
 			cir.setReturnValue(false);
 		}
@@ -71,6 +80,7 @@ public abstract class EntityGennadiyHookChainHitboxMixin {
 				|| entity.getTags().contains(MARK_AXE_DISPLAY_TAG)
 				|| entity.getTags().contains(DRONE_DISPLAY_TAG)
 				|| entity.getTags().contains(MONITOR_DISPLAY_TAG)
-				|| entity.getTags().contains(TROJAN_ROOSTER_DISPLAY_TAG);
+				|| entity.getTags().contains(TROJAN_ROOSTER_DISPLAY_TAG)
+				|| entity.getTags().contains(KILKA_SHNYAGA_BEACON_DISPLAY_TAG);
 	}
 }

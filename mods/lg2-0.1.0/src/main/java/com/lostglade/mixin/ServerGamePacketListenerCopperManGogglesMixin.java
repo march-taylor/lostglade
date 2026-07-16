@@ -12,6 +12,7 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.network.ServerGamePacketListenerImpl;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.ModifyVariable;
@@ -85,7 +86,7 @@ public abstract class ServerGamePacketListenerCopperManGogglesMixin {
 			argsOnly = true
 	)
 	private ServerboundMovePlayerPacket lg2$lockLittleDictatorHorizontalMovement(ServerboundMovePlayerPacket packet) {
-		return ServerRaceSystem.sanitizeLittleDictatorUniqueMovementPacket(this.player, packet);
+		return ServerRaceSystem.sanitizeKilkaSalmonMovementPacket(this.player, ServerRaceSystem.sanitizeKilkaStockLandMovementPacket(this.player, ServerRaceSystem.sanitizeLittleDictatorUniqueMovementPacket(this.player, packet)));
 	}
 
 	@Inject(method = "handleMovePlayer", at = @At("TAIL"))

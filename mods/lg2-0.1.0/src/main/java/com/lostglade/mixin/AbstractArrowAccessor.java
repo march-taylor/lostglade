@@ -8,6 +8,9 @@ import org.spongepowered.asm.mixin.gen.Invoker;
 
 @Mixin(AbstractArrow.class)
 public interface AbstractArrowAccessor {
+	@Accessor("inGroundTime")
+	int lg2$getInGroundTime();
+
 	@Invoker("setInGround")
 	void lg2$setInGround(boolean inGround);
 

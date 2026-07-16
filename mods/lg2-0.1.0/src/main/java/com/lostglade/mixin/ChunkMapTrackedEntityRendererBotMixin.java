@@ -51,7 +51,8 @@ public abstract class ChunkMapTrackedEntityRendererBotMixin {
 
 		if (this.entity instanceof ServerPlayer hiddenMilkMousePlayer
 				&& hiddenMilkMousePlayer != player
-				&& ServerRaceSystem.isMilkMouseActive(hiddenMilkMousePlayer)) {
+				&& (ServerRaceSystem.isMilkMouseActive(hiddenMilkMousePlayer)
+					|| ServerRaceSystem.isKilkaSalmonForm(hiddenMilkMousePlayer))) {
 			ci.cancel();
 			this.removePlayer(player);
 			return;

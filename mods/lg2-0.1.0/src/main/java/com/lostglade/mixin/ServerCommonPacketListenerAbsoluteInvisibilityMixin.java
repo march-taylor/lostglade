@@ -132,6 +132,25 @@ public abstract class ServerCommonPacketListenerAbsoluteInvisibilityMixin {
 				LG2_ABSOLUTE_INVISIBILITY_BYPASS.remove();
 			}
 		}
+		Packet<?> kilkaSalmonPacket = com.lostglade.server.ServerRaceSystem.rewriteKilkaSalmonOwnerVisualPacket(receiver, packet);
+		if (kilkaSalmonPacket != packet) {
+			ci.cancel();
+			if (kilkaSalmonPacket == null) {
+				return;
+			}
+			LG2_ABSOLUTE_INVISIBILITY_BYPASS.set(true);
+			try {
+				if (listener == null) {
+					gameListener.send(kilkaSalmonPacket);
+				} else {
+					gameListener.send(kilkaSalmonPacket, listener);
+				}
+			} finally {
+				LG2_ABSOLUTE_INVISIBILITY_BYPASS.remove();
+			}
+			return;
+		}
+
 		if (packet instanceof ClientboundSetEntityDataPacket entityDataPacket) {
 			ServerAbsoluteInvisibilitySystem.maskSprintingMetadataForViewer(receiver, entityDataPacket);
 		}
@@ -161,7 +180,8 @@ public abstract class ServerCommonPacketListenerAbsoluteInvisibilityMixin {
 		}
 
 		if (packet instanceof ClientboundTrackedWaypointPacket waypointPacket
-				&& com.lostglade.server.ServerRaceSystem.shouldSuppressMilkMouseWaypoint(receiver, waypointPacket)) {
+				&& (com.lostglade.server.ServerRaceSystem.shouldSuppressMilkMouseWaypoint(receiver, waypointPacket)
+				|| com.lostglade.server.ServerRaceSystem.shouldSuppressKilkaSalmonWaypoint(receiver, waypointPacket))) {
 			ci.cancel();
 			return;
 		}
