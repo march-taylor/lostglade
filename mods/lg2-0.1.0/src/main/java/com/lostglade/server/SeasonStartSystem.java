@@ -131,7 +131,6 @@ public final class SeasonStartSystem {
 	private static final String STATE_FILE_NAME = "lg2-season-start-state.json";
 	private static final Set<Relative> ABSOLUTE_TELEPORT = EnumSet.noneOf(Relative.class);
 	private static final int DISSOLVE_BATCH_BLOCKS = 96;
-	private static final ItemStack INTRO_TOOL_TEMPLATE = createIntroToolTemplate();
 	private static final long WAITING_START_INITIAL_PROMPT_TICKS = 20L * 3L;
 	private static final long WAITING_START_REPEAT_TICKS = 20L * 15L;
 	private static final long INTRO_IDLE_TRIGGER_TICKS = 20L * 9L;
@@ -166,13 +165,19 @@ public final class SeasonStartSystem {
 	private static final double GUIDANCE_MEDIUM_ANGLE = 26.0D;
 	private static final double GUIDANCE_HARD_ANGLE = 62.0D;
 	private static final double GUIDANCE_TURN_AROUND_ANGLE = 140.0D;
-	private static final double GUIDANCE_CLOSE_APPROACH_DISTANCE = 3.0D;
+	// These distances are measured from the outer edge of the complete 5x3x3 server model.
+	private static final double GUIDANCE_CLOSE_APPROACH_DISTANCE = 4.0D;
 	private static final double GUIDANCE_QUIET_DISTANCE = 2.05D;
 	private static final double GUIDANCE_DROP_DISTANCE = 1.35D;
-	private static final double GUIDANCE_SERVER_SIGHT_DISTANCE = 4.2D;
+	private static final double GUIDANCE_SERVER_SIGHT_DISTANCE = 4.0D;
+	private static final double GUIDANCE_PASSED_SERVER_DISTANCE = 5.0D;
 	private static final double GUIDANCE_PROGRESS_AWAY = 0.16D;
 	private static final double GUIDANCE_PROGRESS_TOWARD = -0.14D;
 	private static final double GUIDANCE_STALL_DELTA = 0.05D;
+	private static final double GUIDED_OFFERING_RETURN_SPEED_MIN = 0.08D;
+	private static final double GUIDED_OFFERING_RETURN_SPEED_MAX = 0.42D;
+	private static final double GUIDED_OFFERING_RETURN_PICKUP_DISTANCE = 0.75D;
+	private static final long GUIDED_OFFERING_VISIBLE_TICKS = 5L;
 	private static final double GUIDANCE_RECOVER_WORSEN_THRESHOLD = 8.0D;
 	private static final String START_WORD_EN = "start";
 	private static final String START_WORD_RU = "старт";
@@ -340,7 +345,10 @@ public final class SeasonStartSystem {
 	private static final double SHARED_FEED_PLAYER_MATCH_DISTANCE = 8.0D;
 	private static final long SHARED_FINISH_DELAY_TICKS = 20L * 2L;
 	private static final long MENU_PRICE_REACTION_COOLDOWN_TICKS = 20L * 3L;
-	private static final int MENU_EXPLANATION_UNLOCK_PERCENT = 50;
+	private static final int MENU_EXPLANATION_UNLOCK_PERCENT = 52;
+	private static final int SHARED_LAUNCH_RACE_CONTROLS_PERCENT = 65;
+	// Let the 50% call finish before a personal menu tutorial can claim the channel.
+	private static final long MENU_EXPLANATION_AFTER_HALFWAY_DELAY_TICKS = 20L * 3L;
 	private static final int[] SHARED_LAUNCH_MILESTONES = {10, 20, 30, 40, 50, 60, 70, 80, 90, 100};
 	private static final String STARTUP_WORLDGEN_DISPLAY_TAG = "lg2_season_start_display";
 	private static final int STARTUP_WORLDGEN_FRAME_COUNT = 35;
@@ -456,6 +464,8 @@ public final class SeasonStartSystem {
 	private static final float WORLD_REVEAL_TOTAL_BURST_WEIGHT = computeWorldRevealTotalBurstWeight();
 
 	private static final Map<UUID, PlayerSceneState> PLAYER_STATES = new LinkedHashMap<>();
+	private static final Set<UUID> LEGACY_INTRO_TOOL_PURGED_PLAYERS = new HashSet<>();
+	private static final Map<UUID, Long> GUIDED_OFFERING_VISIBLE_SINCE_TICKS = new HashMap<>();
 	private static final Set<PlayerVisibilityPair> HIDDEN_PLAYER_PROFILE_PAIRS = new HashSet<>();
 	private static final List<BlockPos> SHELL_DISSOLVE_ORDER = new ArrayList<>();
 	private static final List<TerrainPlacement> WORLD_REVEAL_TERRAIN = new ArrayList<>();
@@ -498,6 +508,7 @@ public final class SeasonStartSystem {
 	private static int sharedLaunchRequiredBitcoins = 0;
 	private static int sharedLaunchMilestoneCursor = 0;
 	private static boolean sharedLaunchIntroTriggered = false;
+	private static boolean sharedLaunchRaceControlsTriggered = false;
 	private static boolean menuExplanationActive = false;
 	private static int startupWorldgenFrameIndex = Integer.MIN_VALUE;
 	private static int worldRevealVisibleEpisodeCursor = 0;
@@ -540,6 +551,7 @@ public final class SeasonStartSystem {
 		sharedLaunchRequiredBitcoins = 0;
 		sharedLaunchMilestoneCursor = 0;
 		sharedLaunchIntroTriggered = false;
+		sharedLaunchRaceControlsTriggered = false;
 		menuExplanationActive = false;
 		startupWorldgenFrameIndex = Integer.MIN_VALUE;
 		worldRevealVisibleEpisodeCursor = 0;
@@ -553,6 +565,8 @@ public final class SeasonStartSystem {
 		serverAnchor = null;
 		serverStructureAxis = Direction.Axis.Z;
 		PLAYER_STATES.clear();
+		LEGACY_INTRO_TOOL_PURGED_PLAYERS.clear();
+		GUIDED_OFFERING_VISIBLE_SINCE_TICKS.clear();
 		HIDDEN_PLAYER_PROFILE_PAIRS.clear();
 		SHELL_DISSOLVE_ORDER.clear();
 		WORLD_REVEAL_TERRAIN.clear();
@@ -663,10 +677,12 @@ public final class SeasonStartSystem {
 		if (!(entity instanceof ItemEntity itemEntity)) {
 			return false;
 		}
-		if (isInPrivateIntroPhase(receiver)) {
-			return true;
-		}
 		Entity owner = itemEntity.getOwner();
+		if (isInPrivateIntroPhase(receiver)) {
+			// A guided player's own offering is the one deliberate exception: it is
+			// visible only to its owner while it travels into the server.
+			return owner != receiver || !isGuidedBitcoinOffering(itemEntity);
+		}
 		return owner instanceof ServerPlayer ownerPlayer && isInPrivateIntroPhase(ownerPlayer);
 	}
 
@@ -876,14 +892,6 @@ public final class SeasonStartSystem {
 			return;
 		}
 		state.menuNarrationMuted = false;
-		if (state.racePurchaseExplained && !state.raceControlsExplained) {
-			state.raceControlsExplained = true;
-			state.seenMenuSections.add("menu_closed");
-			SeasonStartVoiceSystem.clearPlayerChannel(player);
-			SeasonStartVoiceSystem.fireTrigger(server, "player_menu_race_controls", player);
-			stateDirty = true;
-			return;
-		}
 		if (!state.seenMenuSections.add("menu_closed")) {
 			stateDirty = true;
 			return;
@@ -1398,7 +1406,7 @@ public final class SeasonStartSystem {
 			}
 		}
 		SeasonStartVoiceSystem.clearPlayerChannel(player);
-		removeIntroTool(player);
+		removeLegacyIntroTool(player);
 		state.minedIntroBitcoin = true;
 		state.poweredServer = true;
 		state.sharedVisionRestored = true;
@@ -1552,6 +1560,7 @@ public final class SeasonStartSystem {
 		sharedLaunchRequiredBitcoins = 0;
 		sharedLaunchMilestoneCursor = 0;
 		sharedLaunchIntroTriggered = false;
+		sharedLaunchRaceControlsTriggered = false;
 		menuExplanationActive = false;
 		startupWorldgenFrameIndex = Integer.MIN_VALUE;
 		worldRevealVisibleEpisodeCursor = 0;
@@ -1565,6 +1574,8 @@ public final class SeasonStartSystem {
 			difficultyBeforeSeasonStart = overworld.getDifficulty();
 		}
 		PLAYER_STATES.clear();
+		LEGACY_INTRO_TOOL_PURGED_PLAYERS.clear();
+		GUIDED_OFFERING_VISIBLE_SINCE_TICKS.clear();
 		SHELL_DISSOLVE_ORDER.clear();
 		WORLD_REVEAL_TERRAIN.clear();
 		WORLD_REVEAL_BARRIER_COLLISION.clear();
@@ -2006,7 +2017,8 @@ public final class SeasonStartSystem {
 		boolean quietZone = snapshot.horizontalDistance <= GUIDANCE_QUIET_DISTANCE;
 		boolean inDropZone = snapshot.horizontalDistance <= GUIDANCE_DROP_DISTANCE;
 
-		if (hasBitcoin && state.wasGuidanceClose && snapshot.horizontalDistance >= 3.1D && distanceDelta >= GUIDANCE_PROGRESS_AWAY) {
+		if (hasBitcoin && state.wasGuidanceClose && snapshot.horizontalDistance >= GUIDANCE_PASSED_SERVER_DISTANCE
+				&& distanceDelta >= GUIDANCE_PROGRESS_AWAY) {
 			return new GuidanceInstruction("guide_passed_server", "guide_passed_server", GUIDE_PASSED_SERVER_TRIGGERS, GUIDANCE_CATEGORY_COOLDOWN_TICKS);
 		}
 		if (hasBitcoin && inDropZone) {
@@ -2567,9 +2579,10 @@ public final class SeasonStartSystem {
 		if (countSharedPlayers() <= 0) {
 			return;
 		}
+		ensureSharedRaceControlsNarration(server);
 		if (!menuExplanationActive && sharedLaunchRequiredBitcoins > 0 && getSharedLaunchPercent() >= MENU_EXPLANATION_UNLOCK_PERCENT
 				&& pendingMenuExplanationTick == Long.MIN_VALUE) {
-			pendingMenuExplanationTick = nowTick;
+			pendingMenuExplanationTick = nowTick + MENU_EXPLANATION_AFTER_HALFWAY_DELAY_TICKS;
 		}
 		if (!menuExplanationActive && pendingMenuExplanationTick != Long.MIN_VALUE && nowTick >= pendingMenuExplanationTick) {
 			beginMenuExplanationPhase(server);
@@ -2597,7 +2610,6 @@ public final class SeasonStartSystem {
 			state.menuNarrationMuted = false;
 			state.raceMenuReached = false;
 			state.racePurchaseExplained = false;
-			state.raceControlsExplained = false;
 			state.seenMenuSections.clear();
 			state.activeMenuSection = MenuSection.ROOT.id;
 			if (!state.menuRaceAllowanceGranted) {
@@ -5057,6 +5069,7 @@ public final class SeasonStartSystem {
 		if (bounds == null) {
 			return;
 		}
+		tickGuidedBitcoinOfferings(server, level, bounds);
 		AABB scanBox = new AABB(
 				bounds.minX - 1.5D,
 				serverAnchor.getY() - 1.5D,
@@ -5072,6 +5085,10 @@ public final class SeasonStartSystem {
 						&& !entity.getItem().isEmpty()
 						&& entity.getItem().is(ModItems.BITCOIN)
 		)) {
+			if (isGuidedBitcoinOffering(itemEntity)) {
+				// Personal offerings are animated and consumed by the dedicated path above.
+				continue;
+			}
 			if (distanceToServerStructureSqr(itemEntity.position(), bounds) > SHARED_FEED_RADIUS * SHARED_FEED_RADIUS) {
 				continue;
 			}
@@ -5096,6 +5113,89 @@ public final class SeasonStartSystem {
 			spawnLaunchFeedParticles(level, itemEntity.position());
 			incrementSharedLaunchProgress(server, consumed);
 		}
+	}
+
+	/**
+	 * A missed first payment stays a private, real item. It can feed the server only through an
+	 * actual hit; otherwise, after landing, it returns to its owner like an experience orb.
+	 */
+	private static void tickGuidedBitcoinOfferings(MinecraftServer server, ServerLevel level, ServerStructureBounds bounds) {
+		if (server == null || level == null || bounds == null || serverAnchor == null) {
+			return;
+		}
+		BoxGeometry scene = computeBarrierGeometry(serverAnchor);
+		AABB offeringBox = new AABB(
+				scene.minX,
+				scene.floorY,
+				scene.minZ,
+				scene.maxX + 1.0D,
+				scene.roofY + 1.0D,
+				scene.maxZ + 1.0D
+		);
+		long nowTick = level.getGameTime();
+		for (ItemEntity itemEntity : level.getEntitiesOfClass(ItemEntity.class, offeringBox, SeasonStartSystem::isGuidedBitcoinOffering)) {
+			UUID offeringId = itemEntity.getUUID();
+			ServerPlayer owner = resolveGuidedBitcoinOfferingOwner(itemEntity);
+			if (owner == null) {
+				continue;
+			}
+			if (distanceToServerStructureSqr(itemEntity.position(), bounds) <= SHARED_FEED_RADIUS * SHARED_FEED_RADIUS) {
+				GUIDED_OFFERING_VISIBLE_SINCE_TICKS.remove(offeringId);
+				consumeOffering(itemEntity, 1);
+				spawnLaunchFeedParticles(level, itemEntity.position());
+				transitionPlayerAfterFirstPayment(server, owner);
+				continue;
+			}
+
+			long visibleSince = GUIDED_OFFERING_VISIBLE_SINCE_TICKS.computeIfAbsent(offeringId, ignored -> nowTick);
+			if (nowTick - visibleSince < GUIDED_OFFERING_VISIBLE_TICKS
+					|| (!itemEntity.onGround() && !itemEntity.isNoGravity())) {
+				continue;
+			}
+
+			Vec3 target = new Vec3(owner.getX(), owner.getY() + 0.45D, owner.getZ());
+			Vec3 offset = target.subtract(itemEntity.position());
+			double distance = offset.length();
+			if (distance <= GUIDED_OFFERING_RETURN_PICKUP_DISTANCE) {
+				ItemStack returning = itemEntity.getItem().copy();
+				int returnedCount = returning.getCount();
+				if (owner.getInventory().add(returning)) {
+					GUIDED_OFFERING_VISIBLE_SINCE_TICKS.remove(offeringId);
+					owner.take(itemEntity, returnedCount);
+					itemEntity.discard();
+				} else {
+					// Keep the item recoverable even if a non-standard inventory is full.
+					itemEntity.setNoGravity(false);
+				}
+				continue;
+			}
+
+			itemEntity.setNoGravity(true);
+			double pullSpeed = Mth.clamp(
+					GUIDED_OFFERING_RETURN_SPEED_MIN + distance * 0.025D,
+					GUIDED_OFFERING_RETURN_SPEED_MIN,
+					GUIDED_OFFERING_RETURN_SPEED_MAX
+			);
+			Vec3 velocity = itemEntity.getDeltaMovement().scale(0.45D).add(offset.scale(pullSpeed / distance));
+			itemEntity.setDeltaMovement(velocity);
+		}
+	}
+
+	private static boolean isGuidedBitcoinOffering(ItemEntity itemEntity) {
+		return itemEntity != null
+				&& itemEntity.isAlive()
+				&& !itemEntity.isRemoved()
+				&& !itemEntity.getItem().isEmpty()
+				&& itemEntity.getItem().is(ModItems.BITCOIN)
+				&& resolveGuidedBitcoinOfferingOwner(itemEntity) != null;
+	}
+
+	private static ServerPlayer resolveGuidedBitcoinOfferingOwner(ItemEntity itemEntity) {
+		if (itemEntity == null || !(itemEntity.getOwner() instanceof ServerPlayer owner)) {
+			return null;
+		}
+		PlayerSceneState state = PLAYER_STATES.get(owner.getUUID());
+		return state != null && state.phase == PlayerPhase.GUIDED_TO_SERVER ? owner : null;
 	}
 
 	private static ServerPlayer resolveNearestOfferingPlayer(ServerLevel level, ItemEntity itemEntity, PlayerPhase phase) {
@@ -5175,10 +5275,11 @@ public final class SeasonStartSystem {
 		} else if (newestMilestoneTrigger != null) {
 			SeasonStartVoiceSystem.replaceSharedLaunchProgressNarration(server, newestMilestoneTrigger);
 		}
+		ensureSharedRaceControlsNarration(server);
 		if (!menuExplanationActive
 				&& getSharedLaunchPercent() >= MENU_EXPLANATION_UNLOCK_PERCENT
 				&& pendingMenuExplanationTick == Long.MIN_VALUE) {
-			pendingMenuExplanationTick = nowTick;
+			pendingMenuExplanationTick = nowTick + MENU_EXPLANATION_AFTER_HALFWAY_DELAY_TICKS;
 		}
 		if (sharedLaunchCollectedBitcoins >= sharedLaunchRequiredBitcoins && pendingSharedFinishTick == Long.MIN_VALUE) {
 			pendingSharedFinishTick = nowTick
@@ -5203,6 +5304,28 @@ public final class SeasonStartSystem {
 			case 100 -> "shared_launch_complete";
 			default -> null;
 		};
+	}
+
+	/**
+	 * Race controls are a shared progress beat delivered through each player's personal channel.
+	 * This lets it start at 65% even for players who still have an open menu, without overlap.
+	 */
+	private static void ensureSharedRaceControlsNarration(MinecraftServer server) {
+		if (server == null || sharedLaunchRaceControlsTriggered
+				|| sharedLaunchCollectedBitcoins >= sharedLaunchRequiredBitcoins
+				|| getSharedLaunchPercent() < SHARED_LAUNCH_RACE_CONTROLS_PERCENT) {
+			return;
+		}
+		sharedLaunchRaceControlsTriggered = true;
+		SeasonStartVoiceSystem.clearSharedLaunchProgressNarration();
+		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			if (!isInSharedPhase(player)) {
+				continue;
+			}
+			SeasonStartVoiceSystem.clearPlayerChannel(player);
+			SeasonStartVoiceSystem.fireTrigger(server, "shared_launch_race_controls", player);
+		}
+		stateDirty = true;
 	}
 
 	private static int resolveSharedLaunchMilestoneCursor(int percent) {
@@ -5791,7 +5914,7 @@ public final class SeasonStartSystem {
 		player.setGameMode(GameType.SURVIVAL);
 		player.addEffect(new MobEffectInstance(MobEffects.BLINDNESS, get().introBlindnessTicks, 0, false, false, false));
 		clearLegacyIntroInvisibility(player);
-		ensureIntroTool(player);
+		removeLegacyIntroTool(player);
 	}
 
 	private static void ensureGuidedPlayerState(ServerPlayer player, PlayerSceneState state, SlotDefinition slot) {
@@ -5811,7 +5934,7 @@ public final class SeasonStartSystem {
 		player.setGameMode(GameType.SURVIVAL);
 		player.addEffect(new MobEffectInstance(MobEffects.BLINDNESS, get().introBlindnessTicks, 0, false, false, false));
 		clearLegacyIntroInvisibility(player);
-		ensureIntroTool(player);
+		removeLegacyIntroTool(player);
 	}
 
 	private static void ensureWaitingStartPlayerState(ServerPlayer player, PlayerSceneState state, SlotDefinition slot) {
@@ -5828,7 +5951,7 @@ public final class SeasonStartSystem {
 		player.setGameMode(GameType.ADVENTURE);
 		player.addEffect(new MobEffectInstance(MobEffects.BLINDNESS, get().introBlindnessTicks, 0, false, false, false));
 		clearLegacyIntroInvisibility(player);
-		removeIntroTool(player);
+		removeLegacyIntroTool(player);
 	}
 
 	private static void ensureSharedPlayerState(ServerPlayer player) {
@@ -5868,7 +5991,7 @@ public final class SeasonStartSystem {
 		player.removeEffect(MobEffects.DARKNESS);
 		player.setSilent(false);
 		player.setGameMode(GameType.SURVIVAL);
-		removeIntroTool(player);
+		removeLegacyIntroTool(player);
 	}
 
 	private static void clearLegacyIntroInvisibility(ServerPlayer player) {
@@ -5974,7 +6097,11 @@ public final class SeasonStartSystem {
 					geometry.roofY + 1.0D,
 					geometry.maxZ + 1.0D
 			);
-			List<ItemEntity> hiddenItems = level.getEntitiesOfClass(ItemEntity.class, sceneBounds);
+			List<ItemEntity> hiddenItems = level.getEntitiesOfClass(
+					ItemEntity.class,
+					sceneBounds,
+					itemEntity -> itemEntity.getOwner() != viewer || !isGuidedBitcoinOffering(itemEntity)
+			);
 			if (hiddenItems.isEmpty()) {
 				continue;
 			}
@@ -6003,34 +6130,24 @@ public final class SeasonStartSystem {
 		}
 	}
 
-	private static void ensureIntroTool(ServerPlayer player) {
-		Inventory inventory = player == null ? null : player.getInventory();
-		if (inventory == null) {
+	/** Removes the now-retired tutorial pickaxe from scenes that started before this update. */
+	private static void removeLegacyIntroTool(ServerPlayer player) {
+		if (player == null || !LEGACY_INTRO_TOOL_PURGED_PLAYERS.add(player.getUUID())) {
 			return;
 		}
-		for (int slot = 0; slot < inventory.getContainerSize(); slot++) {
-			ItemStack existing = inventory.getItem(slot);
-			if (isIntroTool(existing)) {
-				return;
-			}
-		}
-		giveOrDrop(player, INTRO_TOOL_TEMPLATE.copy());
-	}
-
-	private static void removeIntroTool(ServerPlayer player) {
-		Inventory inventory = player == null ? null : player.getInventory();
+		Inventory inventory = player.getInventory();
 		if (inventory == null) {
 			return;
 		}
 		for (int slot = 0; slot < inventory.getContainerSize(); slot++) {
 			ItemStack stack = inventory.getItem(slot);
-			if (isIntroTool(stack)) {
+			if (isLegacyIntroTool(stack)) {
 				inventory.setItem(slot, ItemStack.EMPTY);
 			}
 		}
 	}
 
-	private static boolean isIntroTool(ItemStack stack) {
+	private static boolean isLegacyIntroTool(ItemStack stack) {
 		if (stack == null || stack.isEmpty() || !stack.is(ModItems.SPECIAL_PICKAXE)) {
 			return false;
 		}
@@ -6378,6 +6495,8 @@ public final class SeasonStartSystem {
 	private static void loadState(MinecraftServer server) {
 		Path path = getStatePath(server);
 		PLAYER_STATES.clear();
+		LEGACY_INTRO_TOOL_PURGED_PLAYERS.clear();
+		GUIDED_OFFERING_VISIBLE_SINCE_TICKS.clear();
 		HIDDEN_PLAYER_PROFILE_PAIRS.clear();
 		SHARED_BITCOIN_POSITIONS.clear();
 		clearSharedLaunchBossBar();
@@ -6401,6 +6520,7 @@ public final class SeasonStartSystem {
 		sharedLaunchRequiredBitcoins = 0;
 		sharedLaunchMilestoneCursor = 0;
 		sharedLaunchIntroTriggered = false;
+		sharedLaunchRaceControlsTriggered = false;
 		menuExplanationActive = false;
 		startupWorldgenFrameIndex = Integer.MIN_VALUE;
 		worldRevealVisibleEpisodeCursor = 0;
@@ -6441,6 +6561,7 @@ public final class SeasonStartSystem {
 			sharedLaunchRequiredBitcoins = Math.max(0, state.sharedLaunchRequiredBitcoins);
 			sharedLaunchMilestoneCursor = resolveSharedLaunchMilestoneCursor(getSharedLaunchPercent());
 			sharedLaunchIntroTriggered = state.sharedLaunchIntroTriggered;
+			sharedLaunchRaceControlsTriggered = state.sharedLaunchRaceControlsTriggered;
 			menuExplanationActive = state.menuExplanationActive;
 			if (state.players != null) {
 				for (Map.Entry<String, PersistedPlayerState> entry : state.players.entrySet()) {
@@ -6458,11 +6579,10 @@ public final class SeasonStartSystem {
 						runtime.phase = PlayerPhase.SHARED;
 					}
 					runtime.menuOpened = persisted.menuOpened;
-					runtime.menuNarrationMuted = persisted.menuNarrationMuted;
-					runtime.raceMenuReached = persisted.raceMenuReached;
-					runtime.racePurchaseExplained = persisted.racePurchaseExplained;
-					runtime.raceControlsExplained = persisted.raceControlsExplained;
-					runtime.menuRaceAllowanceGranted = persisted.menuRaceAllowanceGranted;
+				runtime.menuNarrationMuted = persisted.menuNarrationMuted;
+				runtime.raceMenuReached = persisted.raceMenuReached;
+				runtime.racePurchaseExplained = persisted.racePurchaseExplained;
+				runtime.menuRaceAllowanceGranted = persisted.menuRaceAllowanceGranted;
 					if (persisted.seenMenuSections != null) {
 						runtime.seenMenuSections.addAll(persisted.seenMenuSections);
 					}
@@ -6490,6 +6610,7 @@ public final class SeasonStartSystem {
 		state.sharedLaunchRequiredBitcoins = sharedLaunchRequiredBitcoins;
 		state.sharedLaunchMilestoneCursor = sharedLaunchMilestoneCursor;
 		state.sharedLaunchIntroTriggered = sharedLaunchIntroTriggered;
+		state.sharedLaunchRaceControlsTriggered = sharedLaunchRaceControlsTriggered;
 		state.menuExplanationActive = menuExplanationActive;
 		state.players = new LinkedHashMap<>();
 		for (Map.Entry<UUID, PlayerSceneState> entry : PLAYER_STATES.entrySet()) {
@@ -6506,7 +6627,6 @@ public final class SeasonStartSystem {
 			persisted.menuNarrationMuted = runtime.menuNarrationMuted;
 			persisted.raceMenuReached = runtime.raceMenuReached;
 			persisted.racePurchaseExplained = runtime.racePurchaseExplained;
-			persisted.raceControlsExplained = runtime.raceControlsExplained;
 			persisted.menuRaceAllowanceGranted = runtime.menuRaceAllowanceGranted;
 			persisted.seenMenuSections = new ArrayList<>(runtime.seenMenuSections);
 			state.players.put(entry.getKey().toString(), persisted);
@@ -6560,12 +6680,6 @@ public final class SeasonStartSystem {
 			}
 		}
 		return null;
-	}
-
-	private static ItemStack createIntroToolTemplate() {
-		ItemStack stack = new ItemStack(ModItems.SPECIAL_PICKAXE);
-		stack.set(DataComponents.CUSTOM_NAME, Component.literal("Пусковой инструмент"));
-		return stack;
 	}
 
 	private static void primeObservationState(ServerPlayer player, PlayerSceneState state) {
@@ -6917,7 +7031,6 @@ public final class SeasonStartSystem {
 		private boolean menuNarrationMuted;
 		private boolean raceMenuReached;
 		private boolean racePurchaseExplained;
-		private boolean raceControlsExplained;
 		private boolean menuRaceAllowanceGranted;
 		private String activeMenuSection = "";
 		private long nextMenuPriceReactionTick = Long.MIN_VALUE;
@@ -7087,6 +7200,7 @@ public final class SeasonStartSystem {
 		private int sharedLaunchRequiredBitcoins;
 		private int sharedLaunchMilestoneCursor;
 		private boolean sharedLaunchIntroTriggered;
+		private boolean sharedLaunchRaceControlsTriggered;
 		private boolean menuExplanationActive;
 		private Map<String, PersistedPlayerState> players;
 	}
@@ -7100,7 +7214,6 @@ public final class SeasonStartSystem {
 		private boolean menuNarrationMuted;
 		private boolean raceMenuReached;
 		private boolean racePurchaseExplained;
-		private boolean raceControlsExplained;
 		private boolean menuRaceAllowanceGranted;
 		private List<String> seenMenuSections;
 	}

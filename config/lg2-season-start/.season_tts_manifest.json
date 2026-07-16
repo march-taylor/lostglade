@@ -37,17 +37,17 @@
       "generatorVersion": 4
     },
     "phase1_intro_block": {
-      "fingerprint": "6621ea00584c4d383b22a50e6f825e963d05bf9e92daa0edafef9695045ae2f2",
-      "text": "В нескольких шагах от вас стоит руда. Кирка уже у вас.",
+      "fingerprint": "b7805a4428717909d79e7bcda3adb48b996fd64995646619a68f6f2b87cd102b",
+      "text": "В нескольких шагах от вас стоит руда.",
       "outputPath": "config/lg2-season-start/voice/phase1_intro_block.wav",
-      "durationTicks": 83,
+      "durationTicks": 57,
       "generatorVersion": 4
     },
     "phase1_intro_break": {
-      "fingerprint": "bcf2abbfd820866d800526c564ad66aff61eaf6fdbd5475f0ee09e0d730e5dc3",
-      "text": "Сейчас вам нужно дойти до этой руды и сломать её киркой.",
+      "fingerprint": "3318eefd52e130050ff00338e91effcee6e33e9b9126620fa6dee009c02702f4",
+      "text": "Сейчас вам нужно дойти до этой руды и сломать её руками.",
       "outputPath": "config/lg2-season-start/voice/phase1_intro_break.wav",
-      "durationTicks": 86,
+      "durationTicks": 76,
       "generatorVersion": 4
     },
     "phase1_mined_honest_work": {
@@ -107,8 +107,8 @@
       "generatorVersion": 4
     },
     "phase1_air_punch_almost": {
-      "fingerprint": "01998bbfa6bd0108391c5df98f49bdcf91db8f5af417a0a1f1be2fdd8603b528",
-      "text": "Нет. Бить воздух не надо. Руду. Киркой.",
+      "fingerprint": "76aea01954502db61fc7d4bf2882cdef853f6a576a521caf20170b5aa503a4a0",
+      "text": "Нет. Бить воздух не надо. Руду. Руками.",
       "outputPath": "config/lg2-season-start/voice/phase1_air_punch_almost.wav",
       "durationTicks": 78,
       "generatorVersion": 4
@@ -226,10 +226,10 @@
       "generatorVersion": 4
     },
     "intro_target_locked_02": {
-      "fingerprint": "78bbd2ba329e242dca23ffc551b69254fbbcbf410003b55c3c99c95ddabe6e71",
-      "text": "Да, перед вами руда. Теперь бейте киркой.",
+      "fingerprint": "d42589c194e73b9671578b3270ab20a1cea26bf2f9417d704abf7eae2d7f9f79",
+      "text": "Да, перед вами руда. Теперь ломайте.",
       "outputPath": "config/lg2-season-start/voice/intro_target_locked_02.wav",
-      "durationTicks": 71,
+      "durationTicks": 75,
       "generatorVersion": 4
     },
     "intro_target_locked_03": {
@@ -1143,10 +1143,10 @@
       "generatorVersion": 4
     },
     "phase5_menu_race_controls": {
-      "fingerprint": "e5f0d992f34531f710e684994916102f85ce368fb9d398b1e14e6c0465e3976d",
-      "text": "Способность куплена. Меню расы открывается на G. Зайдите в настройки: управление, назначение клавиш. Советую перенести эту кнопку на мышь, в сложный момент так быстрее. Если меню не открылось, используйте команду /race.",
+      "fingerprint": "5493cda36fd40b83ff5a9b606693be969e822ca8be4f0396826b9b2aa8116934",
+      "text": "Меню расы открывается на G. Если эта клавиша неудобна, зайдите в настройки: управление, назначение клавиш. Советую перенести её на кнопку мыши. В сложный момент так быстрее. Если меню не открылось, используйте команду /race.",
       "outputPath": "config/lg2-season-start/voice/phase5_menu_race_controls.wav",
-      "durationTicks": 295,
+      "durationTicks": 335,
       "generatorVersion": 4
     }
   }
