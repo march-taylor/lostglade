@@ -64,6 +64,8 @@ import java.util.UUID;
 public final class StartupRaceAbilitySystem {
 	private static final Identifier CONFETTI_SOUND_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "startup_confetti");
 	private static final Identifier JACK_SCREAM_SOUND_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "startup_jack_scream");
+	private static final Identifier JACK_GIFT_BODY_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "startup_jack_gift_body");
+	private static final Identifier JACK_GIFT_LID_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "startup_jack_gift_lid");
 	private static final Holder<SoundEvent> CONFETTI_SOUND = Holder.direct(SoundEvent.createVariableRangeEvent(CONFETTI_SOUND_ID));
 	private static final Holder<SoundEvent> JACK_SCREAM_SOUND = Holder.direct(SoundEvent.createVariableRangeEvent(JACK_SCREAM_SOUND_ID));
 	private static final int BUBBLE_LIFETIME_TICKS = 20 * 18;
@@ -71,6 +73,11 @@ public final class StartupRaceAbilitySystem {
 	private static final int JACK_LIFETIME_TICKS = 20 * 75;
 	private static final int JACK_OPEN_TICKS = 12;
 	private static final int JACK_VISIBLE_TICKS = 36;
+	private static final int JACK_FIREWORK_LAUNCH_TICKS = 14;
+	private static final float JACK_GIFT_SCALE = 1.72F;
+	private static final int[] JACK_FIREWORK_COLORS = {
+			0xFF3355, 0xFFB000, 0xFFE66D, 0x41EAD4, 0x4D96FF, 0xC77DFF, 0xF72585
+	};
 	private static final float BUBBLE_SPRITE_BASE_SIZE = 7.0F;
 	private static final float BUBBLE_DISPLAY_SCALE = 1.10F;
 	private static final float BUBBLE_MIN_SCALE_VARIATION = 0.92F;
@@ -339,25 +346,20 @@ public final class StartupRaceAbilitySystem {
 				return false;
 			}
 		}
-		Display.ItemDisplay box = createDisplay(level, new ItemStack(Items.RED_SHULKER_BOX), base, Display.BillboardConstraints.FIXED, 0.64F);
-		Display.ItemDisplay spring = createDisplay(level, new ItemStack(Items.IRON_BARS), base.add(0.0D, 0.14D, 0.0D), Display.BillboardConstraints.FIXED, 0.14F);
-		Display.ItemDisplay clown = createDisplay(level, new ItemStack(ModItems.STARTUP_JACK_CLOWN), base.add(0.0D, 0.20D, 0.0D), Display.BillboardConstraints.CENTER, 0.08F);
-		if (box == null || spring == null || clown == null) {
+		Display.ItemDisplay box = createDisplay(level, createJackGiftBodyDisplayStack(), base, Display.BillboardConstraints.FIXED, JACK_GIFT_SCALE);
+		Display.ItemDisplay lid = createDisplay(level, createJackGiftLidDisplayStack(), base, Display.BillboardConstraints.FIXED, JACK_GIFT_SCALE);
+		if (box == null || lid == null) {
 			if (box != null) {
 				box.discard();
 			}
-			if (spring != null) {
-				spring.discard();
-			}
-			if (clown != null) {
-				clown.discard();
+			if (lid != null) {
+				lid.discard();
 			}
 			return false;
 		}
-		clown.setInvisible(true);
-		JackBoxState state = new JackBoxState(level.dimension(), player.getUUID(), base, box.getUUID(), spring.getUUID(), clown.getUUID(), level.getGameTime());
+		JackBoxState state = new JackBoxState(level.dimension(), player.getUUID(), base, box.getUUID(), lid.getUUID(), level.getGameTime());
 		JACK_BOXES.put(box.getUUID(), state);
-		level.playSound(null, ground, SoundEvents.SHULKER_BOX_CLOSE, SoundSource.BLOCKS, 0.75F, 1.12F);
+		level.playSound(null, ground, SoundEvents.WOOL_PLACE, SoundSource.BLOCKS, 0.72F, 1.18F);
 		return true;
 	}
 
@@ -612,16 +614,17 @@ public final class StartupRaceAbilitySystem {
 			JackBoxState state = iterator.next();
 			ServerLevel level = server.getLevel(state.dimension);
 			Display.ItemDisplay box = findEntity(server, state.boxDisplayId, Display.ItemDisplay.class);
-			Display.ItemDisplay spring = findEntity(server, state.springDisplayId, Display.ItemDisplay.class);
+			Display.ItemDisplay lid = findEntity(server, state.lidDisplayId, Display.ItemDisplay.class);
 			Display.ItemDisplay clown = findEntity(server, state.clownDisplayId, Display.ItemDisplay.class);
-			if (level == null || box == null || spring == null || clown == null || level.getGameTime() >= state.createdAtTick + JACK_LIFETIME_TICKS) {
+			Display.ItemDisplay rocket = findEntity(server, state.rocketDisplayId, Display.ItemDisplay.class);
+			if (level == null || box == null || lid == null || level.getGameTime() >= state.createdAtTick + JACK_LIFETIME_TICKS) {
 				removeJackVisuals(server, state);
 				iterator.remove();
 				continue;
 			}
 			if (state.triggeredAtTick > 0L) {
 				long elapsed = level.getGameTime() - state.triggeredAtTick;
-				updateOpenedJackBox(state, box, spring, clown, elapsed);
+				updateOpenedJackBox(level, state, box, lid, clown, rocket, elapsed);
 				if (elapsed >= JACK_VISIBLE_TICKS) {
 					removeJackVisuals(server, state);
 					iterator.remove();
@@ -638,44 +641,162 @@ public final class StartupRaceAbilitySystem {
 					if (!candidate.isAlive() || candidate.isSpectator() || candidate.position().distanceToSqr(state.position) > JACK_TRIGGER_DISTANCE_SQR) {
 						continue;
 					}
-					triggerJackBox(level, state, candidate, clown);
+					triggerJackBox(level, state, candidate);
 					break;
 				}
 			}
 		}
 	}
 
-	private static void triggerJackBox(ServerLevel level, JackBoxState state, ServerPlayer victim, Display.ItemDisplay clown) {
+	private static void triggerJackBox(ServerLevel level, JackBoxState state, ServerPlayer victim) {
 		state.triggeredAtTick = level.getGameTime();
-		clown.setInvisible(false);
-		playPersonalPackSound(victim, JACK_SCREAM_SOUND, SoundSource.HOSTILE, state.position.add(0.0D, 0.9D, 0.0D), 1.15F, 1.0F);
-		level.playSound(null, BlockPos.containing(state.position), SoundEvents.SHULKER_BOX_OPEN, SoundSource.BLOCKS, 0.9F, 0.82F);
-		level.sendParticles(ParticleTypes.SOUL_FIRE_FLAME, state.position.x, state.position.y + 0.48D, state.position.z, 14, 0.24D, 0.34D, 0.24D, 0.02D);
+		state.surprise = level.getRandom().nextBoolean() ? JackSurprise.SCREAMER : JackSurprise.FIREWORK;
+		level.playSound(null, BlockPos.containing(state.position), SoundEvents.CHEST_OPEN, SoundSource.BLOCKS, 0.9F, 0.92F);
+		if (state.surprise == JackSurprise.SCREAMER) {
+			Display.ItemDisplay clown = createDisplay(
+					level,
+					new ItemStack(ModItems.STARTUP_JACK_CLOWN),
+					state.position.add(0.0D, 0.24D, 0.0D),
+					Display.BillboardConstraints.CENTER,
+					0.10F
+			);
+			if (clown != null) {
+				state.clownDisplayId = clown.getUUID();
+			}
+			playPersonalPackSound(victim, JACK_SCREAM_SOUND, SoundSource.HOSTILE, state.position.add(0.0D, 0.9D, 0.0D), 1.15F, 1.0F);
+			level.sendParticles(ParticleTypes.SOUL_FIRE_FLAME, state.position.x, state.position.y + 0.48D, state.position.z, 14, 0.24D, 0.34D, 0.24D, 0.02D);
+			return;
+		}
+
+		state.fireworkPattern = JackFireworkPattern.random(level.getRandom());
+		Display.ItemDisplay rocket = createDisplay(
+				level,
+				new ItemStack(Items.FIREWORK_ROCKET),
+				state.position.add(0.0D, 0.32D, 0.0D),
+				Display.BillboardConstraints.FIXED,
+				0.34F
+		);
+		if (rocket != null) {
+			state.rocketDisplayId = rocket.getUUID();
+		}
+		level.playSound(null, BlockPos.containing(state.position), SoundEvents.FIREWORK_ROCKET_LAUNCH, SoundSource.BLOCKS, 0.82F, 0.96F + level.getRandom().nextFloat() * 0.12F);
 	}
 
-	private static void updateOpenedJackBox(JackBoxState state, Display.ItemDisplay box, Display.ItemDisplay spring, Display.ItemDisplay clown, long elapsed) {
+	private static void updateOpenedJackBox(
+			ServerLevel level,
+			JackBoxState state,
+			Display.ItemDisplay box,
+			Display.ItemDisplay lid,
+			Display.ItemDisplay clown,
+			Display.ItemDisplay rocket,
+			long elapsed
+	) {
 		float progress = Math.min(1.0F, elapsed / (float) JACK_OPEN_TICKS);
 		float eased = 1.0F - (float) Math.pow(1.0F - progress, 3.0F);
 		box.setTransformation(new Transformation(
 				new Vector3f(),
-				new Quaternionf().rotateX(-0.20F * eased),
-				new Vector3f(0.64F, 0.64F, 0.64F),
+				new Quaternionf().rotateZ((float) Math.sin(elapsed * 0.7D) * 0.035F),
+				new Vector3f(JACK_GIFT_SCALE, JACK_GIFT_SCALE, JACK_GIFT_SCALE),
 				new Quaternionf()
 		));
-		spring.setPos(state.position.x, state.position.y + 0.14D + 0.52D * eased, state.position.z);
-		spring.setTransformation(new Transformation(
+		lid.setPos(
+				state.position.x + 0.72D * eased,
+				state.position.y + 0.18D + 0.62D * eased - 0.12D * eased * eased,
+				state.position.z + 0.30D * eased
+		);
+		lid.setTransformation(new Transformation(
 				new Vector3f(),
-				new Quaternionf(),
-				new Vector3f(0.14F, 0.16F + 0.72F * eased, 0.14F),
+				new Quaternionf().rotateX(1.35F * eased).rotateZ(0.72F * eased),
+				new Vector3f(JACK_GIFT_SCALE, JACK_GIFT_SCALE, JACK_GIFT_SCALE),
 				new Quaternionf()
 		));
-		clown.setPos(state.position.x, state.position.y + 0.26D + 0.88D * eased, state.position.z);
-		clown.setTransformation(new Transformation(
-				new Vector3f(),
-				new Quaternionf().rotateZ((float) Math.sin(elapsed * 0.6D) * 0.18F),
-				new Vector3f(0.12F + 0.52F * eased, 0.12F + 0.52F * eased, 0.12F + 0.52F * eased),
-				new Quaternionf()
-		));
+
+		if (state.surprise == JackSurprise.SCREAMER && clown != null) {
+			clown.setPos(state.position.x, state.position.y + 0.26D + 0.88D * eased, state.position.z);
+			clown.setTransformation(new Transformation(
+					new Vector3f(),
+					new Quaternionf().rotateZ((float) Math.sin(elapsed * 0.6D) * 0.18F),
+					new Vector3f(0.10F + 0.52F * eased, 0.10F + 0.52F * eased, 0.10F + 0.52F * eased),
+					new Quaternionf()
+			));
+		}
+		if (state.surprise == JackSurprise.FIREWORK) {
+			updateJackFirework(level, state, rocket, elapsed);
+		}
+	}
+
+	private static void updateJackFirework(ServerLevel level, JackBoxState state, Display.ItemDisplay rocket, long elapsed) {
+		float launchProgress = Math.min(1.0F, elapsed / (float) JACK_FIREWORK_LAUNCH_TICKS);
+		float easedLaunch = 1.0F - (1.0F - launchProgress) * (1.0F - launchProgress);
+		Vec3 burstPosition = state.position.add(0.0D, 0.34D + 4.0D * easedLaunch, 0.0D);
+		if (rocket != null && !state.fireworkExploded) {
+			rocket.setPos(burstPosition.x, burstPosition.y, burstPosition.z);
+			rocket.setTransformation(new Transformation(
+					new Vector3f(),
+					new Quaternionf().rotateY((float) (elapsed * 0.48D)),
+					new Vector3f(0.34F, 0.34F, 0.34F),
+					new Quaternionf()
+			));
+		}
+		if (elapsed < JACK_FIREWORK_LAUNCH_TICKS || state.fireworkExploded) {
+			return;
+		}
+		state.fireworkExploded = true;
+		state.rocketDisplayId = null;
+		if (rocket != null) {
+			rocket.discard();
+		}
+		emitJackFireworkBurst(level, burstPosition, state.fireworkPattern == null ? JackFireworkPattern.BURST : state.fireworkPattern);
+	}
+
+	private static void emitJackFireworkBurst(ServerLevel level, Vec3 origin, JackFireworkPattern pattern) {
+		if (level == null || origin == null || pattern == null) {
+			return;
+		}
+		RandomSource random = level.getRandom();
+		int primary = JACK_FIREWORK_COLORS[random.nextInt(JACK_FIREWORK_COLORS.length)];
+		int secondary = JACK_FIREWORK_COLORS[random.nextInt(JACK_FIREWORK_COLORS.length)];
+		int points = switch (pattern) {
+			case RING, STAR -> 36;
+			case SPIRAL -> 42;
+			case BURST -> 48;
+		};
+		for (int index = 0; index < points; index++) {
+			Vec3 offset = resolveJackFireworkOffset(pattern, index, points, random);
+			DustParticleOptions particle = new DustParticleOptions(index % 3 == 0 ? secondary : primary, 1.15F + random.nextFloat() * 0.45F);
+			level.sendParticles(
+					particle,
+					origin.x + offset.x,
+					origin.y + offset.y,
+					origin.z + offset.z,
+					1,
+					0.0D,
+					0.0D,
+					0.0D,
+					0.0D
+			);
+		}
+		level.sendParticles(ParticleTypes.FIREWORK, origin.x, origin.y, origin.z, 28, 0.34D, 0.34D, 0.34D, 0.18D);
+		level.playSound(null, BlockPos.containing(origin), SoundEvents.FIREWORK_ROCKET_LARGE_BLAST, SoundSource.BLOCKS, 1.1F, 0.9F + random.nextFloat() * 0.18F);
+	}
+
+	private static Vec3 resolveJackFireworkOffset(JackFireworkPattern pattern, int index, int points, RandomSource random) {
+		double angle = Math.PI * 2.0D * index / points;
+		return switch (pattern) {
+			case RING -> new Vec3(Math.cos(angle) * 1.48D, Math.sin(angle) * 1.48D, Math.sin(angle * 2.0D) * 0.24D);
+			case STAR -> {
+				double radius = index % 2 == 0 ? 1.62D : 0.72D;
+				yield new Vec3(Math.cos(angle) * radius, Math.sin(angle) * radius, Math.sin(angle * 5.0D) * 0.18D);
+			}
+			case SPIRAL -> {
+				double radius = 0.18D + 1.46D * index / Math.max(1.0D, points - 1.0D);
+				yield new Vec3(Math.cos(angle * 2.2D) * radius, (index / (double) points - 0.5D) * 2.6D, Math.sin(angle * 2.2D) * radius);
+			}
+			case BURST -> {
+				Vec3 direction = new Vec3(random.nextGaussian(), random.nextGaussian(), random.nextGaussian()).normalize();
+				yield direction.scale(0.42D + random.nextDouble() * 1.34D);
+			}
+		};
 	}
 
 	private static InteractionResult onAttackEntity(Player player, Level world, InteractionHand hand, Entity entity, net.minecraft.world.phys.EntityHitResult hitResult) {
@@ -737,6 +858,18 @@ public final class StartupRaceAbilitySystem {
 	private static ItemStack createSoapBubbleDisplayStack() {
 		ItemStack stack = new ItemStack(Items.HEART_OF_THE_SEA);
 		stack.set(DataComponents.ITEM_MODEL, Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "startup_bubble_sprite"));
+		return stack;
+	}
+
+	private static ItemStack createJackGiftBodyDisplayStack() {
+		ItemStack stack = new ItemStack(Items.HEART_OF_THE_SEA);
+		stack.set(DataComponents.ITEM_MODEL, JACK_GIFT_BODY_MODEL_ID);
+		return stack;
+	}
+
+	private static ItemStack createJackGiftLidDisplayStack() {
+		ItemStack stack = new ItemStack(Items.HEART_OF_THE_SEA);
+		stack.set(DataComponents.ITEM_MODEL, JACK_GIFT_LID_MODEL_ID);
 		return stack;
 	}
 
@@ -874,8 +1007,9 @@ public final class StartupRaceAbilitySystem {
 
 	private static void removeJackVisuals(MinecraftServer server, JackBoxState state) {
 		removeEntity(server, state.boxDisplayId);
-		removeEntity(server, state.springDisplayId);
+		removeEntity(server, state.lidDisplayId);
 		removeEntity(server, state.clownDisplayId);
+		removeEntity(server, state.rocketDisplayId);
 	}
 
 	private static void removeEntity(MinecraftServer server, UUID id) {
@@ -1035,20 +1169,40 @@ public final class StartupRaceAbilitySystem {
 		private final UUID ownerId;
 		private final Vec3 position;
 		private final UUID boxDisplayId;
-		private final UUID springDisplayId;
-		private final UUID clownDisplayId;
+		private final UUID lidDisplayId;
 		private final long createdAtTick;
 		private boolean armed;
 		private long triggeredAtTick;
+		private UUID clownDisplayId;
+		private UUID rocketDisplayId;
+		private JackSurprise surprise;
+		private JackFireworkPattern fireworkPattern;
+		private boolean fireworkExploded;
 
-		private JackBoxState(ResourceKey<Level> dimension, UUID ownerId, Vec3 position, UUID boxDisplayId, UUID springDisplayId, UUID clownDisplayId, long createdAtTick) {
+		private JackBoxState(ResourceKey<Level> dimension, UUID ownerId, Vec3 position, UUID boxDisplayId, UUID lidDisplayId, long createdAtTick) {
 			this.dimension = dimension;
 			this.ownerId = ownerId;
 			this.position = position;
 			this.boxDisplayId = boxDisplayId;
-			this.springDisplayId = springDisplayId;
-			this.clownDisplayId = clownDisplayId;
+			this.lidDisplayId = lidDisplayId;
 			this.createdAtTick = createdAtTick;
+		}
+	}
+
+	private enum JackSurprise {
+		SCREAMER,
+		FIREWORK
+	}
+
+	private enum JackFireworkPattern {
+		BURST,
+		RING,
+		STAR,
+		SPIRAL;
+
+		private static JackFireworkPattern random(RandomSource random) {
+			JackFireworkPattern[] values = values();
+			return values[random.nextInt(values.length)];
 		}
 	}
 }

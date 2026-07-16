@@ -20,6 +20,7 @@ import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.arguments.EntityArgument;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.Holder;
@@ -89,6 +90,7 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.FallingBlock;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.Property;
 import net.minecraft.world.level.chunk.ChunkGenerator;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.levelgen.RandomState;
@@ -102,10 +104,17 @@ import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
 import java.io.Reader;
 import java.io.Writer;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.HashMap;
@@ -120,6 +129,8 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.zip.GZIPInputStream;
+import java.util.zip.GZIPOutputStream;
 
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
@@ -129,6 +140,9 @@ import static com.lostglade.config.SeasonStartConfig.get;
 public final class SeasonStartSystem {
 	private static final Gson STATE_GSON = new GsonBuilder().setPrettyPrinting().create();
 	private static final String STATE_FILE_NAME = "lg2-season-start-state.json";
+	private static final String WORLD_REVEAL_SNAPSHOT_FILE_NAME = "lg2-season-start-world-snapshot.dat";
+	private static final int WORLD_REVEAL_SNAPSHOT_MAGIC = 0x4C473253;
+	private static final int WORLD_REVEAL_SNAPSHOT_VERSION = 1;
 	private static final Set<Relative> ABSOLUTE_TELEPORT = EnumSet.noneOf(Relative.class);
 	private static final int DISSOLVE_BATCH_BLOCKS = 96;
 	private static final long WAITING_START_INITIAL_PROMPT_TICKS = 20L * 3L;
@@ -482,6 +496,9 @@ public final class SeasonStartSystem {
 	private static final Set<BlockPos> SHARED_BITCOIN_POSITIONS = new LinkedHashSet<>();
 	private static final Set<UUID> SCENE_BUILD_FLOATING_PLAYERS = new HashSet<>();
 	private static CompletableFuture<WorldRevealPlan> worldRevealPlanFuture = null;
+	private static CompletableFuture<PersistedWorldRevealSnapshot> worldRevealSnapshotLoadFuture = null;
+	private static WorldRevealSnapshotLoadTask worldRevealSnapshotLoadTask = null;
+	private static boolean worldRevealSnapshotLoadAttempted = false;
 	private static boolean worldRevealPlanReady = false;
 	private static boolean stateLoaded = false;
 	private static boolean stateDirty = false;
@@ -581,6 +598,9 @@ public final class SeasonStartSystem {
 		WORLD_REVEAL_DEFERRED_POSITIONS.clear();
 		WORLD_REVEAL_REVEALED_POSITIONS.clear();
 		worldRevealPlanFuture = null;
+		worldRevealSnapshotLoadFuture = null;
+		worldRevealSnapshotLoadTask = null;
+		worldRevealSnapshotLoadAttempted = false;
 		worldRevealPlanReady = false;
 		SHARED_BITCOIN_POSITIONS.clear();
 		SCENE_BUILD_FLOATING_PLAYERS.clear();
@@ -1156,6 +1176,7 @@ public final class SeasonStartSystem {
 
 	private static void onServerStarted(MinecraftServer server) {
 		loadState(server);
+		beginWorldRevealSnapshotLoad(server);
 		sceneBoundaryPhysicsFrozen = active || worldRevealActive;
 		releaseSceneBuildFlight(server);
 		ensureBootstrap(server);
@@ -1216,6 +1237,9 @@ public final class SeasonStartSystem {
 
 	private static void tickServer(MinecraftServer server) {
 		if (server == null) {
+			return;
+		}
+		if (!tickWorldRevealSnapshotLoad(server)) {
 			return;
 		}
 		if ((active || worldRevealActive) && server.overworld() != null) {
@@ -1523,7 +1547,7 @@ public final class SeasonStartSystem {
 
 	private static void rebuildActiveScene(MinecraftServer server) {
 		ServerLevel overworld = server == null ? null : server.overworld();
-		if (overworld == null) {
+		if (overworld == null || isWorldRevealSnapshotLoading()) {
 			return;
 		}
 		ensureSceneBuilt(overworld);
@@ -1589,7 +1613,11 @@ public final class SeasonStartSystem {
 		WORLD_REVEAL_DEFERRED_POSITIONS.clear();
 		WORLD_REVEAL_REVEALED_POSITIONS.clear();
 		worldRevealPlanFuture = null;
+		worldRevealSnapshotLoadFuture = null;
+		worldRevealSnapshotLoadTask = null;
+		worldRevealSnapshotLoadAttempted = false;
 		worldRevealPlanReady = false;
+		deleteWorldRevealSnapshot(server);
 		SHARED_BITCOIN_POSITIONS.clear();
 		releaseSceneBuildFlight(server);
 		SeasonStartVoiceSystem.resetSceneState();
@@ -1600,6 +1628,8 @@ public final class SeasonStartSystem {
 		ServerRaceSystem.beginSeasonStartRaces(server, get().startupRaceId);
 		ensureSceneBuilt(overworld);
 		stateDirty = true;
+		// Persist the phase before the asynchronous snapshot starts changing terrain.
+		saveState(server);
 	}
 
 	private static void finishSeasonStart(MinecraftServer server) {
@@ -1661,6 +1691,7 @@ public final class SeasonStartSystem {
 					+ WORLD_REVEAL_CRACK_START_BUFFER_TICKS;
 		}
 		stateDirty = true;
+		saveState(server);
 	}
 
 	private static void assignOrRestorePlayer(MinecraftServer server, ServerPlayer player, boolean announceIntro) {
@@ -2940,7 +2971,6 @@ public final class SeasonStartSystem {
 		WORLD_REVEAL_BARRIER_COLLISION.clear();
 		WORLD_REVEAL_SURFACE_Y.clear();
 		WORLD_REVEAL_TARGET_STATES.clear();
-		WORLD_REVEAL_BOUNDARY_TARGET_STATES.clear();
 		WORLD_REVEAL_SAFE_TARGETS.clear();
 		Map<Long, Integer> topSolidByColumn = new HashMap<>();
 		Map<Long, Integer> topFilledByColumn = new HashMap<>();
@@ -4324,9 +4354,9 @@ public final class SeasonStartSystem {
 	}
 
 	/**
-	 * The runtime snapshot is intentionally not persisted. After a restart in
-	 * the middle of the reveal, rebuild only that data in small server-tick
-	 * batches. Never synchronously tear down or rebuild the already visible box.
+	 * A restarted reveal resumes from the exact sidecar snapshot captured before
+	 * the black cube existed. Only worlds made with older versions lack it; they
+	 * retain the bounded base-terrain fallback as a last-resort migration path.
 	 */
 	private static void beginWorldRevealRecovery(MinecraftServer server) {
 		ServerLevel level = server == null ? null : server.overworld();
@@ -4350,6 +4380,11 @@ public final class SeasonStartSystem {
 		worldRevealDarknessClearTick = Long.MIN_VALUE;
 		worldRevealEarthquakeSoundStarted = false;
 		worldRevealDarknessRepositioned = false;
+		if (isWorldRevealSnapshotLoading() || hasWorldRevealSnapshot()) {
+			stateDirty = true;
+			return;
+		}
+		Lg2.LOGGER.warn("Season-start reveal has no exact terrain snapshot; falling back to legacy base-terrain recovery.");
 		if (sceneBuildTask == null || !sceneBuildTask.anchor.equals(anchor)
 				|| sceneBuildTask.mode != SceneBuildMode.WORLD_REVEAL_RECOVERY) {
 			sceneBuildTask = createSceneBuildTask(level, anchor, SceneBuildMode.WORLD_REVEAL_RECOVERY);
@@ -4361,6 +4396,13 @@ public final class SeasonStartSystem {
 		ServerLevel level = server == null ? null : server.overworld();
 		if (server == null || level == null) {
 			return false;
+		}
+		if (isWorldRevealSnapshotLoading()) {
+			return false;
+		}
+		if (hasWorldRevealSnapshot()) {
+			finishWorldRevealRecovery(level);
+			return true;
 		}
 		if (sceneBuildTask == null) {
 			beginWorldRevealRecovery(server);
@@ -4439,9 +4481,11 @@ public final class SeasonStartSystem {
 		WORLD_REVEAL_REVEALED_POSITIONS.clear();
 		worldRevealPlanFuture = null;
 		worldRevealPlanReady = false;
+		deleteWorldRevealSnapshot(server);
 		clearSharedLaunchBossBar();
 		restoreSeasonStartDifficulty(server);
 		stateDirty = true;
+		saveState(server);
 	}
 
 	private static void materializeCompletedWorldRevealTerrain(ServerLevel level) {
@@ -4577,7 +4621,7 @@ public final class SeasonStartSystem {
 	}
 
 	private static void ensureSceneBuilt(ServerLevel level) {
-		if (level == null || scenePrepared) {
+		if (level == null || scenePrepared || isWorldRevealSnapshotLoading()) {
 			return;
 		}
 		BlockPos anchor = resolveServerAnchor(level);
@@ -4647,23 +4691,26 @@ public final class SeasonStartSystem {
 		for (BlockPos pos : ServerStructureBreakSystem.getStructurePositions(anchor, serverStructureAxis)) {
 			structureFootprint.add(pos.asLong());
 		}
-		WORLD_REVEAL_TERRAIN.clear();
-		WORLD_REVEAL_BARRIER_COLLISION.clear();
-		WORLD_REVEAL_SURFACE_Y.clear();
-		WORLD_REVEAL_TARGET_STATES.clear();
-		WORLD_REVEAL_BOUNDARY_TARGET_STATES.clear();
-		WORLD_REVEAL_SAFE_TARGETS.clear();
 		boolean hadExistingShell = isSceneShellAlreadyBuilt(level);
 		boolean reuseExistingShell = mode == SceneBuildMode.WORLD_REVEAL_RECOVERY
 				|| (hadExistingShell && isCurrentSceneShellIntact(level, outer, barrier));
-		boolean captureRestorationData = mode == SceneBuildMode.STARTUP && !reuseExistingShell;
+		boolean reusePersistedSnapshot = hasWorldRevealSnapshot();
+		boolean captureRestorationData = mode == SceneBuildMode.STARTUP && !reuseExistingShell && !reusePersistedSnapshot;
 		if (captureRestorationData) {
+			WORLD_REVEAL_TERRAIN.clear();
+			WORLD_REVEAL_BARRIER_COLLISION.clear();
+			WORLD_REVEAL_SURFACE_Y.clear();
+			WORLD_REVEAL_TARGET_STATES.clear();
+			WORLD_REVEAL_BOUNDARY_TARGET_STATES.clear();
+			WORLD_REVEAL_SAFE_TARGETS.clear();
+		}
+		if (captureRestorationData || (reusePersistedSnapshot && !reuseExistingShell)) {
 			protectPlayersDuringSceneBuild(level, level.players());
 		}
 		return new SceneBuildTask(
 				anchor.immutable(), outer, barrier, boundary, stale,
 				mode, mode == SceneBuildMode.WORLD_REVEAL_RECOVERY || hadExistingShell,
-				reuseExistingShell, captureRestorationData, structureFootprint
+				reuseExistingShell, captureRestorationData, reusePersistedSnapshot, structureFootprint
 		);
 	}
 
@@ -4680,6 +4727,9 @@ public final class SeasonStartSystem {
 		if (task == null) {
 			return false;
 		}
+		if (task.phase == SceneBuildPhase.SNAPSHOT_PERSIST && !tickSceneSnapshotPersistence(server, task)) {
+			return false;
+		}
 		SceneBuildPhase budgetPhase = task.phase;
 		int remainingBudget = budgetPhase == SceneBuildPhase.SNAPSHOT
 				? SCENE_SNAPSHOT_BATCH_BLOCKS
@@ -4687,7 +4737,7 @@ public final class SeasonStartSystem {
 		while (remainingBudget > 0 && task.phase == budgetPhase && task.phase != SceneBuildPhase.FINALIZE) {
 			long total = resolveSceneBuildPhaseTotal(level, task);
 			if (task.cursor >= total) {
-				advanceSceneBuildPhase(task);
+				advanceSceneBuildPhase(server, task);
 				continue;
 			}
 			BlockPos pos = task.phase == SceneBuildPhase.BUILD_BARRIER
@@ -4748,6 +4798,9 @@ public final class SeasonStartSystem {
 			return;
 		}
 		WORLD_REVEAL_TERRAIN.add(new TerrainPlacement(pos.immutable(), state));
+		if (task.snapshotAccumulator != null) {
+			task.snapshotAccumulator.addTerrain(pos, state);
+		}
 		WORLD_REVEAL_TARGET_STATES.put(pos.asLong(), state);
 		if (!isInsideBarrierInterior(task.barrier, pos)) {
 			return;
@@ -4770,6 +4823,9 @@ public final class SeasonStartSystem {
 		BlockState state = level.getBlockState(pos);
 		if (state != null && !state.isAir()) {
 			WORLD_REVEAL_BOUNDARY_TARGET_STATES.put(pos.asLong(), state);
+			if (task.snapshotAccumulator != null) {
+				task.snapshotAccumulator.addBoundary(pos, state);
+			}
 		}
 	}
 
@@ -4831,15 +4887,48 @@ public final class SeasonStartSystem {
 		setSceneBlockSilently(level, pos, Blocks.BARRIER.defaultBlockState());
 	}
 
-	private static void advanceSceneBuildPhase(SceneBuildTask task) {
+	private static boolean tickSceneSnapshotPersistence(MinecraftServer server, SceneBuildTask task) {
+		if (task.snapshotWriteFuture == null) {
+			writeWorldRevealSnapshotAsync(server, task);
+			if (task.snapshotWriteFuture == null) {
+				Lg2.LOGGER.error("Season-start scene snapshot could not be scheduled; keeping the world untouched.");
+				return false;
+			}
+		}
+		if (!task.snapshotWriteFuture.isDone()) {
+			return false;
+		}
+		try {
+			task.snapshotWriteFuture.join();
+		} catch (RuntimeException exception) {
+			Lg2.LOGGER.error("Season-start scene snapshot write failed; retrying before the scene can modify terrain.", exception);
+			task.snapshotWriteFuture = null;
+			return false;
+		}
+		task.snapshotWriteFuture = null;
+		Lg2.LOGGER.info("Saved exact season-start terrain snapshot ({} blocks, {} boundary blocks).",
+				task.snapshotAccumulator.terrain.size(), task.snapshotAccumulator.boundary.size());
+		task.phase = task.reuseExistingShell ? SceneBuildPhase.FINALIZE : SceneBuildPhase.BUILD_OUTER;
+		task.cursor = 0L;
+		return true;
+	}
+
+	private static void advanceSceneBuildPhase(MinecraftServer server, SceneBuildTask task) {
 		if (task.phase == SceneBuildPhase.SNAPSHOT) {
 			finalizeSceneSnapshot(task);
+			if (task.snapshotAccumulator != null) {
+				writeWorldRevealSnapshotAsync(server, task);
+				task.phase = SceneBuildPhase.SNAPSHOT_PERSIST;
+				task.cursor = 0L;
+				return;
+			}
 		}
 		task.phase = switch (task.phase) {
 			case BOUNDARY_SNAPSHOT -> task.captureEntities ? SceneBuildPhase.ENTITY_SNAPSHOT : SceneBuildPhase.SNAPSHOT;
 			case ENTITY_SNAPSHOT -> SceneBuildPhase.SNAPSHOT;
 			case SNAPSHOT -> task.reuseExistingShell ? SceneBuildPhase.FINALIZE
 					: task.generatorFallback ? SceneBuildPhase.CLEAR_STALE : SceneBuildPhase.BUILD_OUTER;
+			case SNAPSHOT_PERSIST -> task.reuseExistingShell ? SceneBuildPhase.FINALIZE : SceneBuildPhase.BUILD_OUTER;
 			case CLEAR_STALE -> SceneBuildPhase.BUILD_OUTER;
 			case BUILD_OUTER -> SceneBuildPhase.BUILD_BARRIER;
 			case BUILD_BARRIER, FINALIZE -> SceneBuildPhase.FINALIZE;
@@ -6492,6 +6581,191 @@ public final class SeasonStartSystem {
 		return server.getWorldPath(LevelResource.ROOT).resolve(STATE_FILE_NAME);
 	}
 
+	private static Path getWorldRevealSnapshotPath(MinecraftServer server) {
+		return server.getWorldPath(LevelResource.ROOT).resolve(WORLD_REVEAL_SNAPSHOT_FILE_NAME);
+	}
+
+	/**
+	 * The vanilla generator only exposes base terrain, not trees or surface
+	 * features. Keep the exact pre-scene states in a compact sidecar instead.
+	 * Reading the file is isolated from world access and is therefore safe to do
+	 * off-thread; registry conversion is throttled back onto server ticks below.
+	 */
+	private static void beginWorldRevealSnapshotLoad(MinecraftServer server) {
+		if (server == null || (!active && !worldRevealActive) || worldRevealSnapshotLoadAttempted) {
+			return;
+		}
+		worldRevealSnapshotLoadAttempted = true;
+		Path path = getWorldRevealSnapshotPath(server);
+		if (!Files.isRegularFile(path)) {
+			return;
+		}
+		worldRevealSnapshotLoadFuture = CompletableFuture.supplyAsync(() -> {
+			try {
+				return readWorldRevealSnapshot(path);
+			} catch (IOException exception) {
+				throw new IllegalStateException("Failed to read season-start terrain snapshot " + path, exception);
+			}
+		});
+	}
+
+	private static boolean tickWorldRevealSnapshotLoad(MinecraftServer server) {
+		if (server == null) {
+			return true;
+		}
+		if (worldRevealSnapshotLoadFuture != null) {
+			if (!worldRevealSnapshotLoadFuture.isDone()) {
+				return false;
+			}
+			PersistedWorldRevealSnapshot snapshot;
+			try {
+				snapshot = worldRevealSnapshotLoadFuture.join();
+			} catch (RuntimeException exception) {
+				Lg2.LOGGER.error("Season-start terrain snapshot could not be loaded; legacy recovery will use base terrain only.", exception);
+				worldRevealSnapshotLoadFuture = null;
+				return true;
+			}
+			worldRevealSnapshotLoadFuture = null;
+			if (snapshot == null || serverAnchor == null || snapshot.anchor() != serverAnchor.asLong()) {
+				Lg2.LOGGER.warn("Ignoring a season-start terrain snapshot with a different server anchor.");
+				return true;
+			}
+			worldRevealSnapshotLoadTask = new WorldRevealSnapshotLoadTask(snapshot);
+		}
+		if (worldRevealSnapshotLoadTask == null) {
+			return true;
+		}
+		WorldRevealSnapshotLoadTask task = worldRevealSnapshotLoadTask;
+		int budget = SCENE_SNAPSHOT_BATCH_BLOCKS;
+		while (budget-- > 0 && task.hasNext()) {
+			PersistedSnapshotBlock entry = task.next();
+			BlockState state = task.stateAt(entry.stateIndex());
+			if (state == null || state.isAir()) {
+				continue;
+			}
+			BlockPos pos = BlockPos.of(entry.pos());
+			if (task.readingBoundary()) {
+				WORLD_REVEAL_BOUNDARY_TARGET_STATES.put(pos.asLong(), state);
+			} else {
+				WORLD_REVEAL_TERRAIN.add(new TerrainPlacement(pos, state));
+			}
+		}
+		if (task.hasNext()) {
+			return false;
+		}
+		rebuildWorldRevealSnapshotIndexesFromTerrain();
+		worldRevealSnapshotLoadTask = null;
+		Lg2.LOGGER.info("Loaded exact season-start terrain snapshot ({} blocks, {} boundary blocks).",
+				WORLD_REVEAL_TERRAIN.size(), WORLD_REVEAL_BOUNDARY_TARGET_STATES.size());
+		return true;
+	}
+
+	private static boolean isWorldRevealSnapshotLoading() {
+		return worldRevealSnapshotLoadFuture != null || worldRevealSnapshotLoadTask != null;
+	}
+
+	private static boolean hasWorldRevealSnapshot() {
+		return !WORLD_REVEAL_TERRAIN.isEmpty();
+	}
+
+	private static void writeWorldRevealSnapshotAsync(MinecraftServer server, SceneBuildTask task) {
+		if (server == null || task == null || task.snapshotAccumulator == null) {
+			return;
+		}
+		PersistedWorldRevealSnapshot snapshot = task.snapshotAccumulator.freeze(task.anchor);
+		Path path = getWorldRevealSnapshotPath(server);
+		task.snapshotWriteFuture = CompletableFuture.runAsync(() -> {
+			try {
+				writeWorldRevealSnapshot(path, snapshot);
+			} catch (IOException exception) {
+				throw new IllegalStateException("Failed to write season-start terrain snapshot " + path, exception);
+			}
+		});
+	}
+
+	private static void writeWorldRevealSnapshot(Path path, PersistedWorldRevealSnapshot snapshot) throws IOException {
+		if (path == null || snapshot == null) {
+			throw new IOException("Missing world-reveal snapshot destination or contents");
+		}
+		Files.createDirectories(path.getParent());
+		Path temporaryPath = path.resolveSibling(path.getFileName() + ".tmp");
+		try (DataOutputStream output = new DataOutputStream(new BufferedOutputStream(new GZIPOutputStream(Files.newOutputStream(temporaryPath))))) {
+			output.writeInt(WORLD_REVEAL_SNAPSHOT_MAGIC);
+			output.writeInt(WORLD_REVEAL_SNAPSHOT_VERSION);
+			output.writeLong(snapshot.anchor());
+			output.writeInt(snapshot.palette().size());
+			for (String descriptor : snapshot.palette()) {
+				output.writeUTF(descriptor == null ? "" : descriptor);
+			}
+			writeSnapshotBlocks(output, snapshot.terrain());
+			writeSnapshotBlocks(output, snapshot.boundary());
+		}
+		try {
+			Files.move(temporaryPath, path, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+		} catch (AtomicMoveNotSupportedException ignored) {
+			Files.move(temporaryPath, path, StandardCopyOption.REPLACE_EXISTING);
+		}
+	}
+
+	private static void writeSnapshotBlocks(DataOutputStream output, List<PersistedSnapshotBlock> blocks) throws IOException {
+		output.writeInt(blocks.size());
+		for (PersistedSnapshotBlock entry : blocks) {
+			output.writeLong(entry.pos());
+			output.writeInt(entry.stateIndex());
+		}
+	}
+
+	private static PersistedWorldRevealSnapshot readWorldRevealSnapshot(Path path) throws IOException {
+		try (DataInputStream input = new DataInputStream(new BufferedInputStream(new GZIPInputStream(Files.newInputStream(path))))) {
+			if (input.readInt() != WORLD_REVEAL_SNAPSHOT_MAGIC) {
+				throw new IOException("Unexpected season-start terrain snapshot header");
+			}
+			if (input.readInt() != WORLD_REVEAL_SNAPSHOT_VERSION) {
+				throw new IOException("Unsupported season-start terrain snapshot version");
+			}
+			long anchor = input.readLong();
+			int paletteSize = input.readInt();
+			if (paletteSize < 0 || paletteSize > 16_384) {
+				throw new IOException("Invalid season-start snapshot palette size");
+			}
+			List<String> palette = new ArrayList<>(paletteSize);
+			for (int index = 0; index < paletteSize; index++) {
+				palette.add(input.readUTF());
+			}
+			List<PersistedSnapshotBlock> terrain = readSnapshotBlocks(input, paletteSize);
+			List<PersistedSnapshotBlock> boundary = readSnapshotBlocks(input, paletteSize);
+			return new PersistedWorldRevealSnapshot(anchor, List.copyOf(palette), List.copyOf(terrain), List.copyOf(boundary));
+		}
+	}
+
+	private static List<PersistedSnapshotBlock> readSnapshotBlocks(DataInputStream input, int paletteSize) throws IOException {
+		int count = input.readInt();
+		if (count < 0 || count > 1_000_000) {
+			throw new IOException("Invalid season-start snapshot block count");
+		}
+		List<PersistedSnapshotBlock> entries = new ArrayList<>(count);
+		for (int index = 0; index < count; index++) {
+			long pos = input.readLong();
+			int stateIndex = input.readInt();
+			if (stateIndex < 0 || stateIndex >= paletteSize) {
+				throw new IOException("Invalid season-start snapshot palette index");
+			}
+			entries.add(new PersistedSnapshotBlock(pos, stateIndex));
+		}
+		return entries;
+	}
+
+	private static void deleteWorldRevealSnapshot(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+		try {
+			Files.deleteIfExists(getWorldRevealSnapshotPath(server));
+		} catch (IOException exception) {
+			Lg2.LOGGER.warn("Failed to remove completed season-start terrain snapshot", exception);
+		}
+	}
+
 	private static void loadState(MinecraftServer server) {
 		Path path = getStatePath(server);
 		PLAYER_STATES.clear();
@@ -7047,6 +7321,7 @@ public final class SeasonStartSystem {
 		BOUNDARY_SNAPSHOT,
 		ENTITY_SNAPSHOT,
 		SNAPSHOT,
+		SNAPSHOT_PERSIST,
 		CLEAR_STALE,
 		BUILD_OUTER,
 		BUILD_BARRIER,
@@ -7071,9 +7346,11 @@ public final class SeasonStartSystem {
 		private final Set<Long> structureFootprint;
 		private final List<BlockPos> barrierShellBlocks;
 		private final Map<Long, Integer> topSolidSurfaceY = new HashMap<>();
+		private final WorldRevealSnapshotAccumulator snapshotAccumulator;
 		private List<Entity> sceneEntityCandidates;
 		private SceneBuildPhase phase;
 		private long cursor;
+		private CompletableFuture<Void> snapshotWriteFuture;
 		private NoiseColumn noiseColumn;
 		private int noiseColumnX = Integer.MIN_VALUE;
 		private int noiseColumnZ = Integer.MIN_VALUE;
@@ -7088,6 +7365,7 @@ public final class SeasonStartSystem {
 				boolean generatorFallback,
 				boolean reuseExistingShell,
 				boolean captureRestorationData,
+				boolean reusePersistedSnapshot,
 				Set<Long> structureFootprint
 		) {
 			this.anchor = anchor;
@@ -7101,7 +7379,10 @@ public final class SeasonStartSystem {
 			this.captureEntities = captureRestorationData;
 			this.structureFootprint = structureFootprint;
 			this.barrierShellBlocks = collectBarrierShellBlocks(barrier);
-			this.phase = captureRestorationData
+			this.snapshotAccumulator = captureRestorationData ? new WorldRevealSnapshotAccumulator() : null;
+			this.phase = reusePersistedSnapshot
+					? (reuseExistingShell ? SceneBuildPhase.FINALIZE : SceneBuildPhase.BUILD_OUTER)
+					: captureRestorationData
 					? SceneBuildPhase.BOUNDARY_SNAPSHOT
 					: SceneBuildPhase.SNAPSHOT;
 		}
@@ -7112,7 +7393,7 @@ public final class SeasonStartSystem {
 				case SNAPSHOT, BUILD_OUTER -> this.outer;
 				case CLEAR_STALE -> this.stale;
 				case BUILD_BARRIER -> this.barrier;
-				case ENTITY_SNAPSHOT, FINALIZE -> this.outer;
+				case ENTITY_SNAPSHOT, SNAPSHOT_PERSIST, FINALIZE -> this.outer;
 			};
 		}
 	}
@@ -7121,6 +7402,162 @@ public final class SeasonStartSystem {
 	}
 
 	private record TerrainPlacement(BlockPos pos, BlockState state) {
+	}
+
+	private record PersistedSnapshotBlock(long pos, int stateIndex) {
+	}
+
+	private record PersistedWorldRevealSnapshot(
+			long anchor,
+			List<String> palette,
+			List<PersistedSnapshotBlock> terrain,
+			List<PersistedSnapshotBlock> boundary
+	) {
+	}
+
+	/** Builds the compact on-disk form while the existing snapshot scan is already batched. */
+	private static final class WorldRevealSnapshotAccumulator {
+		private final List<String> palette = new ArrayList<>();
+		private final Map<String, Integer> paletteIndexes = new HashMap<>();
+		private final List<PersistedSnapshotBlock> terrain = new ArrayList<>();
+		private final List<PersistedSnapshotBlock> boundary = new ArrayList<>();
+
+		private void addTerrain(BlockPos pos, BlockState state) {
+			this.terrain.add(new PersistedSnapshotBlock(pos.asLong(), this.indexOf(state)));
+		}
+
+		private void addBoundary(BlockPos pos, BlockState state) {
+			this.boundary.add(new PersistedSnapshotBlock(pos.asLong(), this.indexOf(state)));
+		}
+
+		private int indexOf(BlockState state) {
+			String descriptor = serializeWorldRevealBlockState(state);
+			Integer knownIndex = this.paletteIndexes.get(descriptor);
+			if (knownIndex != null) {
+				return knownIndex;
+			}
+			int index = this.palette.size();
+			this.palette.add(descriptor);
+			this.paletteIndexes.put(descriptor, index);
+			return index;
+		}
+
+		private PersistedWorldRevealSnapshot freeze(BlockPos anchor) {
+			return new PersistedWorldRevealSnapshot(
+					anchor.asLong(),
+					List.copyOf(this.palette),
+					List.copyOf(this.terrain),
+					List.copyOf(this.boundary)
+			);
+		}
+	}
+
+	/** Converts the persisted entries in bounded server-tick batches after a restart. */
+	private static final class WorldRevealSnapshotLoadTask {
+		private final List<PersistedSnapshotBlock> terrain;
+		private final List<PersistedSnapshotBlock> boundary;
+		private final List<BlockState> palette;
+		private int terrainIndex;
+		private int boundaryIndex;
+		private boolean readingBoundary;
+
+		private WorldRevealSnapshotLoadTask(PersistedWorldRevealSnapshot snapshot) {
+			this.terrain = snapshot.terrain();
+			this.boundary = snapshot.boundary();
+			this.palette = new ArrayList<>(snapshot.palette().size());
+			for (String descriptor : snapshot.palette()) {
+				this.palette.add(parseWorldRevealBlockState(descriptor));
+			}
+		}
+
+		private boolean hasNext() {
+			return this.terrainIndex < this.terrain.size() || this.boundaryIndex < this.boundary.size();
+		}
+
+		private PersistedSnapshotBlock next() {
+			if (this.terrainIndex < this.terrain.size()) {
+				this.readingBoundary = false;
+				return this.terrain.get(this.terrainIndex++);
+			}
+			this.readingBoundary = true;
+			return this.boundary.get(this.boundaryIndex++);
+		}
+
+		private boolean readingBoundary() {
+			return this.readingBoundary;
+		}
+
+		private BlockState stateAt(int index) {
+			return index < 0 || index >= this.palette.size() ? null : this.palette.get(index);
+		}
+	}
+
+	private static String serializeWorldRevealBlockState(BlockState state) {
+		if (state == null) {
+			return "minecraft:air";
+		}
+		Identifier blockId = BuiltInRegistries.BLOCK.getKey(state.getBlock());
+		StringBuilder descriptor = new StringBuilder(blockId == null ? "minecraft:air" : blockId.toString());
+		if (state.getProperties().isEmpty()) {
+			return descriptor.toString();
+		}
+		descriptor.append('[');
+		boolean first = true;
+		for (Property<?> property : state.getProperties()) {
+			if (!first) {
+				descriptor.append(',');
+			}
+			first = false;
+			descriptor.append(property.getName())
+					.append('=')
+					.append(serializeWorldRevealPropertyValue(state, property));
+		}
+		return descriptor.append(']').toString();
+	}
+
+	@SuppressWarnings({"rawtypes", "unchecked"})
+	private static String serializeWorldRevealPropertyValue(BlockState state, Property<?> property) {
+		Property rawProperty = property;
+		return rawProperty.getName(state.getValue(rawProperty));
+	}
+
+	private static BlockState parseWorldRevealBlockState(String descriptor) {
+		if (descriptor == null || descriptor.isBlank()) {
+			return null;
+		}
+		int propertiesStart = descriptor.indexOf('[');
+		String rawBlockId = propertiesStart < 0 ? descriptor : descriptor.substring(0, propertiesStart);
+		Identifier blockId = Identifier.tryParse(rawBlockId);
+		if (blockId == null || !BuiltInRegistries.BLOCK.containsKey(blockId)) {
+			Lg2.LOGGER.warn("Skipping unavailable block state {} from season-start terrain snapshot.", descriptor);
+			return null;
+		}
+		Block block = BuiltInRegistries.BLOCK.getValue(blockId);
+		BlockState state = block.defaultBlockState();
+		if (propertiesStart < 0 || !descriptor.endsWith("]")) {
+			return state;
+		}
+		String properties = descriptor.substring(propertiesStart + 1, descriptor.length() - 1);
+		if (properties.isBlank()) {
+			return state;
+		}
+		for (String entry : properties.split(",")) {
+			int delimiter = entry.indexOf('=');
+			if (delimiter <= 0 || delimiter >= entry.length() - 1) {
+				continue;
+			}
+			Property<?> property = block.getStateDefinition().getProperty(entry.substring(0, delimiter));
+			if (property != null) {
+				state = applyWorldRevealProperty(state, property, entry.substring(delimiter + 1));
+			}
+		}
+		return state;
+	}
+
+	private static <T extends Comparable<T>> BlockState applyWorldRevealProperty(BlockState state, Property<T> property, String value) {
+		return property.getValue(value)
+				.map(parsedValue -> state.setValue(property, parsedValue))
+				.orElse(state);
 	}
 
 	private record GuidanceSnapshot(double horizontalDistance, double deltaYaw, boolean aligned, int distanceBucket, float playerYaw) {
