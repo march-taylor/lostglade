@@ -651,11 +651,11 @@ public final class ServerStabilitySystem {
 			boolean shouldHear = PolymerResourcePackUtils.hasMainPack(player)
 					&& (source.centeredOnListener || player.distanceToSqr(x, y, z) <= FEED_MUSIC_SOUND_RADIUS * FEED_MUSIC_SOUND_RADIUS);
 			if (!shouldHear) {
-				source.lastSegmentByListener.remove(playerId);
 				continue;
 			}
-			Integer lastSegment = source.lastSegmentByListener.get(playerId);
-			if (lastSegment != null && lastSegment == segmentIndex) {
+			// Each part is the remaining tail of the same track. Send exactly one tail when
+			// this listener first enters range; sending every subsequent tail stacks audio.
+			if (source.lastSegmentByListener.containsKey(playerId)) {
 				continue;
 			}
 			double soundX = source.centeredOnListener ? player.getX() : x;
