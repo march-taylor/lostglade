@@ -20,4 +20,9 @@ public abstract class EntityDronePushSuppressionMixin {
 			ci.cancel();
 		}
 	}
+
+	@Inject(method = "push(Lnet/minecraft/world/entity/Entity;)V", at = @At("RETURN"))
+	private void lg2$transferKilkaSalmonVisualPush(Entity other, CallbackInfo ci) {
+		ServerRaceSystem.handleKilkaSalmonVisualBodyPushAfter((Entity) (Object) this, other);
+	}
 }

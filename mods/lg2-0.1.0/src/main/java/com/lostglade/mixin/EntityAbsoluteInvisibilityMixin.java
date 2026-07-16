@@ -1,5 +1,8 @@
 package com.lostglade.mixin;
 
+import com.lostglade.server.ServerRaceSystem;
+import net.minecraft.server.level.ServerPlayer;
+
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.Entity;
@@ -12,6 +15,14 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(Entity.class)
 public abstract class EntityAbsoluteInvisibilityMixin {
+	@Inject(method = "setInvisible", at = @At("HEAD"), cancellable = true)
+	private void lg2$keepKilkaSalmonOwnerInvisible(boolean invisible, CallbackInfo ci) {
+		Entity entity = (Entity) (Object) this;
+		if (!invisible && entity instanceof ServerPlayer player && ServerRaceSystem.shouldKeepKilkaSalmonOwnerInvisible(player)) {
+			ci.cancel();
+		}
+	}
+
 	@Inject(method = "canSpawnSprintParticle", at = @At("HEAD"), cancellable = true)
 	private void lg2$cancelSprintParticleCheckForAbsoluteInvisibility(CallbackInfoReturnable<Boolean> cir) {
 		if (lg2$hasHiddenInvisibility()) {
