@@ -81,6 +81,47 @@ final class RendererBotTopDownMapRenderer {
 		return readiness == TerrainReadiness.READY || readiness == TerrainReadiness.NOT_READY;
 	}
 
+	/**
+	 * Returns the fraction of map columns which contain a real ground surface.
+	 * A depth readback substantially below this value means that the renderer
+	 * dropped part of the terrain mesh and exposed its cleared sky background.
+	 */
+	static double expectedGroundCoverage(Minecraft client, TileRequest request) {
+		ClientLevel level = resolveLevel(client, request);
+		if (level == null || request == null) {
+			return 0.0D;
+		}
+		double blocksPerPixel = safeBlocksPerPixel(request.blocksPerPixel());
+		double halfWidth = request.width() * blocksPerPixel * 0.5D;
+		double halfHeight = request.height() * blocksPerPixel * 0.5D;
+		int minBlockX = Mth.floor(request.centerX() - halfWidth);
+		int maxBlockX = Mth.floor(request.centerX() + halfWidth - 1.0E-6D);
+		int minBlockZ = Mth.floor(request.centerZ() - halfHeight);
+		int maxBlockZ = Mth.floor(request.centerZ() + halfHeight - 1.0E-6D);
+		long totalColumns = 0L;
+		long groundColumns = 0L;
+		for (int z = minBlockZ; z <= maxBlockZ; z++) {
+			for (int x = minBlockX; x <= maxBlockX; x++) {
+				totalColumns++;
+				LevelChunk chunk = level.getChunkSource().getChunk(
+						SectionPos.blockToSectionCoord(x),
+						SectionPos.blockToSectionCoord(z),
+						ChunkStatus.FULL,
+						false
+				);
+				if (chunk == null) {
+					continue;
+				}
+				int groundY = chunk.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x & 15, z & 15) - 1;
+				if (groundY >= level.getMinY() && groundY < level.getMaxY()
+						&& !level.getBlockState(new BlockPos(x, groundY, z)).isAir()) {
+					groundColumns++;
+				}
+			}
+		}
+		return totalColumns <= 0L ? 0.0D : (double) groundColumns / (double) totalColumns;
+	}
+
 	static void rebuildTerrain(Minecraft client, TileRequest request) {
 		if (client == null || request == null) {
 			return;
@@ -190,8 +231,19 @@ final class RendererBotTopDownMapRenderer {
 							continue;
 						}
 						foundSurface = true;
-						if (!levelRenderer.isSectionCompiledAndVisible(surface)) {
-							return TerrainReadiness.NOT_READY;
+						// WORLD_SURFACE may be a leaf or vine high above solid terrain.
+						// Rendering at that moment used to accept the compiled foliage
+						// section while the ground section below was still absent, leaving
+						// rectangular sky holes under a tree canopy.  The no-leaves
+						// heightmap gives the surface which must also be render-ready.
+						int groundY = chunk.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x & 15, z & 15) - 1;
+						int lowestRequiredY = groundY >= level.getMinY() && groundY <= surfaceY ? groundY : surfaceY;
+						for (int y = surfaceY; y >= lowestRequiredY; y--) {
+							BlockPos visibleBlock = new BlockPos(x, y, z);
+							if (!level.getBlockState(visibleBlock).isAir()
+									&& !levelRenderer.isSectionCompiledAndVisible(visibleBlock)) {
+								return TerrainReadiness.NOT_READY;
+							}
 						}
 					}
 				}

@@ -50,8 +50,10 @@ public final class RendererBotOffscreenWorldRenderer {
 	private static final double STATIC_CAMERA_EYE_HEIGHT = 1.62D;
 	private static final int MIN_READY_CHUNK_RADIUS = 2;
 	private static final double TOP_DOWN_CAMERA_HEADROOM_BLOCKS = 16.0D;
+	private static final long MAP_RENDER_GAME_TIME = 0L;
 	private static final Map<UUID, OffscreenSessionState> SESSION_STATES = new HashMap<>();
 	private static boolean offscreenRenderActive;
+	private static boolean mapTextureAnimationFrozen;
 
 	private RendererBotOffscreenWorldRenderer() {
 	}
@@ -62,12 +64,24 @@ public final class RendererBotOffscreenWorldRenderer {
 		}
 	}
 
+	/**
+	 * Animated block sprites live in the shared client atlas.  Once map work
+	 * starts, keep that atlas on one frame so water and similar blocks do not
+	 * form seams between tiles captured on different client ticks.
+	 */
+	public static boolean isMapTextureAnimationFrozen() {
+		synchronized (LOCK) {
+			return mapTextureAnimationFrozen;
+		}
+	}
+
 	public static void clearCaches() {
 		synchronized (LOCK) {
 			for (OffscreenSessionState state : SESSION_STATES.values()) {
 				closeSessionState(state);
 			}
 			SESSION_STATES.clear();
+			mapTextureAnimationFrozen = false;
 		}
 		RendererBotTopDownMapRenderer.clearCaches();
 		RendererBotCoolElytraCompat.clearCaches();
@@ -498,13 +512,19 @@ public final class RendererBotOffscreenWorldRenderer {
 			particleEngine.clearParticles();
 		}
 		if (level != null) {
-			level.setTimeFromServer(level.getGameTime(), 6000L, false);
+			// GlobalSettings uses the level game time for animated shader state.
+			// A constant value makes every map tile use the same terrain frame and
+			// also removes time-of-day lighting from the capture.
+			level.setTimeFromServer(MAP_RENDER_GAME_TIME, 6000L, false);
 			level.getLevelData().setRaining(false);
 			level.setRainLevel(0.0F);
 			level.setThunderLevel(0.0F);
 		}
 		if (client != null && client.options != null) {
 			client.options.cloudStatus().set(CloudStatus.OFF);
+		}
+		synchronized (LOCK) {
+			mapTextureAnimationFrozen = true;
 		}
 		return previous;
 	}

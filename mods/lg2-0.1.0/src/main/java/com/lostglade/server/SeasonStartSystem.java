@@ -57,6 +57,7 @@ import net.minecraft.network.protocol.game.ClientboundTeleportEntityPacket;
 import net.minecraft.network.protocol.game.ClientboundTrackedWaypointPacket;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
 import net.minecraft.resources.Identifier;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerBossEvent;
 import net.minecraft.server.level.ServerLevel;
@@ -84,6 +85,7 @@ import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.Difficulty;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.NoiseColumn;
 import net.minecraft.world.level.block.Block;
@@ -503,11 +505,11 @@ public final class SeasonStartSystem {
 	private static boolean stateLoaded = false;
 	private static boolean stateDirty = false;
 	private static boolean bootstrapComplete = false;
-	private static boolean active = false;
-	private static boolean completed = false;
+	private static volatile boolean active = false;
+	private static volatile boolean completed = false;
 	private static boolean sceneBoundaryPhysicsFrozen = false;
-	private static boolean shellDissolving = false;
-	private static boolean worldRevealActive = false;
+	private static volatile boolean shellDissolving = false;
+	private static volatile boolean worldRevealActive = false;
 	private static boolean worldRevealRecoveryPending = false;
 	private static boolean worldRevealBarriersPlaced = false;
 	private static boolean scenePrepared = false;
@@ -536,7 +538,7 @@ public final class SeasonStartSystem {
 	private static WorldRevealPhase worldRevealPhase = WorldRevealPhase.NONE;
 	private static ServerBossEvent sharedLaunchBossBar = null;
 	private static Difficulty difficultyBeforeSeasonStart = null;
-	private static BlockPos serverAnchor = null;
+	private static volatile BlockPos serverAnchor = null;
 	private static Direction.Axis serverStructureAxis = Direction.Axis.Z;
 
 	private SeasonStartSystem() {
@@ -758,6 +760,30 @@ public final class SeasonStartSystem {
 
 	public static boolean shouldUseFlatNarrationMix() {
 		return active && !completed;
+	}
+
+	/**
+	 * The startup cube is transient presentation geometry, not terrain.  A map
+	 * capture made while it exists would cache the black shell at world centre
+	 * and, because new tiles have strict priority, hold the whole map queue
+	 * there.  The check works from immutable chunk coordinates so the async MCA
+	 * inventory can defer the same area safely.
+	 */
+	static boolean shouldDeferYandexMapChunk(ResourceKey<Level> dimension, ChunkPos chunkPos) {
+		BlockPos anchor = serverAnchor;
+		if (dimension == null
+				|| chunkPos == null
+				|| !Level.OVERWORLD.equals(dimension)
+				|| completed
+				|| !(active || shellDissolving || worldRevealActive)
+				|| anchor == null) {
+			return false;
+		}
+		BoxGeometry cube = computeOuterBoxGeometry(anchor);
+		return chunkPos.getMaxBlockX() >= cube.minX
+				&& chunkPos.getMinBlockX() <= cube.maxX
+				&& chunkPos.getMaxBlockZ() >= cube.minZ
+				&& chunkPos.getMinBlockZ() <= cube.maxZ;
 	}
 
 	public static boolean shouldFreezeSceneBoundaryPhysics(Level level, BlockPos pos) {

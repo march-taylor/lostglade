@@ -438,16 +438,25 @@ public final class RendererBotClientCapture {
 						// With a non-air terrain surface known from the synchronized
 						// chunks, an all-one-colour frame without depth is necessarily
 						// the sky/empty-render race, not a valid map image.
-						if (isUniformRgbFrame(frame.pixels())
+						double expectedGroundCoverage = RendererBotTopDownMapRenderer.expectedGroundCoverage(client, request);
+						boolean missingAllTerrain = isUniformRgbFrame(frame.pixels())
 								&& frame.depthCoverage().readable()
 								&& !frame.depthCoverage().hasWorldDepth()
-								&& RendererBotTopDownMapRenderer.expectsTerrain(client, request)) {
+								&& RendererBotTopDownMapRenderer.expectsTerrain(client, request);
+						// Do not accept a frame which is only partly empty either.  This is
+						// most visible beneath transparent foliage: its section may be
+						// drawn while a lower terrain section is still rebuilding, yielding
+						// blue rectangular holes instead of the ground below.
+						boolean missingPartialTerrain = frame.depthCoverage().readable()
+								&& expectedGroundCoverage >= 0.25D
+								&& frame.depthCoverage().worldDepthCoverage() + 0.03D < expectedGroundCoverage;
+						if (missingAllTerrain || missingPartialTerrain) {
 							if (mapTile.restartAfterMissingTerrain()) {
 								RendererBotTopDownMapRenderer.rebuildTerrain(client, request);
 								clearPendingMapTileRendering(payload.requestId());
 								return;
 							}
-							sendMapTileFailure(payload, "Renderer bot captured sky instead of prepared map terrain");
+							sendMapTileFailure(payload, "Renderer bot captured incomplete map terrain");
 							clearPendingMapTile(payload.requestId());
 							return;
 						}
@@ -710,7 +719,7 @@ public final class RendererBotClientCapture {
 			CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
 			encoder.copyTextureToBuffer(depthTexture, readbackBuffer, 0L, () -> {
 				try (GpuBuffer.MappedView mapped = encoder.mapBuffer(readbackBuffer, true, false)) {
-					future.complete(new DepthCoverage(hasWrittenDepth(mapped.data()), true));
+					future.complete(analyzeDepthCoverage(mapped.data()));
 				} catch (Throwable throwable) {
 					// Some GPU backends can render a depth attachment but cannot copy it
 					// to CPU memory.  Keep the map usable there; section-readiness still
@@ -730,19 +739,27 @@ public final class RendererBotClientCapture {
 	}
 
 	private static boolean hasWrittenDepth(ByteBuffer data) {
+		return analyzeDepthCoverage(data).hasWorldDepth();
+	}
+
+	private static DepthCoverage analyzeDepthCoverage(ByteBuffer data) {
 		if (data == null) {
-			return false;
+			return DepthCoverage.unavailable();
 		}
 		int pixels = data.capacity() / Integer.BYTES;
+		if (pixels <= 0) {
+			return DepthCoverage.unavailable();
+		}
+		int worldPixels = 0;
 		for (int index = 0; index < pixels; index++) {
 			int depthBits = data.getInt(index * Integer.BYTES);
 			// The renderer clears DEPTH32 to 1.0f.  Accept both byte orders because
 			// different GPU backends expose their mapped readback buffer differently.
 			if (depthBits != 0x3F800000 && depthBits != 0x0000803F) {
-				return true;
+				worldPixels++;
 			}
 		}
-		return false;
+		return new DepthCoverage(worldPixels > 0, true, worldPixels, pixels);
 	}
 
 	private static boolean isUniformRgbFrame(byte[] pixels) {
@@ -1474,9 +1491,13 @@ public final class RendererBotClientCapture {
 	private record MapTileFrame(byte[] pixels, DepthCoverage depthCoverage) {
 	}
 
-	private record DepthCoverage(boolean hasWorldDepth, boolean readable) {
+	private record DepthCoverage(boolean hasWorldDepth, boolean readable, int worldPixels, int totalPixels) {
 		private static DepthCoverage unavailable() {
-			return new DepthCoverage(false, false);
+			return new DepthCoverage(false, false, 0, 0);
+		}
+
+		private double worldDepthCoverage() {
+			return this.totalPixels <= 0 ? 0.0D : (double) this.worldPixels / (double) this.totalPixels;
 		}
 	}
 

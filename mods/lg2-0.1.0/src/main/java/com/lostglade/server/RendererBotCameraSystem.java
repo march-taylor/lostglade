@@ -14,6 +14,7 @@ import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
 import net.minecraft.core.registries.Registries;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
 import net.minecraft.network.protocol.game.ClientboundAnimatePacket;
@@ -49,6 +50,7 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.level.TicketType;
 import net.minecraft.util.Mth;
 import net.minecraft.world.Difficulty;
+import net.minecraft.world.level.BlockGetter;
 import net.minecraft.core.Holder;
 import net.minecraft.world.entity.Display;
 import net.minecraft.world.entity.Entity;
@@ -56,7 +58,17 @@ import net.minecraft.world.entity.Relative;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.LightLayer;
+import net.minecraft.world.level.chunk.LightChunk;
+import net.minecraft.world.level.chunk.LightChunkGetter;
+import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.chunk.LevelChunkSection;
+import net.minecraft.world.level.chunk.PalettedContainerFactory;
+import net.minecraft.world.level.chunk.status.ChunkStatus;
+import net.minecraft.world.level.chunk.storage.SerializableChunkData;
 import net.minecraft.world.level.gamerules.GameRules;
+import net.minecraft.world.level.levelgen.Heightmap;
+import net.minecraft.world.level.lighting.LevelLightEngine;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
@@ -75,6 +87,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -107,7 +120,7 @@ public final class RendererBotCameraSystem {
 	// Only one map job can own the shared shadow world, so a valid queued job may
 	// wait behind earlier tiles. It is bound to the renderer bot selected at
 	// admission; a selection change fails it immediately and releases its retry.
-	private static final long MAP_TILE_CHUNK_LOAD_TIMEOUT_MS = 45_000L;
+	private static final long MAP_TILE_SOURCE_READ_TIMEOUT_MS = 45_000L;
 	private static final long MAP_TILE_SHADOW_RESYNC_INTERVAL_MS = 5_000L;
 	private static final int MAX_PENDING_MAP_TILE_CAPTURES = Math.max(1, Integer.getInteger("lg2.rendererBotMaxPendingMapTiles", 24));
 	// All map tile captures share one client shadow-world session.  Feeding it
@@ -603,6 +616,7 @@ public final class RendererBotCameraSystem {
 			double centerZ,
 			int tileSize,
 			double blocksPerPixel,
+			List<ChunkPos> sourceChunks,
 			int priorityScore,
 			boolean activeView
 	) {
@@ -629,6 +643,13 @@ public final class RendererBotCameraSystem {
 			future.completeExceptionally(new IllegalStateException("Клиент камеры не поддерживает тайлы карты"));
 			return future;
 		}
+		List<ChunkPos> safeSourceChunks = sourceChunks == null
+				? List.of()
+				: sourceChunks.stream().filter(Objects::nonNull).distinct().toList();
+		if (safeSourceChunks.isEmpty()) {
+			future.completeExceptionally(new IllegalStateException("Для тайла карты нет сохранённых чанков"));
+			return future;
+		}
 		int safePriorityScore = Math.max(0, priorityScore);
 		UUID requestId = UUID.randomUUID();
 		UUID renderSessionId = resolveMapRenderSessionId(level.dimension());
@@ -649,6 +670,7 @@ public final class RendererBotCameraSystem {
 				tileZ,
 				clampedTileSize,
 				safeBlocksPerPixel,
+				safeSourceChunks,
 				safePriorityScore,
 				activeView,
 				queuedAtMillis,
@@ -683,6 +705,260 @@ public final class RendererBotCameraSystem {
 			displaced.pixelsFuture().completeExceptionally(new IllegalStateException("Тайл карты вытеснен более приоритетной очередью"));
 		}
 		return future;
+	}
+
+	/**
+	 * Map tiles must never turn a missing location in an MCA file into new
+	 * terrain.  Loading a server chunk through a normal ticket is unsafe here:
+	 * vanilla can switch from the loading pyramid to world generation for an
+	 * absent dependency.  Read a finished chunk directly from the region store
+	 * instead, encode the normal shadow packet, and leave the server chunk map
+	 * untouched.
+	 */
+	private static void prepareReadOnlyMapTileChunks(PendingMapTileCapture capture, ServerLevel level, ServerPlayer bot) {
+		if (capture == null || level == null || bot == null || !capture.beginReadOnlyChunkLoad()) {
+			return;
+		}
+		if (capture.sourceChunks().isEmpty()) {
+			failMapTileCapture(capture.requestId(), capture, "Для тайла карты нет сохранённых чанков");
+			return;
+		}
+		Map<Long, byte[]> payloads = new ConcurrentHashMap<>();
+		for (ChunkPos pos : capture.readOnlyShadowChunks()) {
+			if (pos == null) {
+				failMapTileCapture(capture.requestId(), capture, "Для тайла карты указан некорректный чанк теневого мира");
+				return;
+			}
+			boolean requiredSource = capture.isRequiredSourceChunk(pos);
+			LevelChunk loaded = level.getChunkSource().getChunkNow(pos.x, pos.z);
+			if (loaded != null) {
+				finishReadOnlyMapTileChunk(capture, level, bot, pos, loaded, null, payloads, requiredSource);
+				continue;
+			}
+			level.getChunkSource().chunkMap.read(pos).whenComplete((optionalTag, throwable) -> {
+				MinecraftServer server = capture.server();
+				if (server != null) {
+					server.execute(() -> finishReadOnlyMapTileChunk(
+							capture,
+							level,
+							bot,
+							pos,
+							null,
+							throwable == null ? optionalTag : null,
+							payloads,
+							requiredSource,
+							throwable
+					));
+				}
+			});
+		}
+	}
+
+	private static void finishReadOnlyMapTileChunk(
+			PendingMapTileCapture capture,
+			ServerLevel level,
+			ServerPlayer bot,
+			ChunkPos pos,
+			LevelChunk loadedChunk,
+			Optional<CompoundTag> storedTag,
+			Map<Long, byte[]> payloads,
+			boolean requiredSource
+	) {
+		finishReadOnlyMapTileChunk(capture, level, bot, pos, loadedChunk, storedTag, payloads, requiredSource, null);
+	}
+
+	private static void finishReadOnlyMapTileChunk(
+			PendingMapTileCapture capture,
+			ServerLevel level,
+			ServerPlayer bot,
+			ChunkPos pos,
+			LevelChunk loadedChunk,
+			Optional<CompoundTag> storedTag,
+			Map<Long, byte[]> payloads,
+			boolean requiredSource,
+			Throwable readFailure
+	) {
+		if (!isPendingMapTileCapture(capture) || level == null || bot == null || pos == null || payloads == null) {
+			return;
+		}
+		if (readFailure != null && requiredSource) {
+			Lg2.LOGGER.debug("Failed to read saved Yandex map chunk {}", pos, readFailure);
+			failMapTileCapture(capture.requestId(), capture, "Не удалось прочитать сохранённый чанк для тайла карты");
+			return;
+		}
+		try {
+			LevelChunk source = loadedChunk != null ? loadedChunk : level.getChunkSource().getChunkNow(pos.x, pos.z);
+			LevelLightEngine lightEngine = level.getChunkSource().getLightEngine();
+			if (source != null && !source.isLightCorrect() && requiredSource) {
+				failMapTileCapture(capture.requestId(), capture, "Свет сохранённого чанка для тайла карты ещё не готов");
+				return;
+			}
+			if (source == null) {
+				if ((storedTag == null || storedTag.isEmpty()) && requiredSource) {
+					failMapTileCapture(capture.requestId(), capture, "Сохранённый чанк для тайла карты не найден");
+					return;
+				}
+				if (storedTag != null && storedTag.isPresent()) {
+					ReadOnlyMapChunkSnapshot snapshot = readFinishedMapChunkFromStorage(level, pos, storedTag.get());
+					if (snapshot != null) {
+						source = snapshot.chunk();
+						lightEngine = snapshot.lightEngine();
+					}
+				}
+			}
+			if (source == null && !requiredSource) {
+				// Terrain compilation needs a small chunk neighbourhood.  Missing
+				// neighbours are represented as temporary empty chunks: they make the
+				// saved centre chunk renderable without asking the server to generate
+				// any terrain or writing anything to the world.
+				source = new LevelChunk(level, pos);
+				lightEngine = createReadOnlyMapLightEngine(level, source);
+			}
+			if (source == null || lightEngine == null) {
+				failMapTileCapture(capture.requestId(), capture, "Сохранённый чанк для тайла карты не завершён или повреждён");
+				return;
+			}
+			byte[] packet = encodeShadowChunkPacket(level, bot, source, lightEngine);
+			if (packet == null || packet.length == 0) {
+				failMapTileCapture(capture.requestId(), capture, "Не удалось подготовить сохранённый чанк для тайла карты");
+				return;
+			}
+			payloads.put(pos.toLong(), packet);
+			if (payloads.size() == capture.readOnlyShadowChunks().size()) {
+				capture.completeReadOnlyChunkLoad(payloads);
+			}
+		} catch (Exception exception) {
+			if (!requiredSource) {
+				try {
+					LevelChunk emptyChunk = new LevelChunk(level, pos);
+					byte[] packet = encodeShadowChunkPacket(level, bot, emptyChunk, createReadOnlyMapLightEngine(level, emptyChunk));
+					if (packet != null && packet.length > 0) {
+						payloads.put(pos.toLong(), packet);
+						if (payloads.size() == capture.readOnlyShadowChunks().size()) {
+							capture.completeReadOnlyChunkLoad(payloads);
+						}
+						return;
+					}
+				} catch (Exception ignored) {
+					// Report the original decode error below.
+				}
+			}
+			Lg2.LOGGER.debug("Failed to decode saved Yandex map chunk {}", pos, exception);
+			failMapTileCapture(capture.requestId(), capture, "Не удалось прочитать сохранённый чанк для тайла карты");
+		}
+	}
+
+	/**
+	 * Builds the packet-only representation of an MCA chunk without registering
+	 * it in the server's ChunkMap or shared LightEngine.  SerializableChunkData's
+	 * normal {@code read} path queues its light sections in the live engine;
+	 * doing that for a map snapshot both contaminates live state and used to make
+	 * packet timing decide whether a tile was rendered dark.  Keep the decoded
+	 * sections and their saved light layers together in a short-lived engine.
+	 */
+	private static ReadOnlyMapChunkSnapshot readFinishedMapChunkFromStorage(ServerLevel level, ChunkPos pos, CompoundTag tag) {
+		if (level == null || pos == null || tag == null) {
+			return null;
+		}
+		ChunkStatus status = SerializableChunkData.getChunkStatusFromTag(tag);
+		if (status == null || status.isBefore(ChunkStatus.FULL)) {
+			return null;
+		}
+		SerializableChunkData data = SerializableChunkData.parse(
+				level,
+				PalettedContainerFactory.create(level.registryAccess()),
+				tag
+		);
+		if (!data.lightCorrect()) {
+			return null;
+		}
+		LevelChunk chunk = new LevelChunk(level, pos);
+		LevelChunkSection[] chunkSections = chunk.getSections();
+		for (SerializableChunkData.SectionData sectionData : data.sectionData()) {
+			if (sectionData == null || sectionData.chunkSection() == null) {
+				continue;
+			}
+			int sectionIndex = level.getSectionIndexFromSectionY(sectionData.y());
+			if (sectionIndex < 0 || sectionIndex >= chunkSections.length) {
+				continue;
+			}
+			chunkSections[sectionIndex] = sectionData.chunkSection().copy();
+		}
+		for (Map.Entry<Heightmap.Types, long[]> heightmap : data.heightmaps().entrySet()) {
+			if (heightmap.getKey() != null && heightmap.getValue() != null) {
+				chunk.setHeightmap(heightmap.getKey(), heightmap.getValue().clone());
+			}
+		}
+		chunk.setLightCorrect(data.lightCorrect());
+		return new ReadOnlyMapChunkSnapshot(chunk, createReadOnlyMapLightEngine(level, chunk, data));
+	}
+
+	private static LevelLightEngine createReadOnlyMapLightEngine(
+			ServerLevel level,
+			LevelChunk chunk,
+			SerializableChunkData data
+	) {
+		LightChunkGetter source = new LightChunkGetter() {
+			@Override
+			public LightChunk getChunkForLighting(int chunkX, int chunkZ) {
+				return chunk.getPos().x == chunkX && chunk.getPos().z == chunkZ ? chunk : null;
+			}
+
+			@Override
+			public void onLightUpdate(LightLayer layer, SectionPos sectionPos) {
+				// This engine exists only long enough to serialize one packet.  It is
+				// deliberately not attached to the live level renderer or chunk map.
+			}
+
+			@Override
+			public BlockGetter getLevel() {
+				return level;
+			}
+		};
+		LevelLightEngine lightEngine = new LevelLightEngine(source, true, level.dimensionType().hasSkyLight());
+		lightEngine.retainData(chunk.getPos(), true);
+		if (data == null) {
+			return lightEngine;
+		}
+		for (SerializableChunkData.SectionData sectionData : data.sectionData()) {
+			if (sectionData == null) {
+				continue;
+			}
+			SectionPos sectionPos = SectionPos.of(chunk.getPos(), sectionData.y());
+			if (sectionData.blockLight() != null) {
+				lightEngine.queueSectionData(LightLayer.BLOCK, sectionPos, sectionData.blockLight().copy());
+			}
+			if (sectionData.skyLight() != null) {
+				lightEngine.queueSectionData(LightLayer.SKY, sectionPos, sectionData.skyLight().copy());
+			}
+		}
+		// ClientboundLightUpdatePacketData queries getDataLayerData(), which reads
+		// the queued section data directly.  Do not run light propagation here:
+		// a one-chunk snapshot has no neighbours and propagation would turn an
+		// exact saved-light snapshot into an approximation at its borders.
+		return lightEngine;
+	}
+
+	private static LevelLightEngine createReadOnlyMapLightEngine(ServerLevel level, LevelChunk chunk) {
+		return createReadOnlyMapLightEngine(level, chunk, null);
+	}
+
+	private static byte[] encodeShadowChunkPacket(ServerLevel level, ServerPlayer bot, LevelChunk chunk, LevelLightEngine lightEngine) {
+		if (level == null || bot == null || chunk == null || lightEngine == null) {
+			return null;
+		}
+		ClientboundLevelChunkWithLightPacket packet = PacketContext.supplyWithContext(
+				bot.connection,
+				() -> new ClientboundLevelChunkWithLightPacket(chunk, lightEngine, null, null)
+		);
+		return RendererBotShadowPacketCodec.encodeChunkPacket(level.registryAccess(), bot.connection, packet);
+	}
+
+	private static byte[] encodeShadowChunkPacket(ServerLevel level, ServerPlayer bot, LevelChunk chunk) {
+		return level == null ? null : encodeShadowChunkPacket(level, bot, chunk, level.getChunkSource().getLightEngine());
+	}
+
+	private record ReadOnlyMapChunkSnapshot(LevelChunk chunk, LevelLightEngine lightEngine) {
 	}
 
 	private static double mapTileWorldCenterDistanceSquared(double centerX, double centerZ) {
@@ -1848,9 +2124,43 @@ public final class RendererBotCameraSystem {
 		if (capture == null) {
 			return 2;
 		}
-		double halfBlocks = Math.max(1, capture.tileSize()) * Math.max(1.0D / 16.0D, capture.blocksPerPixel()) * 0.5D;
+		return mapTileViewDistance(capture.tileSize(), capture.blocksPerPixel());
+	}
+
+	private static int mapTileViewDistance(int tileSize, double blocksPerPixel) {
+		double halfBlocks = Math.max(1, tileSize) * Math.max(1.0D / 16.0D, blocksPerPixel) * 0.5D;
 		int radius = (int) Math.ceil(halfBlocks / 16.0D) + 2;
 		return Mth.clamp(radius, 2, 32);
+	}
+
+	private static List<ChunkPos> readOnlyMapShadowChunks(
+			double centerX,
+			double centerZ,
+			int tileSize,
+			double blocksPerPixel,
+			List<ChunkPos> sourceChunks
+	) {
+		LongSet chunkLongs = computeOmnidirectionalCameraChunks(
+				centerX,
+				centerZ,
+				mapTileViewDistance(tileSize, blocksPerPixel)
+		);
+		if (sourceChunks != null) {
+			for (ChunkPos source : sourceChunks) {
+				if (source != null) {
+					chunkLongs.add(source.toLong());
+				}
+			}
+		}
+		LongArrayList ordered = new LongArrayList(chunkLongs);
+		int centerChunkX = SectionPos.blockToSectionCoord(Mth.floor(centerX));
+		int centerChunkZ = SectionPos.blockToSectionCoord(Mth.floor(centerZ));
+		ordered.sort((left, right) -> compareTrackedChunks(left, right, centerChunkX, centerChunkZ));
+		List<ChunkPos> chunks = new ArrayList<>(ordered.size());
+		for (long chunkLong : ordered) {
+			chunks.add(new ChunkPos(chunkLong));
+		}
+		return List.copyOf(chunks);
 	}
 
 	private static double mapTileCameraY(ServerLevel level) {
@@ -2366,6 +2676,15 @@ public final class RendererBotCameraSystem {
 		List<PendingMapTileCapture> activeMapTiles = selectedBot == null
 				? List.of()
 				: activeMapTileShadowTargets(selectedBot.getUUID());
+		for (PendingMapTileCapture capture : activeMapTiles) {
+			if (capture == null || !isPendingMapTileCapture(capture)) {
+				continue;
+			}
+			ServerLevel level = server.getLevel(capture.dimension());
+			if (level != null) {
+				prepareReadOnlyMapTileChunks(capture, level, selectedBot);
+			}
+		}
 		Map<ShadowSyncKey, ShadowDesiredState> desiredStates = collectDesiredShadowStates(server, activeMapTiles);
 		Set<ChunkTicketKey> trackedChunks = collectTrackedShadowChunks(desiredStates.values());
 		syncShadowChunkTickets(server, desiredStates.values());
@@ -2423,9 +2742,9 @@ public final class RendererBotCameraSystem {
 				failMapTileCapture(capture.requestId(), capture, "Renderer bot map tile target is unavailable");
 				continue;
 			}
-			if (!mapTileChunksLoaded(level, capture)) {
-				if (capture.shadowTargetLoadTimedOut(System.currentTimeMillis())) {
-					failMapTileCapture(capture.requestId(), capture, "Тайм-аут загрузки чанков для тайла карты");
+			if (!capture.hasReadOnlyChunkPayloads()) {
+				if (capture.sourceReadTimedOut(System.currentTimeMillis())) {
+					failMapTileCapture(capture.requestId(), capture, "Тайм-аут чтения сохранённых чанков для тайла карты");
 				}
 				continue;
 			}
@@ -2471,26 +2790,6 @@ public final class RendererBotCameraSystem {
 		}
 	}
 
-	private static boolean mapTileChunksLoaded(ServerLevel level, PendingMapTileCapture capture) {
-		if (level == null || capture == null) {
-			return false;
-		}
-		double halfBlocks = Math.max(1, capture.tileSize())
-				* Math.max(1.0D / 16.0D, capture.blocksPerPixel()) * 0.5D;
-		int minChunkX = SectionPos.blockToSectionCoord(Mth.floor(capture.centerX() - halfBlocks));
-		int maxChunkX = SectionPos.blockToSectionCoord(Mth.floor(capture.centerX() + halfBlocks - 1.0E-6D));
-		int minChunkZ = SectionPos.blockToSectionCoord(Mth.floor(capture.centerZ() - halfBlocks));
-		int maxChunkZ = SectionPos.blockToSectionCoord(Mth.floor(capture.centerZ() + halfBlocks - 1.0E-6D));
-		for (int chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ++) {
-			for (int chunkX = minChunkX; chunkX <= maxChunkX; chunkX++) {
-				if (level.getChunkSource().getChunkNow(chunkX, chunkZ) == null) {
-					return false;
-				}
-			}
-		}
-		return true;
-	}
-
 	private static RendererBotPayloads.RendererBotMapTileRequestS2CPayload mapTileRequestPayload(PendingMapTileCapture capture) {
 		return new RendererBotPayloads.RendererBotMapTileRequestS2CPayload(
 				capture.requestId(),
@@ -2534,7 +2833,7 @@ public final class RendererBotCameraSystem {
 		}
 		if (desiredStates != null) {
 			for (ShadowDesiredState desiredState : desiredStates) {
-				if (desiredState == null || desiredState.level() == null) {
+				if (desiredState == null || desiredState.level() == null || desiredState.readOnlyMapOnly()) {
 					continue;
 				}
 				for (Map.Entry<CameraChunkTicketKey, Integer> entry : desiredState.chunkTickets().entrySet()) {
@@ -2696,6 +2995,7 @@ public final class RendererBotCameraSystem {
 					desiredStates,
 					botUuid,
 					capture.renderSessionId(),
+					capture,
 					target,
 					mapTileViewDistance(capture)
 			);
@@ -2841,10 +3141,11 @@ public final class RendererBotCameraSystem {
 			Map<ShadowSyncKey, ShadowDesiredState> desiredStates,
 			UUID botUuid,
 			UUID sessionId,
+			PendingMapTileCapture capture,
 			ScheduledServiceTarget target,
 			int viewDistance
 	) {
-		if (desiredStates == null || botUuid == null || sessionId == null || target == null || !(target.level() instanceof ServerLevel level)) {
+		if (desiredStates == null || botUuid == null || sessionId == null || capture == null || target == null || !(target.level() instanceof ServerLevel level)) {
 			return;
 		}
 		ShadowSyncKey key = new ShadowSyncKey(botUuid, sessionId);
@@ -2857,11 +3158,10 @@ public final class RendererBotCameraSystem {
 			return;
 		}
 		desiredState.setItemDisplaysOnly(true);
-		// Region inventory intentionally requests unloaded saved chunks.  A
-		// passive target only mirrors chunks that happen to be loaded already,
-		// which leaves the client waiting forever.  The admission gate above
-		// guarantees that this ticket belongs to one map target only.
-		desiredState.addTarget(target, viewDistance, Set.of(), true, false);
+		// A map tile is a read-only snapshot of MCA data.  It intentionally does
+		// not enter the normal camera-ticket path: a loading ticket may generate
+		// absent neighbours while resolving the FULL chunk dependency pyramid.
+		desiredState.addReadOnlyMapTarget(target, viewDistance, capture.readOnlyChunkPayloads());
 	}
 
 	private static void syncShadowState(
@@ -3016,6 +3316,24 @@ public final class RendererBotCameraSystem {
 			boolean alreadyTracked = previousChunks.contains(chunkLong);
 			boolean dirty = DIRTY_SHADOW_CHUNKS.contains(dirtyKey);
 			previousChunks.remove(chunkLong);
+			byte[] readOnlyPayload = desiredState.readOnlyChunkPayload(chunkLong);
+			if (readOnlyPayload != null && readOnlyPayload.length > 0) {
+				if (!alreadyTracked || dirty) {
+					ServerPlayNetworking.send(
+							bot,
+							new RendererBotPayloads.RendererBotShadowChunkDataS2CPayload(
+									desiredState.sessionId(),
+									level.dimension().identifier().toString(),
+									readOnlyPayload
+						)
+					);
+					if (dirty) {
+						consumedDirtyChunks.add(dirtyKey);
+					}
+				}
+				newTrackedChunks.add(chunkLong);
+				continue;
+			}
 			net.minecraft.world.level.chunk.LevelChunk chunk = level.getChunkSource().getChunkNow(pos.x, pos.z);
 			if (chunk == null) {
 				if (alreadyTracked) {
@@ -3024,16 +3342,12 @@ public final class RendererBotCameraSystem {
 				continue;
 			}
 			if (!alreadyTracked || dirty) {
-				ClientboundLevelChunkWithLightPacket packet = PacketContext.supplyWithContext(
-						bot.connection,
-						() -> new ClientboundLevelChunkWithLightPacket(chunk, level.getChunkSource().getLightEngine(), null, null)
-				);
 				ServerPlayNetworking.send(
 						bot,
 						new RendererBotPayloads.RendererBotShadowChunkDataS2CPayload(
 								desiredState.sessionId(),
 								level.dimension().identifier().toString(),
-								RendererBotShadowPacketCodec.encodeChunkPacket(level.registryAccess(), bot.connection, packet)
+								encodeShadowChunkPacket(level, bot, chunk)
 						)
 				);
 				if (dirty) {
@@ -3942,7 +4256,13 @@ public final class RendererBotCameraSystem {
 		private final Set<UUID> hiddenEntityUuids = new HashSet<>();
 		private final LongOpenHashSet trackedChunks = new LongOpenHashSet();
 		private final Map<CameraChunkTicketKey, Integer> chunkTickets = new HashMap<>();
+		private final Map<Long, byte[]> readOnlyChunkPayloads = new HashMap<>();
 		private boolean itemDisplaysOnly;
+		// A map session is a packet-only MCA snapshot.  This extra state is a
+		// hard safety boundary: even if a future caller accidentally adds a
+		// normal target to it, syncShadowChunkTickets must never turn it into a
+		// server loading ticket and generate terrain.
+		private boolean readOnlyMapOnly;
 		private int requestedViewDistance;
 		private int viewDistance = 2;
 		private int centerChunkX;
@@ -4007,6 +4327,14 @@ public final class RendererBotCameraSystem {
 			return this.chunkTickets;
 		}
 
+		private boolean readOnlyMapOnly() {
+			return this.readOnlyMapOnly;
+		}
+
+		private byte[] readOnlyChunkPayload(long chunkLong) {
+			return this.readOnlyChunkPayloads.get(chunkLong);
+		}
+
 		private int minChunkX() {
 			return this.minChunkX;
 		}
@@ -4041,6 +4369,27 @@ public final class RendererBotCameraSystem {
 				boolean staticCameraChunkBuffer
 		) {
 			addTarget(target, viewDistance, hiddenEntityUuids, omnidirectionalChunkLoading, staticCameraChunkBuffer, false);
+		}
+
+		private void addReadOnlyMapTarget(ScheduledServiceTarget target, int viewDistance, Map<Long, byte[]> chunkPayloads) {
+			if (target == null || target.level() != this.level) {
+				return;
+			}
+			this.readOnlyMapOnly = true;
+			this.targets.add(target);
+			this.requestedViewDistance = Math.max(this.requestedViewDistance, Math.max(2, viewDistance));
+			if (chunkPayloads != null) {
+				for (Map.Entry<Long, byte[]> entry : chunkPayloads.entrySet()) {
+					Long chunkLong = entry.getKey();
+					byte[] payload = entry.getValue();
+					if (chunkLong == null || payload == null || payload.length == 0) {
+						continue;
+					}
+					this.trackedChunks.add(chunkLong);
+					this.readOnlyChunkPayloads.put(chunkLong, payload);
+				}
+			}
+			recomputeViewWindow(target);
 		}
 
 		private void addTarget(
@@ -4500,12 +4849,17 @@ public final class RendererBotCameraSystem {
 		private final long tileZ;
 		private final int tileSize;
 		private final double blocksPerPixel;
+		private final List<ChunkPos> sourceChunks;
+		private final List<ChunkPos> readOnlyShadowChunks;
 		private final int priorityScore;
 		private final boolean activeView;
 		private final long queuedAtMillis;
 		private final long sequence;
 		private final double worldCenterDistanceSquared;
 		private final CompletableFuture<byte[]> pixelsFuture;
+		private final Map<Long, byte[]> readOnlyChunkPayloads = new ConcurrentHashMap<>();
+		private volatile boolean readOnlyChunkLoadStarted;
+		private volatile boolean readOnlyChunkLoadFinished;
 		private volatile boolean clientRequestSent;
 		private volatile boolean clientTimeoutArmed;
 		private volatile long shadowTargetStartedAtMillis;
@@ -4526,6 +4880,7 @@ public final class RendererBotCameraSystem {
 				long tileZ,
 				int tileSize,
 				double blocksPerPixel,
+				List<ChunkPos> sourceChunks,
 				int priorityScore,
 				boolean activeView,
 				long queuedAtMillis,
@@ -4545,12 +4900,16 @@ public final class RendererBotCameraSystem {
 			this.tileZ = tileZ;
 			this.tileSize = tileSize;
 			this.blocksPerPixel = blocksPerPixel;
+			this.sourceChunks = sourceChunks == null ? List.of() : List.copyOf(sourceChunks);
+			this.readOnlyShadowChunks = readOnlyMapShadowChunks(centerX, centerZ, tileSize, blocksPerPixel, this.sourceChunks);
 			this.priorityScore = priorityScore;
 			this.activeView = activeView;
 			this.queuedAtMillis = queuedAtMillis;
 			this.sequence = sequence;
 			this.worldCenterDistanceSquared = worldCenterDistanceSquared;
 			this.pixelsFuture = pixelsFuture;
+			this.readOnlyChunkLoadStarted = false;
+			this.readOnlyChunkLoadFinished = false;
 			this.clientRequestSent = false;
 			this.clientTimeoutArmed = false;
 			this.shadowTargetStartedAtMillis = 0L;
@@ -4607,6 +4966,48 @@ public final class RendererBotCameraSystem {
 			return this.blocksPerPixel;
 		}
 
+		private List<ChunkPos> sourceChunks() {
+			return this.sourceChunks;
+		}
+
+		private List<ChunkPos> readOnlyShadowChunks() {
+			return this.readOnlyShadowChunks;
+		}
+
+		private boolean isRequiredSourceChunk(ChunkPos pos) {
+			return pos != null && this.sourceChunks.contains(pos);
+		}
+
+		private boolean beginReadOnlyChunkLoad() {
+			if (this.readOnlyChunkLoadStarted || this.pixelsFuture.isDone()) {
+				return false;
+			}
+			this.readOnlyChunkLoadStarted = true;
+			return true;
+		}
+
+		private void completeReadOnlyChunkLoad(Map<Long, byte[]> payloads) {
+			if (payloads == null || payloads.size() != this.readOnlyShadowChunks.size() || this.pixelsFuture.isDone()) {
+				return;
+			}
+			this.readOnlyChunkPayloads.clear();
+			this.readOnlyChunkPayloads.putAll(payloads);
+			this.readOnlyChunkLoadFinished = true;
+		}
+
+		private boolean hasReadOnlyChunkPayloads() {
+			return this.readOnlyChunkLoadFinished
+					&& this.readOnlyChunkPayloads.size() == this.readOnlyShadowChunks.size();
+		}
+
+		private byte[] readOnlyChunkPayload(long chunkLong) {
+			return this.readOnlyChunkPayloads.get(chunkLong);
+		}
+
+		private Map<Long, byte[]> readOnlyChunkPayloads() {
+			return hasReadOnlyChunkPayloads() ? Map.copyOf(this.readOnlyChunkPayloads) : Map.of();
+		}
+
 		private int priorityScore() {
 			return this.priorityScore;
 		}
@@ -4643,10 +5044,10 @@ public final class RendererBotCameraSystem {
 			this.shadowTargetLastActiveAtMillis = now;
 		}
 
-		private boolean shadowTargetLoadTimedOut(long now) {
+		private boolean sourceReadTimedOut(long now) {
 			return !this.clientRequestSent
 					&& this.shadowTargetStartedAtMillis > 0L
-					&& now - this.shadowTargetStartedAtMillis >= MAP_TILE_CHUNK_LOAD_TIMEOUT_MS;
+					&& now - this.shadowTargetStartedAtMillis >= MAP_TILE_SOURCE_READ_TIMEOUT_MS;
 		}
 
 		private void markClientRequestSent(long now) {

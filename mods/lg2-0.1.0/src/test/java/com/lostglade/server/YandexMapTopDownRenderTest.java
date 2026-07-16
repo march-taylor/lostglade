@@ -47,12 +47,15 @@ public final class YandexMapTopDownRenderTest {
 		pendingTileSchedulerPrefersNewTilesNearWorldCenter();
 		retryingNewTileKeepsLowerPriorityWorkBlocked();
 		cameraMapAdmissionSerializesAndCentersNewTiles();
+		readOnlyMapTargetsNeverCreateLoadingTickets();
+		baseTileUsesOnlyInventoriedSavedChunk();
 		coarseLodBuildsImmediatelyFromBaseTiles();
 		knownBaseCoverageIncludesEveryLodAncestor();
 		knownEmptyCoverageMakesSparseLodComplete();
 		completeLodTileCannotBeOverwrittenByPartial();
 		truncatedTileFileIsNotTreatedAsRendered();
 		tileCachePathIsBoundToItsWorld();
+		tileCacheIsCreatedAndUpdatedUnderWorldData();
 		queuedTileUsesCompletionTimeForRefreshAge();
 		highLodBuildDoesNotScanUnboundedBaseDescendants();
 		logUsesTopFace();
@@ -341,7 +344,7 @@ public final class YandexMapTopDownRenderTest {
 		Constructor<?> constructor = captureClass.getDeclaredConstructor(
 				UUID.class, UUID.class, net.minecraft.server.MinecraftServer.class, UUID.class, ResourceKey.class,
 				double.class, double.class, int.class, long.class, long.class, int.class, double.class,
-				int.class, boolean.class, long.class, long.class, double.class, CompletableFuture.class
+				List.class, int.class, boolean.class, long.class, long.class, double.class, CompletableFuture.class
 		);
 		constructor.setAccessible(true);
 		UUID botUuid = UUID.randomUUID();
@@ -349,18 +352,18 @@ public final class YandexMapTopDownRenderTest {
 		Object far = constructor.newInstance(
 				UUID.randomUUID(), UUID.randomUUID(), null, botUuid, Level.OVERWORLD,
 				80.0D, 0.0D, 0, 10L, 0L, 128, 1.0D / 16.0D,
-				2, false, 1L, 1L, 6_400.0D, farFuture
+				List.of(new ChunkPos(5, 0)), 2, false, 1L, 1L, 6_400.0D, farFuture
 		);
 		CompletableFuture<byte[]> nearFuture = new CompletableFuture<>();
 		Object near = constructor.newInstance(
 				UUID.randomUUID(), UUID.randomUUID(), null, botUuid, Level.OVERWORLD,
 				8.0D, 0.0D, 0, 1L, 0L, 128, 1.0D / 16.0D,
-				2, false, 2L, 2L, 64.0D, nearFuture
+				List.of(new ChunkPos(0, 0)), 2, false, 2L, 2L, 64.0D, nearFuture
 		);
 		Object changed = constructor.newInstance(
 				UUID.randomUUID(), UUID.randomUUID(), null, botUuid, Level.OVERWORLD,
 				0.0D, 0.0D, 0, 0L, 0L, 128, 1.0D / 16.0D,
-				1, false, 0L, 0L, 0.0D, new CompletableFuture<byte[]>()
+				List.of(new ChunkPos(0, 0)), 1, false, 0L, 0L, 0.0D, new CompletableFuture<byte[]>()
 		);
 		Method compare = RendererBotCameraSystem.class.getDeclaredMethod("compareMapTileCapturePriority", captureClass, captureClass);
 		compare.setAccessible(true);
@@ -392,6 +395,69 @@ public final class YandexMapTopDownRenderTest {
 		} finally {
 			captures.clear();
 		}
+	}
+
+	private static void readOnlyMapTargetsNeverCreateLoadingTickets() throws Exception {
+		Class<?> stateClass = Class.forName("com.lostglade.server.RendererBotCameraSystem$ShadowDesiredState");
+		Class<?> targetClass = Class.forName("com.lostglade.server.RendererBotCameraSystem$ScheduledServiceTarget");
+		Constructor<?> stateConstructor = stateClass.getDeclaredConstructor(UUID.class, net.minecraft.server.level.ServerLevel.class);
+		stateConstructor.setAccessible(true);
+		Object state = stateConstructor.newInstance(UUID.randomUUID(), null);
+		Constructor<?> targetConstructor = targetClass.getDeclaredConstructor(
+				net.minecraft.server.level.ServerLevel.class,
+				double.class,
+				double.class,
+				double.class,
+				float.class,
+				float.class,
+				net.minecraft.world.entity.Entity.class
+		);
+		targetConstructor.setAccessible(true);
+		Object target = targetConstructor.newInstance(null, 24.0D, 320.0D, -8.0D, 180.0F, 90.0F, null);
+		long sourceChunk = ChunkPos.asLong(1, -1);
+		Method addReadOnlyMapTarget = stateClass.getDeclaredMethod("addReadOnlyMapTarget", targetClass, int.class, Map.class);
+		addReadOnlyMapTarget.setAccessible(true);
+		addReadOnlyMapTarget.invoke(state, target, 3, Map.of(sourceChunk, new byte[]{1, 2, 3}));
+
+		Field tickets = stateClass.getDeclaredField("chunkTickets");
+		tickets.setAccessible(true);
+		require(tickets.get(state) instanceof Map<?, ?> ticketMap && ticketMap.isEmpty(),
+				"read-only Yandex map target must not create a loading chunk ticket");
+		Field tracked = stateClass.getDeclaredField("trackedChunks");
+		tracked.setAccessible(true);
+		Object trackedChunks = tracked.get(state);
+		Method contains = trackedChunks.getClass().getMethod("contains", long.class);
+		require((Boolean) contains.invoke(trackedChunks, sourceChunk),
+				"read-only Yandex map target must still deliver its stored source chunk to the renderer bot");
+	}
+
+	private static void baseTileUsesOnlyInventoriedSavedChunk() throws Exception {
+		Class<?> worldKeyClass = Class.forName("com.lostglade.server.MonitorYandexMapsClientTileRenderer$WorldCacheKey");
+		Class<?> cacheClass = Class.forName("com.lostglade.server.MonitorYandexMapsClientTileRenderer$DimensionTileCache");
+		Class<?> tileKeyClass = Class.forName("com.lostglade.server.MonitorYandexMapsClientTileRenderer$TileKey");
+		Constructor<?> worldKeyConstructor = worldKeyClass.getDeclaredConstructor(Path.class, ResourceKey.class);
+		worldKeyConstructor.setAccessible(true);
+		Constructor<?> cacheConstructor = cacheClass.getDeclaredConstructor(worldKeyClass);
+		cacheConstructor.setAccessible(true);
+		Object cache = cacheConstructor.newInstance(worldKeyConstructor.newInstance(Path.of("/tmp/lg2-yandex-test-read-only-source"), Level.OVERWORLD));
+		Constructor<?> tileKeyConstructor = tileKeyClass.getDeclaredConstructor(int.class, long.class, long.class);
+		tileKeyConstructor.setAccessible(true);
+		Object tile = tileKeyConstructor.newInstance(0, -1L, 3L);
+
+		Field knownSavedChunks = cacheClass.getDeclaredField("knownSavedChunks");
+		knownSavedChunks.setAccessible(true);
+		@SuppressWarnings("unchecked")
+		Set<Long> saved = (Set<Long>) knownSavedChunks.get(cache);
+		long sourceChunk = ChunkPos.asLong(-1, 1);
+		saved.add(sourceChunk);
+		Method sources = cacheClass.getDeclaredMethod("savedChunkSourcesForBaseTile", tileKeyClass);
+		sources.setAccessible(true);
+		Object result = sources.invoke(cache, tile);
+		require(result instanceof List<?> list && list.size() == 1 && new ChunkPos(sourceChunk).equals(list.getFirst()),
+				"a base tile must use only the matching saved MCA chunk");
+		saved.clear();
+		require(sources.invoke(cache, tile) instanceof List<?> empty && empty.isEmpty(),
+				"a base tile without a saved MCA chunk must not request a renderer capture");
 	}
 
 	private static void coarseLodBuildsImmediatelyFromBaseTiles() throws Exception {
@@ -550,8 +616,40 @@ public final class YandexMapTopDownRenderTest {
 		tilePath.setAccessible(true);
 		Path worldRoot = Path.of("/tmp/lg2-yandex-cache-world-a");
 		Path path = (Path) tilePath.invoke(null, worldKeyConstructor.newInstance(worldRoot, Level.OVERWORLD), tileKeyConstructor.newInstance(0, 7L, -3L));
-		require(path != null && path.startsWith(worldRoot.resolve("data").resolve("lg2-yandex-map-client-tiles-v13")),
+		require(path != null && path.startsWith(worldRoot.resolve("data").resolve("lg2-yandex-map-client-tiles")),
 				"an asynchronous cache task must retain the root of its own world instead of a mutable global root");
+	}
+
+	private static void tileCacheIsCreatedAndUpdatedUnderWorldData() throws Exception {
+		Class<?> worldKeyClass = Class.forName("com.lostglade.server.MonitorYandexMapsClientTileRenderer$WorldCacheKey");
+		Class<?> cacheClass = Class.forName("com.lostglade.server.MonitorYandexMapsClientTileRenderer$DimensionTileCache");
+		Class<?> tileKeyClass = Class.forName("com.lostglade.server.MonitorYandexMapsClientTileRenderer$TileKey");
+		Class<?> tileImageClass = Class.forName("com.lostglade.server.MonitorYandexMapsClientTileRenderer$TileImage");
+		Path worldRoot = Files.createTempDirectory("lg2-yandex-map-world-");
+		Constructor<?> worldKeyConstructor = worldKeyClass.getDeclaredConstructor(Path.class, ResourceKey.class);
+		worldKeyConstructor.setAccessible(true);
+		Constructor<?> cacheConstructor = cacheClass.getDeclaredConstructor(worldKeyClass);
+		cacheConstructor.setAccessible(true);
+		Constructor<?> tileKeyConstructor = tileKeyClass.getDeclaredConstructor(int.class, long.class, long.class);
+		tileKeyConstructor.setAccessible(true);
+		Constructor<?> tileImageConstructor = tileImageClass.getDeclaredConstructor(byte[].class, long.class, long.class, boolean.class);
+		tileImageConstructor.setAccessible(true);
+		Object cache = cacheConstructor.newInstance(worldKeyConstructor.newInstance(worldRoot, Level.OVERWORLD));
+		Object key = tileKeyConstructor.newInstance(0, -7L, 11L);
+		Method tilePath = MonitorYandexMapsClientTileRenderer.class.getDeclaredMethod("tilePath", worldKeyClass, tileKeyClass);
+		tilePath.setAccessible(true);
+		Path storedPath = (Path) tilePath.invoke(null, worldKeyConstructor.newInstance(worldRoot, Level.OVERWORLD), key);
+		Method storeTile = cacheClass.getDeclaredMethod("storeTile", tileKeyClass, tileImageClass, long.class);
+		storeTile.setAccessible(true);
+		byte[] first = solidRgbTile(0x336699);
+		storeTile.invoke(cache, key, tileImageConstructor.newInstance(first, 10L, 20L, true), 10L);
+		require(storedPath != null && Files.isRegularFile(storedPath)
+				&& storedPath.startsWith(worldRoot.resolve("data").resolve("lg2-yandex-map-client-tiles")),
+				"a completed map tile must create world/data/lg2-yandex-map-client-tiles");
+		require(Files.readAllBytes(storedPath)[0] == first[0], "the first rendered tile must be persisted");
+		byte[] updated = solidRgbTile(0xAA5522);
+		storeTile.invoke(cache, key, tileImageConstructor.newInstance(updated, 30L, 40L, true), 30L);
+		require(Files.readAllBytes(storedPath)[0] == updated[0], "a newer rendered tile must update the persisted cache file");
 	}
 
 	private static void truncatedTileFileIsNotTreatedAsRendered() throws Exception {
