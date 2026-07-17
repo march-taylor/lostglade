@@ -22,7 +22,6 @@ import net.minecraft.core.particles.SimpleParticleType;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.Style;
-import net.minecraft.network.protocol.game.ClientboundSoundEntityPacket;
 import net.minecraft.network.protocol.game.ClientboundSoundPacket;
 import net.minecraft.network.protocol.game.ClientboundStopSoundPacket;
 import net.minecraft.resources.Identifier;
@@ -85,7 +84,9 @@ public final class ServerStabilitySystem {
 	private static final Holder<SoundEvent> STARTUP_FEED_MUSIC_SOUND = Holder.direct(SoundEvent.createVariableRangeEvent(STARTUP_FEED_MUSIC_SOUND_ID));
 	private static final long FEED_SOUND_BASE_DURATION_TICKS = 226L;
 	private static final float FEED_MUSIC_SOUND_VOLUME = 1.0F;
-	private static final float STARTUP_FEED_MUSIC_VOLUME = 2.8F;
+	// At volume 8 the vanilla linear sound range is 128 blocks: the whole
+	// start box hears a single track sourced from the server at its centre.
+	private static final float STARTUP_FEED_MUSIC_VOLUME = 8.0F;
 	private static final float STARTUP_FEED_MUSIC_PITCH = 0.86F;
 	private static final float FEED_XP_SOUND_VOLUME = 1.0F;
 	private static final SimpleParticleType FEED_PARTICLE = resolveFeedParticle();
@@ -635,7 +636,7 @@ public final class ServerStabilitySystem {
 		double y = source.key.pos().getY() + 0.5D;
 		double z = source.key.pos().getZ() + 0.5D;
 		if (source.centeredOnListener) {
-			syncStartupFeedMusicSource(level, source, onlineInLevel);
+			syncStartupFeedMusicSource(level, source, onlineInLevel, x, y, z);
 			return;
 		}
 		long now = level.getGameTime();
@@ -676,7 +677,14 @@ public final class ServerStabilitySystem {
 		}
 	}
 
-	private static void syncStartupFeedMusicSource(ServerLevel level, ActiveFeedSoundSource source, Set<UUID> onlineInLevel) {
+	private static void syncStartupFeedMusicSource(
+			ServerLevel level,
+			ActiveFeedSoundSource source,
+			Set<UUID> onlineInLevel,
+			double x,
+			double y,
+			double z
+	) {
 		for (ServerPlayer player : level.players()) {
 			if (RendererBotPresenceSystem.isRendererBot(player)) {
 				source.lastSegmentByListener.remove(player.getUUID());
@@ -684,15 +692,16 @@ public final class ServerStabilitySystem {
 			}
 			onlineInLevel.add(player.getUUID());
 			UUID playerId = player.getUUID();
-			boolean shouldHear = PolymerResourcePackUtils.hasMainPack(player);
-			if (!shouldHear) {
+			// Sound packets are harmless when a client declined the resource pack, but
+			// filtering them here made the finale silent for otherwise valid players.
+			if (player.connection == null) {
 				source.lastSegmentByListener.remove(playerId);
 				continue;
 			}
 			if (source.lastSegmentByListener.containsKey(playerId)) {
 				continue;
 			}
-			playStartupFeedMusicForPlayer(player, source.pitch, source.volume, source.seed);
+			playStartupFeedMusicForPlayer(player, x, y, z, source.pitch, source.volume, source.seed);
 			source.lastSegmentByListener.put(playerId, 0);
 		}
 
@@ -714,7 +723,7 @@ public final class ServerStabilitySystem {
 				if (player == null || player.connection == null) {
 					continue;
 				}
-				player.connection.send(new ClientboundStopSoundPacket(STARTUP_FEED_MUSIC_SOUND_ID, SoundSource.MUSIC));
+				player.connection.send(new ClientboundStopSoundPacket(STARTUP_FEED_MUSIC_SOUND_ID, SoundSource.AMBIENT));
 			}
 		}
 		source.lastSegmentByListener.clear();
@@ -749,15 +758,27 @@ public final class ServerStabilitySystem {
 		));
 	}
 
-	private static void playStartupFeedMusicForPlayer(ServerPlayer player, float pitch, float volume, long seed) {
+	private static void playStartupFeedMusicForPlayer(
+			ServerPlayer player,
+			double x,
+			double y,
+			double z,
+			float pitch,
+			float volume,
+			long seed
+	) {
 		if (player == null || player.connection == null) {
 			return;
 		}
-		player.connection.send(new ClientboundStopSoundPacket(STARTUP_FEED_MUSIC_SOUND_ID, SoundSource.MUSIC));
-		player.connection.send(new ClientboundSoundEntityPacket(
+		player.connection.send(new ClientboundStopSoundPacket(STARTUP_FEED_MUSIC_SOUND_ID, SoundSource.AMBIENT));
+		player.connection.send(new ClientboundSoundPacket(
 				STARTUP_FEED_MUSIC_SOUND,
-				SoundSource.MUSIC,
-				player,
+				// Keep this on AMBIENT, alongside the earthquake. Some players mute the
+				// music slider, while the finale is a world event rather than UI music.
+				SoundSource.AMBIENT,
+				x,
+				y,
+				z,
 				volume,
 				pitch,
 				seed
