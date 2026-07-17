@@ -24,6 +24,7 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.Holder;
+import net.minecraft.core.particles.BlockParticleOption;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.particles.DustParticleOptions;
 import net.minecraft.core.particles.ParticleTypes;
@@ -352,8 +353,12 @@ public final class SeasonStartSystem {
 			"guide_passed_server_02",
 			"guide_passed_server_03"
 	};
+	// At the fastest expected rate (10 players x 10 bitcoins/minute), 1,700
+	// offerings keep the shared launch running for 17 minutes.
+	private static final int SHARED_LAUNCH_REQUIRED_BITCOINS = 1_700;
 	private static final int SHARED_ACTIVE_ORES_PER_PLAYER = 2;
-	private static final int SHARED_LAUNCH_BITCOINS_PER_ASSIGNED_PLAYER = 45;
+	private static final int SHARED_LAUNCH_EXTRA_BITCOINS = 10;
+	private static final int SHARED_LAUNCH_SUPPLY_VERSION = 1;
 	private static final int SHARED_ORE_MIN_Y_OFFSET = 1;
 	private static final int SHARED_ORE_MAX_Y_OFFSET = 4;
 	private static final double SHARED_ORE_SERVER_BUFFER = 4.0D;
@@ -362,9 +367,8 @@ public final class SeasonStartSystem {
 	private static final long SHARED_FINISH_DELAY_TICKS = 20L * 2L;
 	private static final long MENU_PRICE_REACTION_COOLDOWN_TICKS = 20L * 3L;
 	private static final int MENU_EXPLANATION_UNLOCK_PERCENT = 52;
-	private static final int SHARED_LAUNCH_RACE_CONTROLS_PERCENT = 65;
-	// Let the 50% call finish before a personal menu tutorial can claim the channel.
-	private static final long MENU_EXPLANATION_AFTER_HALFWAY_DELAY_TICKS = 20L * 3L;
+	private static final int SHARED_LAUNCH_RACE_CONTROLS_PERCENT = 55;
+	private static final long MENU_EXPLANATION_AFTER_HALFWAY_DELAY_TICKS = 0L;
 	private static final int[] SHARED_LAUNCH_MILESTONES = {10, 20, 30, 40, 50, 60, 70, 80, 90, 100};
 	private static final String STARTUP_WORLDGEN_DISPLAY_TAG = "lg2_season_start_display";
 	private static final int STARTUP_WORLDGEN_FRAME_COUNT = 35;
@@ -388,6 +392,13 @@ public final class SeasonStartSystem {
 	private static final Holder<SoundEvent> WORLD_REVEAL_EARTHQUAKE_SOUND = Holder.direct(SoundEvent.createVariableRangeEvent(WORLD_REVEAL_EARTHQUAKE_SOUND_ID));
 	private static final float WORLD_REVEAL_EARTHQUAKE_VOLUME = 7.5F;
 	private static final long WORLD_REVEAL_CRACKING_DURATION_TICKS = 20L * 30L;
+	// Vanilla renders Darkness as max(0, cos(remainingTicks * PI / 40)) * 0.45.
+	// This single instance begins at a zero crossing before the earthquake audio.
+	// Its final peak hides the last terrain swap; it is removed at the following
+	// zero crossing, so the player never sees a black-frame cut.
+	private static final long WORLD_REVEAL_DARKNESS_EFFECT_DURATION_TICKS = 20L * 41L;
+	private static final long WORLD_REVEAL_DARKNESS_FINAL_PEAK_OFFSET_TICKS = 20L * 37L;
+	private static final long WORLD_REVEAL_DARKNESS_CLEAR_OFFSET_TICKS = 20L * 38L;
 	private static final long WORLD_REVEAL_BLACKOUT_DURATION_TICKS = 80L;
 	private static final long WORLD_REVEAL_BLACKOUT_REPOSITION_TICKS = 40L;
 	private static final long WORLD_REVEAL_CRACK_START_BUFFER_TICKS = 4L;
@@ -523,8 +534,14 @@ public final class SeasonStartSystem {
 	private static long worldRevealCrackNotBeforeTick = Long.MIN_VALUE;
 	private static long worldRevealMusicEndTick = Long.MIN_VALUE;
 	private static long worldRevealDarknessClearTick = Long.MIN_VALUE;
+	private static long worldRevealCompletionTick = Long.MIN_VALUE;
+	private static int worldRevealDarknessPulseCount = 0;
+	private static boolean worldRevealGameplayReleased = false;
 	private static int sharedLaunchCollectedBitcoins = 0;
 	private static int sharedLaunchRequiredBitcoins = 0;
+	private static int sharedLaunchBitcoinSpawned = 0;
+	private static int sharedLaunchBitcoinSupplyVersion = 0;
+	private static boolean sharedLaunchBitcoinPositionIndexLoaded = false;
 	private static int sharedLaunchMilestoneCursor = 0;
 	private static boolean sharedLaunchIntroTriggered = false;
 	private static boolean sharedLaunchRaceControlsTriggered = false;
@@ -566,8 +583,14 @@ public final class SeasonStartSystem {
 		worldRevealCrackNotBeforeTick = Long.MIN_VALUE;
 		worldRevealMusicEndTick = Long.MIN_VALUE;
 		worldRevealDarknessClearTick = Long.MIN_VALUE;
+		worldRevealCompletionTick = Long.MIN_VALUE;
+		worldRevealDarknessPulseCount = 0;
+		worldRevealGameplayReleased = false;
 		sharedLaunchCollectedBitcoins = 0;
 		sharedLaunchRequiredBitcoins = 0;
+		sharedLaunchBitcoinSpawned = 0;
+		sharedLaunchBitcoinSupplyVersion = SHARED_LAUNCH_SUPPLY_VERSION;
+		sharedLaunchBitcoinPositionIndexLoaded = false;
 		sharedLaunchMilestoneCursor = 0;
 		sharedLaunchIntroTriggered = false;
 		sharedLaunchRaceControlsTriggered = false;
@@ -1606,8 +1629,14 @@ public final class SeasonStartSystem {
 		worldRevealCrackNotBeforeTick = Long.MIN_VALUE;
 		worldRevealMusicEndTick = Long.MIN_VALUE;
 		worldRevealDarknessClearTick = Long.MIN_VALUE;
+		worldRevealCompletionTick = Long.MIN_VALUE;
+		worldRevealDarknessPulseCount = 0;
+		worldRevealGameplayReleased = false;
 		sharedLaunchCollectedBitcoins = 0;
 		sharedLaunchRequiredBitcoins = 0;
+		sharedLaunchBitcoinSpawned = 0;
+		sharedLaunchBitcoinSupplyVersion = SHARED_LAUNCH_SUPPLY_VERSION;
+		sharedLaunchBitcoinPositionIndexLoaded = false;
 		sharedLaunchMilestoneCursor = 0;
 		sharedLaunchIntroTriggered = false;
 		sharedLaunchRaceControlsTriggered = false;
@@ -1682,6 +1711,9 @@ public final class SeasonStartSystem {
 		worldRevealCrackNotBeforeTick = Long.MIN_VALUE;
 		worldRevealMusicEndTick = Long.MIN_VALUE;
 		worldRevealDarknessClearTick = Long.MIN_VALUE;
+		worldRevealCompletionTick = Long.MIN_VALUE;
+		worldRevealDarknessPulseCount = 0;
+		worldRevealGameplayReleased = false;
 		worldRevealVisibleEpisodeCursor = 0;
 		worldRevealBurstCursor = 0;
 		worldRevealBurstWeightProgress = 0.0F;
@@ -2598,7 +2630,7 @@ public final class SeasonStartSystem {
 			return;
 		}
 		if (sharedLaunchRequiredBitcoins <= 0) {
-			sharedLaunchRequiredBitcoins = Math.max(1, PLAYER_STATES.size()) * SHARED_LAUNCH_BITCOINS_PER_ASSIGNED_PLAYER;
+			sharedLaunchRequiredBitcoins = SHARED_LAUNCH_REQUIRED_BITCOINS;
 		}
 		if (!sharedLaunchIntroTriggered) {
 			sharedLaunchIntroTriggered = true;
@@ -2731,8 +2763,8 @@ public final class SeasonStartSystem {
 		}
 	}
 
-	private static void tickWorldRevealAudioPrelude(ServerLevel level, long nowTick) {
-		if (level == null) {
+	private static void tickWorldRevealAudioPrelude(MinecraftServer server, ServerLevel level, long nowTick) {
+		if (server == null || level == null) {
 			return;
 		}
 		if (worldRevealCrackStartTick == Long.MIN_VALUE) {
@@ -2741,6 +2773,8 @@ public final class SeasonStartSystem {
 			}
 			worldRevealCrackStartTick = nowTick;
 			worldRevealCrackNotBeforeTick = Long.MIN_VALUE;
+			// Apply Darkness before the first earthquake packet reaches clients.
+			startWorldRevealDarknessSequence(server, level, nowTick);
 		}
 		if (nowTick < worldRevealCrackStartTick) {
 			return;
@@ -3917,7 +3951,7 @@ public final class SeasonStartSystem {
 		// This runs only after the asynchronous reveal plan is installed.
 		// Starting it here prevents the 30-second timeline from expiring while
 		// there is still nothing available to animate.
-		tickWorldRevealAudioPrelude(level, nowTick);
+		tickWorldRevealAudioPrelude(server, level, nowTick);
 		if (worldRevealCrackStartTick == Long.MIN_VALUE || nowTick < worldRevealCrackStartTick) {
 			return;
 		}
@@ -3956,6 +3990,46 @@ public final class SeasonStartSystem {
 		if (elapsedTicks >= WORLD_REVEAL_CRACKING_DURATION_TICKS) {
 			finalizeWorldRevealCracking(server, level);
 		}
+	}
+
+	private static void tickWorldRevealDarknessPulse(MinecraftServer server, ServerLevel level, long nowTick) {
+		if (server == null || level == null) {
+			return;
+		}
+		if (worldRevealDarknessClearTick != Long.MIN_VALUE && nowTick >= worldRevealDarknessClearTick) {
+			// This is the zero crossing of the vanilla curve, so clearing here cannot
+			// flash a black frame or start the following pulse.
+			for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+				if (isSeasonStartEligiblePlayer(player) && player.level() == level) {
+					player.removeEffect(MobEffects.DARKNESS);
+				}
+			}
+			worldRevealDarknessClearTick = Long.MIN_VALUE;
+			stateDirty = true;
+		}
+	}
+
+	private static void startWorldRevealDarknessSequence(MinecraftServer server, ServerLevel level, long nowTick) {
+		if (server == null || level == null || worldRevealDarknessPulseCount != 0) {
+			return;
+		}
+		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			if (isSeasonStartEligiblePlayer(player) && player.level() == level) {
+				// No icon or particles: this is a visual beat, not a gameplay debuff.
+				player.addEffect(new MobEffectInstance(
+						MobEffects.DARKNESS,
+						(int) WORLD_REVEAL_DARKNESS_EFFECT_DURATION_TICKS,
+						0,
+						true,
+						false,
+						false
+				));
+			}
+		}
+		worldRevealDarknessPulseCount = 1;
+		worldRevealCompletionTick = nowTick + WORLD_REVEAL_DARKNESS_FINAL_PEAK_OFFSET_TICKS;
+		worldRevealDarknessClearTick = nowTick + WORLD_REVEAL_DARKNESS_CLEAR_OFFSET_TICKS;
+		stateDirty = true;
 	}
 
 	private static void maybeStartWorldRevealMusic(ServerLevel level, long nowTick, long elapsedTicks) {
@@ -4036,18 +4110,54 @@ public final class SeasonStartSystem {
 			return true;
 		}
 		if (shellBlock) {
-			level.sendParticles(ParticleTypes.SMOKE, pos.getX() + 0.5D, pos.getY() + 0.5D, pos.getZ() + 0.5D, 5, 0.22D, 0.22D, 0.22D, 0.01D);
-			level.sendParticles(ParticleTypes.CLOUD, pos.getX() + 0.5D, pos.getY() + 0.5D, pos.getZ() + 0.5D, 2, 0.18D, 0.18D, 0.18D, 0.0D);
+			// The crack sheds the actual shell material rather than generic white steam.
+			BlockState shellFragments = currentState.is(Blocks.BARRIER) ? Blocks.BLACK_CONCRETE.defaultBlockState() : currentState;
+			emitWorldRevealBlockFragments(level, pos, shellFragments, 18, 0.24D);
 		}
 		if (targetState != null && !targetState.isAir()) {
 			setSceneBlockSilently(level, pos, targetState);
-			level.sendParticles(ParticleTypes.POOF, pos.getX() + 0.5D, pos.getY() + 0.5D, pos.getZ() + 0.5D, 2, 0.12D, 0.12D, 0.12D, 0.0D);
+			// Terrain grows through the fissure as its own material fragments.
+			emitWorldRevealBlockFragments(level, pos, targetState, 20, 0.22D);
 		} else if (shellBlock) {
 			setSceneBlockSilently(level, pos, Blocks.AIR.defaultBlockState());
 		}
 		WORLD_REVEAL_REVEALED_POSITIONS.add(key);
 		WORLD_REVEAL_DEFERRED_POSITIONS.remove(key);
 		return true;
+	}
+
+	private static void emitWorldRevealBlockFragments(
+			ServerLevel level,
+			BlockPos pos,
+			BlockState state,
+			int count,
+			double spread
+	) {
+		if (level == null || pos == null || state == null || state.isAir() || count <= 0) {
+			return;
+		}
+		BlockParticleOption fragments = new BlockParticleOption(ParticleTypes.BLOCK, state);
+		for (ServerPlayer player : level.players()) {
+			if (!isSeasonStartEligiblePlayer(player)) {
+				continue;
+			}
+			// The room is larger than the normal particle packet radius. Send the
+			// material fragments directly so every participant sees nearby terrain grow.
+			level.sendParticles(
+					player,
+					fragments,
+					true,
+					false,
+					pos.getX() + 0.5D,
+					pos.getY() + 0.5D,
+					pos.getZ() + 0.5D,
+					count,
+					spread,
+					spread,
+					spread,
+					0.04D
+			);
+		}
 	}
 
 	private static void revealWorldRevealEpisodeBatch(ServerLevel level, int maxEpisodes, boolean ignoreProtection) {
@@ -4197,15 +4307,7 @@ public final class SeasonStartSystem {
 		worldRevealDarknessRepositioned = false;
 		worldRevealPhase = WorldRevealPhase.BLACKOUT_FADE;
 		worldRevealPhaseStartTick = nowTick;
-		// The finale track started during the cracks and must finish only once, exactly at
-		// the end of that animation. Never clear its state here or the settle phase restarts it.
-		worldRevealDarknessClearTick = Long.MIN_VALUE;
 		clearStartupWorldgenDisplay(level);
-		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-			if (isSeasonStartEligiblePlayer(player) && player.level() == level) {
-				player.removeEffect(MobEffects.DARKNESS);
-			}
-		}
 		stateDirty = true;
 	}
 
@@ -4213,6 +4315,9 @@ public final class SeasonStartSystem {
 		if (server == null || level == null) {
 			return;
 		}
+		// A recovery/restart can enter this phase between effect ticks. Retain the
+		// same mathematical end condition instead of cutting a dark screen abruptly.
+		tickWorldRevealDarknessPulse(server, level, nowTick);
 		revealWorldRevealEpisodeBatch(level, WORLD_REVEAL_BLACKOUT_REVEAL_EPISODES_PER_TICK, false);
 		revealWorldRevealDeferredBatch(level, WORLD_REVEAL_RELOCATE_DEFERRED_BATCH, false);
 		refreshWorldRevealTargets(level);
@@ -4257,6 +4362,7 @@ public final class SeasonStartSystem {
 	}
 
 	private static void tickWorldRevealSettle(MinecraftServer server, ServerLevel level, long nowTick) {
+		tickWorldRevealDarknessPulse(server, level, nowTick);
 		revealWorldRevealEpisodeBatch(level, WORLD_REVEAL_SETTLE_REVEAL_EPISODES_PER_TICK, true);
 		revealWorldRevealDeferredBatch(level, WORLD_REVEAL_SETTLE_DEFERRED_BATCH, true);
 		if (nowTick - worldRevealPhaseStartTick < WORLD_REVEAL_SETTLE_MIN_TICKS) {
@@ -4265,7 +4371,30 @@ public final class SeasonStartSystem {
 		if (worldRevealMusicEndTick != Long.MIN_VALUE && nowTick < worldRevealMusicEndTick) {
 			return;
 		}
+		if (!worldRevealGameplayReleased
+				&& worldRevealDarknessPulseCount == 1
+				&& worldRevealCompletionTick != Long.MIN_VALUE
+				&& nowTick >= worldRevealCompletionTick) {
+			// The last frame of the construction is intentionally hidden at the peak
+			// of Darkness. When the effect fades, the player sees only the finished
+			// world and its already-updated time of day.
+			materializeWorldRevealTerrainInDarkness(level);
+			releaseWorldRevealGameplay(server, level);
+			return;
+		}
 		if (!isWorldRevealCoverageComplete()) {
+			return;
+		}
+		if (!worldRevealGameplayReleased) {
+			if (worldRevealDarknessPulseCount == 1
+					&& worldRevealCompletionTick != Long.MIN_VALUE
+					&& nowTick < worldRevealCompletionTick) {
+				return;
+			}
+			releaseWorldRevealGameplay(server, level);
+			return;
+		}
+		if (worldRevealDarknessClearTick != Long.MIN_VALUE) {
 			return;
 		}
 		completeWorldReveal(server, level);
@@ -4404,6 +4533,9 @@ public final class SeasonStartSystem {
 		worldRevealCrackNotBeforeTick = Long.MIN_VALUE;
 		worldRevealMusicEndTick = Long.MIN_VALUE;
 		worldRevealDarknessClearTick = Long.MIN_VALUE;
+		worldRevealCompletionTick = Long.MIN_VALUE;
+		worldRevealDarknessPulseCount = 0;
+		worldRevealGameplayReleased = false;
 		worldRevealEarthquakeSoundStarted = false;
 		worldRevealDarknessRepositioned = false;
 		if (isWorldRevealSnapshotLoading() || hasWorldRevealSnapshot()) {
@@ -4459,21 +4591,9 @@ public final class SeasonStartSystem {
 		if (server == null || level == null) {
 			return;
 		}
-		clearStartupWorldgenDisplay(level);
-		restorePostStartMorning(level);
-		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-			if (!isSeasonStartEligiblePlayer(player)) {
-				continue;
-			}
-			clearPostStartPlayerInventory(player);
-			applyFreeState(player);
-			player.fallDistance = 0.0F;
+		if (!worldRevealGameplayReleased) {
+			releaseWorldRevealGameplay(server, level);
 		}
-		if (serverAnchor != null) {
-			ServerBlock.ensureServerStructureDisplay(level, serverAnchor, serverStructureAxis);
-		}
-		restoreSceneEntities(level);
-		sceneBoundaryPhysicsFrozen = false;
 		worldRevealActive = false;
 		worldRevealRecoveryPending = false;
 		worldRevealBarriersPlaced = false;
@@ -4482,6 +4602,9 @@ public final class SeasonStartSystem {
 		worldRevealCrackNotBeforeTick = Long.MIN_VALUE;
 		worldRevealMusicEndTick = Long.MIN_VALUE;
 		worldRevealDarknessClearTick = Long.MIN_VALUE;
+		worldRevealCompletionTick = Long.MIN_VALUE;
+		worldRevealDarknessPulseCount = 0;
+		worldRevealGameplayReleased = false;
 		worldRevealVisibleEpisodeCursor = 0;
 		worldRevealBurstCursor = 0;
 		worldRevealBurstWeightProgress = 0.0F;
@@ -4509,9 +4632,34 @@ public final class SeasonStartSystem {
 		worldRevealPlanReady = false;
 		deleteWorldRevealSnapshot(server);
 		clearSharedLaunchBossBar();
-		restoreSeasonStartDifficulty(server);
 		stateDirty = true;
 		saveState(server);
+	}
+
+	private static void releaseWorldRevealGameplay(MinecraftServer server, ServerLevel level) {
+		if (server == null || level == null || worldRevealGameplayReleased) {
+			return;
+		}
+		clearStartupWorldgenDisplay(level);
+		restorePostStartMorning(level);
+		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			if (!isSeasonStartEligiblePlayer(player)) {
+				continue;
+			}
+			// Keep the second Darkness pulse until its mathematical zero crossing.
+			applyFreeState(player, false);
+			player.fallDistance = 0.0F;
+		}
+		if (serverAnchor != null) {
+			ServerBlock.ensureServerStructureDisplay(level, serverAnchor, serverStructureAxis);
+		}
+		restoreSceneEntities(level);
+		sceneBoundaryPhysicsFrozen = false;
+		worldRevealBarriersPlaced = false;
+		completed = true;
+		restoreSeasonStartDifficulty(server);
+		worldRevealGameplayReleased = true;
+		stateDirty = true;
 	}
 
 	private static void materializeCompletedWorldRevealTerrain(ServerLevel level) {
@@ -4532,6 +4680,16 @@ public final class SeasonStartSystem {
 		ServerBlock.ensureServerStructureDisplay(level, anchor, serverStructureAxis);
 		sceneBoundaryPhysicsFrozen = false;
 		scenePrepared = false;
+	}
+
+	private static void materializeWorldRevealTerrainInDarkness(ServerLevel level) {
+		if (level == null) {
+			return;
+		}
+		materializeCompletedWorldRevealTerrain(level);
+		worldRevealVisibleEpisodeCursor = WORLD_REVEAL_EPISODES.size();
+		WORLD_REVEAL_DEFERRED_POSITIONS.clear();
+		WORLD_REVEAL_REVEALED_POSITIONS.addAll(WORLD_REVEAL_REQUIRED_POSITIONS);
 	}
 
 	private static void restoreWorldRevealBoundaryStates(ServerLevel level) {
@@ -5220,6 +5378,11 @@ public final class SeasonStartSystem {
 			if (sharedPlayer == null || countSharedPlayers() <= 0) {
 				continue;
 			}
+			if (sharedLaunchCollectedBitcoins >= sharedLaunchRequiredBitcoins) {
+				// At 100% the launch no longer accepts offerings. Leave the item as a
+				// normal drop instead of silently consuming a late stack.
+				continue;
+			}
 			int consumed = itemEntity.getItem().getCount();
 			if (consumed <= 0) {
 				continue;
@@ -5361,7 +5524,7 @@ public final class SeasonStartSystem {
 			return;
 		}
 		if (sharedLaunchRequiredBitcoins <= 0) {
-			sharedLaunchRequiredBitcoins = Math.max(1, PLAYER_STATES.size()) * SHARED_LAUNCH_BITCOINS_PER_ASSIGNED_PLAYER;
+			sharedLaunchRequiredBitcoins = SHARED_LAUNCH_REQUIRED_BITCOINS;
 		}
 		if (sharedLaunchCollectedBitcoins >= sharedLaunchRequiredBitcoins) {
 			return;
@@ -5423,7 +5586,7 @@ public final class SeasonStartSystem {
 
 	/**
 	 * Race controls are a shared progress beat delivered through each player's personal channel.
-	 * This lets it start at 65% even for players who still have an open menu, without overlap.
+	 * This lets it start at 55% even for players who still have an open menu, without overlap.
 	 */
 	private static void ensureSharedRaceControlsNarration(MinecraftServer server) {
 		if (server == null || sharedLaunchRaceControlsTriggered
@@ -5843,6 +6006,11 @@ public final class SeasonStartSystem {
 		if (level == null || serverAnchor == null) {
 			return;
 		}
+		if (!sharedLaunchBitcoinPositionIndexLoaded) {
+			rebuildSharedBitcoinPositionIndex(level);
+			sharedLaunchBitcoinPositionIndexLoaded = true;
+			migrateSharedBitcoinSupply(level);
+		}
 		pruneSharedBitcoinPositions(level);
 		int targetCount = Math.max(0, countSharedPlayers() * SHARED_ACTIVE_ORES_PER_PLAYER);
 		if (targetCount <= 0) {
@@ -5856,8 +6024,12 @@ public final class SeasonStartSystem {
 				level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
 			}
 		}
+		int spawnLimit = Math.max(0, sharedLaunchRequiredBitcoins + SHARED_LAUNCH_EXTRA_BITCOINS);
 		int attempts = 0;
-		while (SHARED_BITCOIN_POSITIONS.size() < targetCount && attempts++ < targetCount * 80) {
+		boolean spawnedAny = false;
+		while (SHARED_BITCOIN_POSITIONS.size() < targetCount
+				&& sharedLaunchBitcoinSpawned < spawnLimit
+				&& attempts++ < targetCount * 80) {
 			BlockPos candidate = pickSharedBitcoinSpawnPos(level);
 			if (candidate == null) {
 				break;
@@ -5868,8 +6040,44 @@ public final class SeasonStartSystem {
 					3
 			);
 			SHARED_BITCOIN_POSITIONS.add(candidate.immutable());
+			sharedLaunchBitcoinSpawned++;
+			spawnedAny = true;
 			Vec3 center = centerOf(candidate);
 			ServerStabilitySystem.emitFeedParticles(level, center.x, center.y - 0.4D, center.z, 8);
+		}
+		if (spawnedAny) {
+			stateDirty = true;
+		}
+	}
+
+	private static void migrateSharedBitcoinSupply(ServerLevel level) {
+		if (sharedLaunchBitcoinSupplyVersion >= SHARED_LAUNCH_SUPPLY_VERSION) {
+			return;
+		}
+		// The previous implementation filled the whole room at once. Remove that
+		// legacy field so the new two-per-player supply starts from a clean state.
+		clearSharedBitcoins(level, true);
+		sharedLaunchBitcoinSpawned = Math.max(0, sharedLaunchCollectedBitcoins);
+		sharedLaunchBitcoinSupplyVersion = SHARED_LAUNCH_SUPPLY_VERSION;
+		stateDirty = true;
+	}
+
+	private static void rebuildSharedBitcoinPositionIndex(ServerLevel level) {
+		SHARED_BITCOIN_POSITIONS.clear();
+		if (level == null || serverAnchor == null) {
+			return;
+		}
+		BoxGeometry geometry = computeBarrierGeometry(serverAnchor);
+		for (int x = geometry.minX + 1; x <= geometry.maxX - 1; x++) {
+			for (int y = geometry.floorY + SHARED_ORE_MIN_Y_OFFSET;
+					 y <= Math.min(geometry.roofY - 1, geometry.floorY + SHARED_ORE_MAX_Y_OFFSET); y++) {
+				for (int z = geometry.minZ + 1; z <= geometry.maxZ - 1; z++) {
+					BlockPos pos = new BlockPos(x, y, z);
+					if (isSharedBitcoinBlock(level.getBlockState(pos)) && !isIntroReservedPosition(pos)) {
+						SHARED_BITCOIN_POSITIONS.add(pos.immutable());
+					}
+				}
+			}
 		}
 	}
 
@@ -6026,7 +6234,7 @@ public final class SeasonStartSystem {
 			teleportPlayer(player, overworld, target, slot.yaw);
 		}
 		player.setSilent(true);
-		player.setGameMode(GameType.SURVIVAL);
+		setSeasonStartGameMode(player, GameType.SURVIVAL);
 		player.addEffect(new MobEffectInstance(MobEffects.BLINDNESS, get().introBlindnessTicks, 0, false, false, false));
 		clearLegacyIntroInvisibility(player);
 		removeLegacyIntroTool(player);
@@ -6046,7 +6254,7 @@ public final class SeasonStartSystem {
 			teleportPlayer(player, level, target, slot.yaw);
 		}
 		player.setSilent(true);
-		player.setGameMode(GameType.SURVIVAL);
+		setSeasonStartGameMode(player, GameType.SURVIVAL);
 		player.addEffect(new MobEffectInstance(MobEffects.BLINDNESS, get().introBlindnessTicks, 0, false, false, false));
 		clearLegacyIntroInvisibility(player);
 		removeLegacyIntroTool(player);
@@ -6063,7 +6271,7 @@ public final class SeasonStartSystem {
 			teleportPlayer(player, overworld, target, slot.yaw);
 		}
 		player.setSilent(true);
-		player.setGameMode(GameType.ADVENTURE);
+		setSeasonStartGameMode(player, GameType.ADVENTURE);
 		player.addEffect(new MobEffectInstance(MobEffects.BLINDNESS, get().introBlindnessTicks, 0, false, false, false));
 		clearLegacyIntroInvisibility(player);
 		removeLegacyIntroTool(player);
@@ -6080,7 +6288,7 @@ public final class SeasonStartSystem {
 		if (player == null || state == null) {
 			return;
 		}
-		player.setGameMode(GameType.SURVIVAL);
+		setSeasonStartGameMode(player, GameType.SURVIVAL);
 		player.setSilent(true);
 		if (!state.sharedVisionRestored) {
 			player.addEffect(new MobEffectInstance(MobEffects.BLINDNESS, get().introBlindnessTicks, 0, false, false, false));
@@ -6094,19 +6302,31 @@ public final class SeasonStartSystem {
 		clearLegacyIntroInvisibility(player);
 		player.removeEffect(MobEffects.BLINDNESS);
 		player.setSilent(false);
-		player.setGameMode(GameType.SURVIVAL);
+		setSeasonStartGameMode(player, GameType.SURVIVAL);
 	}
 
 	private static void applyFreeState(ServerPlayer player) {
+		applyFreeState(player, true);
+	}
+
+	private static void applyFreeState(ServerPlayer player, boolean clearDarkness) {
 		if (player == null) {
 			return;
 		}
 		clearLegacyIntroInvisibility(player);
 		player.removeEffect(MobEffects.BLINDNESS);
-		player.removeEffect(MobEffects.DARKNESS);
+		if (clearDarkness) {
+			player.removeEffect(MobEffects.DARKNESS);
+		}
 		player.setSilent(false);
-		player.setGameMode(GameType.SURVIVAL);
+		setSeasonStartGameMode(player, GameType.SURVIVAL);
 		removeLegacyIntroTool(player);
+	}
+
+	private static void setSeasonStartGameMode(ServerPlayer player, GameType targetMode) {
+		if (player != null && targetMode != null && player.gameMode.getGameModeForPlayer() != targetMode) {
+			player.setGameMode(targetMode);
+		}
 	}
 
 	private static void clearLegacyIntroInvisibility(ServerPlayer player) {
@@ -6115,16 +6335,6 @@ public final class SeasonStartSystem {
 		}
 		ServerAbsoluteInvisibilitySystem.deactivate(player);
 		player.removeEffect(MobEffects.INVISIBILITY);
-	}
-
-	private static void clearPostStartPlayerInventory(ServerPlayer player) {
-		if (player == null) {
-			return;
-		}
-		player.getInventory().clearContent();
-		player.containerMenu.setCarried(ItemStack.EMPTY);
-		player.inventoryMenu.broadcastChanges();
-		player.containerMenu.broadcastChanges();
 	}
 
 	private static void applyStateForPhase(ServerPlayer player, PlayerSceneState state) {
@@ -6562,7 +6772,9 @@ public final class SeasonStartSystem {
 		BlockPos oreSupportPos = floor.relative(facing, 8).relative(lateralDirection, Math.abs(lateral)).above();
 		BlockPos orePos = oreSupportPos.above();
 		Vec3 spawnPos = new Vec3(x + 0.5D, floorY + 1.0D, z + 0.5D);
-		return new SlotDefinition(floor, oreSupportPos, orePos, spawnPos, facing.toYRot());
+		// The ore remains safely inside the room, but the player spawns facing the
+		// opposite direction so the first instruction is a real navigation beat.
+		return new SlotDefinition(floor, oreSupportPos, orePos, spawnPos, facing.getOpposite().toYRot());
 	}
 
 	private static BoxGeometry computeOuterBoxGeometry(BlockPos anchor) {
@@ -6816,8 +7028,14 @@ public final class SeasonStartSystem {
 		worldRevealCrackNotBeforeTick = Long.MIN_VALUE;
 		worldRevealMusicEndTick = Long.MIN_VALUE;
 		worldRevealDarknessClearTick = Long.MIN_VALUE;
+		worldRevealCompletionTick = Long.MIN_VALUE;
+		worldRevealDarknessPulseCount = 0;
+		worldRevealGameplayReleased = false;
 		sharedLaunchCollectedBitcoins = 0;
 		sharedLaunchRequiredBitcoins = 0;
+		sharedLaunchBitcoinSpawned = 0;
+		sharedLaunchBitcoinSupplyVersion = SHARED_LAUNCH_SUPPLY_VERSION;
+		sharedLaunchBitcoinPositionIndexLoaded = false;
 		sharedLaunchMilestoneCursor = 0;
 		sharedLaunchIntroTriggered = false;
 		sharedLaunchRaceControlsTriggered = false;
@@ -6859,6 +7077,9 @@ public final class SeasonStartSystem {
 			difficultyBeforeSeasonStart = parseDifficulty(state.difficultyBeforeSeasonStart);
 			sharedLaunchCollectedBitcoins = Math.max(0, state.sharedLaunchCollectedBitcoins);
 			sharedLaunchRequiredBitcoins = Math.max(0, state.sharedLaunchRequiredBitcoins);
+			sharedLaunchBitcoinSpawned = Math.max(0, state.sharedLaunchBitcoinSpawned);
+			sharedLaunchBitcoinSupplyVersion = Math.max(0, state.sharedLaunchBitcoinSupplyVersion);
+			sharedLaunchBitcoinPositionIndexLoaded = false;
 			sharedLaunchMilestoneCursor = resolveSharedLaunchMilestoneCursor(getSharedLaunchPercent());
 			sharedLaunchIntroTriggered = state.sharedLaunchIntroTriggered;
 			sharedLaunchRaceControlsTriggered = state.sharedLaunchRaceControlsTriggered;
@@ -6908,6 +7129,8 @@ public final class SeasonStartSystem {
 		state.difficultyBeforeSeasonStart = difficultyBeforeSeasonStart == null ? "" : difficultyBeforeSeasonStart.getKey();
 		state.sharedLaunchCollectedBitcoins = sharedLaunchCollectedBitcoins;
 		state.sharedLaunchRequiredBitcoins = sharedLaunchRequiredBitcoins;
+		state.sharedLaunchBitcoinSpawned = sharedLaunchBitcoinSpawned;
+		state.sharedLaunchBitcoinSupplyVersion = sharedLaunchBitcoinSupplyVersion;
 		state.sharedLaunchMilestoneCursor = sharedLaunchMilestoneCursor;
 		state.sharedLaunchIntroTriggered = sharedLaunchIntroTriggered;
 		state.sharedLaunchRaceControlsTriggered = sharedLaunchRaceControlsTriggered;
@@ -7661,6 +7884,8 @@ public final class SeasonStartSystem {
 		private String difficultyBeforeSeasonStart;
 		private int sharedLaunchCollectedBitcoins;
 		private int sharedLaunchRequiredBitcoins;
+		private int sharedLaunchBitcoinSpawned;
+		private int sharedLaunchBitcoinSupplyVersion;
 		private int sharedLaunchMilestoneCursor;
 		private boolean sharedLaunchIntroTriggered;
 		private boolean sharedLaunchRaceControlsTriggered;
