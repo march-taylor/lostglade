@@ -89,6 +89,7 @@ import net.minecraft.network.protocol.game.ClientboundOpenBookPacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoRemovePacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerRotationPacket;
+import net.minecraft.network.protocol.game.ClientboundPlayerAbilitiesPacket;
 import net.minecraft.network.protocol.game.ClientboundRemoveEntitiesPacket;
 import net.minecraft.network.protocol.game.ClientboundRotateHeadPacket;
 import net.minecraft.network.protocol.game.ClientboundSetCameraPacket;
@@ -164,6 +165,7 @@ import net.minecraft.world.entity.ai.util.DefaultRandomPos;
 import net.minecraft.world.entity.decoration.ArmorStand;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.entity.player.Abilities;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.inventory.ChestMenu;
 import net.minecraft.world.inventory.ClickType;
@@ -776,6 +778,7 @@ public final class ServerRaceSystem {
 	private static final Identifier MARK_STOCK_SPEED_MODIFIER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "mark_stock_speed_penalty");
 	private static final Identifier KILKA_STOCK_LAND_MINING_PENALTY_MODIFIER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "kilka_stock_land_mining_penalty");
 	private static final Identifier KILKA_STOCK_UNDERWATER_MINING_BONUS_MODIFIER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "kilka_stock_underwater_mining_bonus");
+	private static final Identifier KILKA_STOCK_UNDERWATER_AIRBORNE_MINING_BONUS_MODIFIER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "kilka_stock_underwater_airborne_mining_bonus");
 	private static final Identifier KILKA_STOCK_LAND_MOVEMENT_PENALTY_MODIFIER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "kilka_stock_land_movement_penalty");
 	private static final Identifier KILKA_STOCK_UNDERWATER_WALKING_BONUS_MODIFIER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "kilka_stock_underwater_walking_bonus");
 	private static final Identifier KILKA_STOCK_SEAFLOOR_MOVEMENT_SPEED_MODIFIER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "kilka_stock_seafloor_movement_speed");
@@ -1048,6 +1051,7 @@ public final class ServerRaceSystem {
 	private static final Map<UUID, Long> KILKA_IRRADIATION_END_TICKS = new LinkedHashMap<>();
 	private static final Map<UUID, KilkaDefenseSession> KILKA_DEFENSE_SESSIONS = new LinkedHashMap<>();
 	private static final Map<UUID, KilkaSalmonFormSession> KILKA_SALMON_FORMS = new LinkedHashMap<>();
+	private static final Map<UUID, Float> KILKA_STOCK_CLIENT_WALKING_SPEEDS = new HashMap<>();
 	private static final Map<UUID, List<KilkaSeaBeaconLink>> KILKA_SEA_BEACONS = new LinkedHashMap<>();
 	private static final Set<UUID> KILKA_SHNYAGA_BUFFED_PLAYERS = new HashSet<>();
 	private static final Map<UUID, MarkShieldBashDashSession> MARK_SHIELD_BASH_DASHES = new LinkedHashMap<>();
@@ -1079,6 +1083,8 @@ public final class ServerRaceSystem {
 	private static final List<LittleDictatorDelayedPacket> LITTLE_DICTATOR_DELAYED_PACKETS = new ArrayList<>();
 	private static final Map<UUID, Long> LITTLE_DICTATOR_LAST_DELAYED_PACKET_RELEASE_TICKS = new HashMap<>();
 	private static final Set<UUID> KILKA_STOCK_NIGHT_VISION = new HashSet<>();
+	private static final Map<UUID, MobEffectInstance> KILKA_STOCK_NATURAL_NIGHT_VISION = new LinkedHashMap<>();
+	private static final Map<UUID, Long> KILKA_STOCK_NATURAL_NIGHT_VISION_END_TICKS = new LinkedHashMap<>();
 	private static final Map<UUID, LittleDictatorUniqueSession> LITTLE_DICTATOR_UNIQUE_SESSIONS = new LinkedHashMap<>();
 	private static final Set<UUID> LITTLE_DICTATOR_TAX_CHEST_PENDING = new HashSet<>();
 	private static final Map<UUID, Set<LittleDictatorTaxChestRef>> LITTLE_DICTATOR_TAX_CHESTS = new LinkedHashMap<>();
@@ -1125,6 +1131,7 @@ public final class ServerRaceSystem {
 	private static final ThreadLocal<ServerPlayer> LITTLE_DICTATOR_DROP_CONTEXT_PLAYER = new ThreadLocal<>();
 	private static final ThreadLocal<ServerPlayer> LITTLE_DICTATOR_ENCHANTMENT_CONTEXT_PLAYER = new ThreadLocal<>();
 	private static final ThreadLocal<Boolean> LITTLE_DICTATOR_PROPAGANDA_APPLYING_HASTE = ThreadLocal.withInitial(() -> Boolean.FALSE);
+	private static final ThreadLocal<Boolean> KILKA_STOCK_APPLYING_NIGHT_VISION = ThreadLocal.withInitial(() -> Boolean.FALSE);
 	private static final Set<CocaineCauldronKey> PROCESSED_COCAINE_CAULDRONS = new HashSet<>();
 	private static long processedCocaineCauldronTick = Long.MIN_VALUE;
 	private static long womanShnyagaNextWhitelistCheckTick = Long.MIN_VALUE;
@@ -1487,6 +1494,7 @@ public final class ServerRaceSystem {
 			Lg2.LOGGER.info("Loaded {} configured personal races", RACES_BY_NICKNAME.size());
 		});
 		ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
+			clearAllKilkaStockNightVision(server);
 			SEASON_START_RACES.clear();
 			saveWomanShnyagaLinks(server);
 			saveLittleDictatorTaxChests(server);
@@ -1681,6 +1689,8 @@ public final class ServerRaceSystem {
 			clearLittleDictatorTaxChestHighlights(handler.player);
 			clearLittleDictatorUniqueTargetState(handler.player);
 			clearKilkaShnyagaBuffs(handler.player);
+			clearKilkaStockNightVision(handler.player);
+			KILKA_STOCK_CLIENT_WALKING_SPEEDS.remove(handler.player.getUUID());
 			clearKilkaSeaBeaconClientDisplays(handler.player);
 			KILKA_ATTACK_FLASHES.remove(handler.player.getUUID());
 			cleanupKilkaSalmonForm(server, handler.player.getUUID(), KILKA_SALMON_FORMS.remove(handler.player.getUUID()), false);
@@ -1701,6 +1711,8 @@ public final class ServerRaceSystem {
 				MILK_ABSOLUTE_LOST_HEART_ANIMATIONS.remove(newPlayer.getUUID());
 				MILK_DEFENSE_SESSIONS.remove(newPlayer.getUUID());
 				clearKilkaShnyagaBuffs(newPlayer);
+				discardKilkaStockNightVision(newPlayer);
+				removeKilkaStockMiningModifiers(newPlayer);
 				clearKilkaSeaBeaconClientDisplays(newPlayer);
 				KILKA_ATTACK_FLASHES.remove(newPlayer.getUUID());
 				cleanupKilkaSalmonForm(newPlayer.level().getServer(), newPlayer.getUUID(), KILKA_SALMON_FORMS.remove(newPlayer.getUUID()), true);
@@ -12321,6 +12333,9 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		syncGennadiyDonkeyManualVisual(player);
 		syncGennadiyDefenseHeadLock(player);
 		lockLittleDictatorUniqueCasterMovement(player);
+		if (getKilkaStockAbility(player) != null) {
+			updateKilkaStockMiningModifiers(player);
+		}
 		WomanAttackChargeSession session = WOMAN_ATTACK_CHARGE_SESSIONS.get(player.getUUID());
 		if (session != null) {
 			syncWomanAttackAirTrigger(player, session);
@@ -14025,36 +14040,170 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		if (server == null) {
 			return;
 		}
-		Set<UUID> activePlayers = new HashSet<>();
+		Set<UUID> onlinePlayers = new HashSet<>();
 		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			onlinePlayers.add(player.getUUID());
 			updateKilkaStockMiningModifiers(player);
 			if (player.isAlive() && !player.isSpectator() && getKilkaStockAbility(player) != null && isKilkaHeadUnderwater(player)) {
-				UUID playerId = player.getUUID();
-				activePlayers.add(playerId);
-				MobEffectInstance current = player.getEffect(MobEffects.NIGHT_VISION);
-				boolean managed = isKilkaStockNightVision(player, current);
-				if (KILKA_STOCK_NIGHT_VISION.contains(playerId) && !managed) {
-					KILKA_STOCK_NIGHT_VISION.remove(playerId);
-				}
-				if (current == null) {
-					player.addEffect(new MobEffectInstance(MobEffects.NIGHT_VISION, MobEffectInstance.INFINITE_DURATION, 0, false, false, false));
-					KILKA_STOCK_NIGHT_VISION.add(playerId);
-				}
+				refreshKilkaStockNightVision(player);
 			} else {
 				clearKilkaStockNightVision(player);
 			}
 		}
-		KILKA_STOCK_NIGHT_VISION.removeIf(playerId -> !activePlayers.contains(playerId) && server.getPlayerList().getPlayer(playerId) == null);
+		KILKA_STOCK_NIGHT_VISION.removeIf(playerId -> !onlinePlayers.contains(playerId));
+		KILKA_STOCK_NATURAL_NIGHT_VISION.keySet().removeIf(playerId -> !onlinePlayers.contains(playerId));
+		KILKA_STOCK_NATURAL_NIGHT_VISION_END_TICKS.keySet().removeIf(playerId -> !onlinePlayers.contains(playerId));
+	}
+
+	private static void refreshKilkaStockNightVision(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		UUID playerId = player.getUUID();
+		MobEffectInstance current = player.getEffect(MobEffects.NIGHT_VISION);
+		if (isKilkaStockNightVision(player, current)) {
+			getKilkaStockNaturalNightVision(player);
+			return;
+		}
+		MobEffectInstance natural = copyKilkaStockNaturalNightVision(current);
+		if (natural != null && shouldReplaceKilkaStockNaturalNightVision(player, natural)) {
+			storeKilkaStockNaturalNightVision(player, natural);
+		}
+		if (current != null) {
+			player.removeEffect(MobEffects.NIGHT_VISION);
+		}
+		KILKA_STOCK_NIGHT_VISION.add(playerId);
+		KILKA_STOCK_APPLYING_NIGHT_VISION.set(Boolean.TRUE);
+		try {
+			player.addEffect(new MobEffectInstance(MobEffects.NIGHT_VISION, MobEffectInstance.INFINITE_DURATION, 0, false, false, false));
+		} finally {
+			KILKA_STOCK_APPLYING_NIGHT_VISION.set(Boolean.FALSE);
+		}
 	}
 
 	private static void clearKilkaStockNightVision(ServerPlayer player) {
-		if (player == null || !KILKA_STOCK_NIGHT_VISION.remove(player.getUUID())) {
+		if (player == null) {
 			return;
 		}
+		UUID playerId = player.getUUID();
 		MobEffectInstance current = player.getEffect(MobEffects.NIGHT_VISION);
-		if (isKilkaStockNightVision(player, current)) {
+		boolean managed = isKilkaStockNightVision(player, current);
+		KILKA_STOCK_NIGHT_VISION.remove(playerId);
+		MobEffectInstance natural = getKilkaStockNaturalNightVision(player);
+		KILKA_STOCK_NATURAL_NIGHT_VISION.remove(playerId);
+		KILKA_STOCK_NATURAL_NIGHT_VISION_END_TICKS.remove(playerId);
+		if (managed) {
 			player.removeEffect(MobEffects.NIGHT_VISION);
 		}
+		if (natural != null) {
+			player.addEffect(natural);
+		}
+	}
+
+	public static boolean handleKilkaStockIncomingNightVision(LivingEntity entity, MobEffectInstance effect) {
+		if (!(entity instanceof ServerPlayer player) || effect == null || effect.getEffect() != MobEffects.NIGHT_VISION
+				|| !KILKA_STOCK_NIGHT_VISION.contains(player.getUUID()) || KILKA_STOCK_APPLYING_NIGHT_VISION.get()) {
+			return false;
+		}
+		MobEffectInstance incoming = copyKilkaStockNaturalNightVision(effect);
+		if (incoming != null && shouldReplaceKilkaStockNaturalNightVision(player, incoming)) {
+			storeKilkaStockNaturalNightVision(player, incoming);
+		}
+		refreshKilkaStockNightVision(player);
+		return true;
+	}
+
+	private static MobEffectInstance copyKilkaStockNaturalNightVision(MobEffectInstance effect) {
+		return effect == null ? null : copyKilkaStockNaturalNightVision(effect, effect.getDuration());
+	}
+
+	private static MobEffectInstance copyKilkaStockNaturalNightVision(MobEffectInstance effect, int duration) {
+		if (effect == null || effect.getEffect() != MobEffects.NIGHT_VISION || (duration <= 0 && duration != MobEffectInstance.INFINITE_DURATION)) {
+			return null;
+		}
+		return new MobEffectInstance(MobEffects.NIGHT_VISION, duration, effect.getAmplifier(), effect.isAmbient(), effect.isVisible(), effect.showIcon());
+	}
+
+	private static void storeKilkaStockNaturalNightVision(ServerPlayer player, MobEffectInstance effect) {
+		if (player == null) {
+			return;
+		}
+		MobEffectInstance copy = copyKilkaStockNaturalNightVision(effect);
+		UUID playerId = player.getUUID();
+		if (copy == null) {
+			KILKA_STOCK_NATURAL_NIGHT_VISION.remove(playerId);
+			KILKA_STOCK_NATURAL_NIGHT_VISION_END_TICKS.remove(playerId);
+			return;
+		}
+		KILKA_STOCK_NATURAL_NIGHT_VISION.put(playerId, copy);
+		long endTick = copy.getDuration() == MobEffectInstance.INFINITE_DURATION ? Long.MAX_VALUE : player.level().getGameTime() + copy.getDuration();
+		KILKA_STOCK_NATURAL_NIGHT_VISION_END_TICKS.put(playerId, endTick);
+	}
+
+	private static MobEffectInstance getKilkaStockNaturalNightVision(ServerPlayer player) {
+		if (player == null) {
+			return null;
+		}
+		UUID playerId = player.getUUID();
+		MobEffectInstance stored = KILKA_STOCK_NATURAL_NIGHT_VISION.get(playerId);
+		Long endTick = KILKA_STOCK_NATURAL_NIGHT_VISION_END_TICKS.get(playerId);
+		if (stored == null || endTick == null) {
+			return null;
+		}
+		if (endTick == Long.MAX_VALUE || stored.getDuration() == MobEffectInstance.INFINITE_DURATION) {
+			return copyKilkaStockNaturalNightVision(stored, MobEffectInstance.INFINITE_DURATION);
+		}
+		long remaining = endTick - player.level().getGameTime();
+		if (remaining <= 0L) {
+			KILKA_STOCK_NATURAL_NIGHT_VISION.remove(playerId);
+			KILKA_STOCK_NATURAL_NIGHT_VISION_END_TICKS.remove(playerId);
+			return null;
+		}
+		return copyKilkaStockNaturalNightVision(stored, (int) Math.min(Integer.MAX_VALUE, remaining));
+	}
+
+	private static boolean shouldReplaceKilkaStockNaturalNightVision(ServerPlayer player, MobEffectInstance incoming) {
+		if (player == null || incoming == null) {
+			return false;
+		}
+		MobEffectInstance previous = getKilkaStockNaturalNightVision(player);
+		if (previous == null) {
+			return true;
+		}
+		if (incoming.getAmplifier() != previous.getAmplifier()) {
+			return incoming.getAmplifier() > previous.getAmplifier();
+		}
+		long incomingEndTick = incoming.getDuration() == MobEffectInstance.INFINITE_DURATION ? Long.MAX_VALUE : player.level().getGameTime() + incoming.getDuration();
+		Long previousEndTick = KILKA_STOCK_NATURAL_NIGHT_VISION_END_TICKS.get(player.getUUID());
+		if (incomingEndTick == Long.MAX_VALUE) {
+			return previousEndTick == null || previousEndTick != Long.MAX_VALUE;
+		}
+		return previousEndTick != null && previousEndTick != Long.MAX_VALUE && incomingEndTick > previousEndTick;
+	}
+
+	private static void discardKilkaStockNightVision(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		UUID playerId = player.getUUID();
+		boolean managed = isKilkaStockNightVision(player, player.getEffect(MobEffects.NIGHT_VISION));
+		KILKA_STOCK_NIGHT_VISION.remove(playerId);
+		KILKA_STOCK_NATURAL_NIGHT_VISION.remove(playerId);
+		KILKA_STOCK_NATURAL_NIGHT_VISION_END_TICKS.remove(playerId);
+		if (managed) {
+			player.removeEffect(MobEffects.NIGHT_VISION);
+		}
+	}
+
+	private static void clearAllKilkaStockNightVision(MinecraftServer server) {
+		if (server != null) {
+			for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+				clearKilkaStockNightVision(player);
+			}
+		}
+		KILKA_STOCK_NIGHT_VISION.clear();
+		KILKA_STOCK_NATURAL_NIGHT_VISION.clear();
+		KILKA_STOCK_NATURAL_NIGHT_VISION_END_TICKS.clear();
 	}
 
 
@@ -14071,7 +14220,20 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		boolean headUnderwater = isKilkaHeadUnderwater(player);
 		boolean feetInWater = isKilkaFeetInWater(player);
 		boolean hasAquaAffinity = hasKilkaAquaAffinity(player);
+		if (headUnderwater && !isKilkaStockMiningSupported(player)) {
+			// Vanilla divides mining speed by five while airborne. Applying the inverse
+			// through a synced attribute keeps client and server breaking progress equal.
+			syncKilkaStockAttributeModifier(
+					blockBreakSpeed,
+					KILKA_STOCK_UNDERWATER_AIRBORNE_MINING_BONUS_MODIFIER_ID,
+					4.0D,
+					AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL
+			);
+		} else {
+			removeAttributeModifier(blockBreakSpeed, KILKA_STOCK_UNDERWATER_AIRBORNE_MINING_BONUS_MODIFIER_ID);
+		}
 		if (isKilkaSalmonForm(player)) {
+			restoreKilkaStockClientWalkingSpeed(player);
 			// Salmon form keeps its own movement attributes. Apply only Kilka's mining
 			// rules so water/land digging is identical to the normal form.
 			removeAttributeModifier(waterMovementEfficiency, KILKA_STOCK_UNDERWATER_WALKING_BONUS_MODIFIER_ID);
@@ -14104,6 +14266,7 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		}
 
 		if (headUnderwater) {
+			restoreKilkaStockClientWalkingSpeed(player);
 			removeAttributeModifier(blockBreakSpeed, KILKA_STOCK_LAND_MINING_PENALTY_MODIFIER_ID);
 			removeAttributeModifier(movementSpeed, KILKA_STOCK_LAND_MOVEMENT_PENALTY_MODIFIER_ID);
 			syncKilkaStockSeaFloorMovementSpeedModifier(movementSpeed, player);
@@ -14125,8 +14288,11 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 
 		removeAttributeModifier(submergedMiningSpeed, KILKA_STOCK_UNDERWATER_MINING_BONUS_MODIFIER_ID);
 		if (feetInWater) {
+			restoreKilkaStockClientWalkingSpeed(player);
 			removeAttributeModifier(movementSpeed, KILKA_STOCK_LAND_MOVEMENT_PENALTY_MODIFIER_ID);
-			removeAttributeModifier(movementSpeed, KILKA_STOCK_SEAFLOOR_MOVEMENT_SPEED_MODIFIER_ID);
+			// Shallow water still counts as the sea floor: do not remove the
+			// land-speed compensation merely because the eyes are above water.
+			syncKilkaStockSeaFloorMovementSpeedModifier(movementSpeed, player);
 			applyKilkaMissingAttributeBonus(
 					waterMovementEfficiency,
 					KILKA_STOCK_UNDERWATER_WALKING_BONUS_MODIFIER_ID,
@@ -14142,6 +14308,7 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 					landMovementMultiplier - 1.0D,
 					AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL
 			);
+			syncKilkaStockClientWalkingSpeed(player, landMovementMultiplier);
 		}
 		if (hasAquaAffinity) {
 			removeAttributeModifier(blockBreakSpeed, KILKA_STOCK_LAND_MINING_PENALTY_MODIFIER_ID);
@@ -14166,6 +14333,31 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		double multiplier = 0.55D + (0.45D * clampedLevel / 3.0D);
 		return sprinting ? Math.min(1.0D, multiplier * KILKA_STOCK_LAND_SPRINT_SPEED_MULTIPLIER) : multiplier;
 	}
+	private static void syncKilkaStockClientWalkingSpeed(ServerPlayer player, double multiplier) {
+		if (player == null || player.connection == null) {
+			return;
+		}
+		float target = Math.max(0.001F, (float) (player.getAbilities().getWalkingSpeed() * multiplier));
+		Float previous = KILKA_STOCK_CLIENT_WALKING_SPEEDS.get(player.getUUID());
+		if (previous != null && Math.abs(previous - target) <= 1.0E-6F) {
+			return;
+		}
+		Abilities clientAbilities = new Abilities();
+		clientAbilities.apply(player.getAbilities().pack());
+		clientAbilities.setWalkingSpeed(target);
+		player.connection.send(new ClientboundPlayerAbilitiesPacket(clientAbilities));
+		KILKA_STOCK_CLIENT_WALKING_SPEEDS.put(player.getUUID(), target);
+	}
+
+	private static void restoreKilkaStockClientWalkingSpeed(ServerPlayer player) {
+		if (player == null || KILKA_STOCK_CLIENT_WALKING_SPEEDS.remove(player.getUUID()) == null) {
+			return;
+		}
+		if (player.connection != null) {
+			player.connection.send(new ClientboundPlayerAbilitiesPacket(player.getAbilities()));
+		}
+	}
+
 	private static double getKilkaStockWaterMovementEfficiencyTarget(ServerPlayer player) {
 		return isKilkaStockSeaFloorMovement(player) ? 1.0D : 0.0D;
 	}
@@ -14188,22 +14380,47 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		if (!isKilkaStockSeaFloorMovement(player)) {
 			return 0.0D;
 		}
-		return player.onGround() ? 0.30D : 0.67D;
+		return player.onGround() ? 0.33D : 0.71D;
 	}
 
 	private static boolean isKilkaStockSeaFloorMovement(ServerPlayer player) {
-		if (player == null || !(isKilkaFeetInWater(player) || isKilkaHeadUnderwater(player)) || !(player.level() instanceof ServerLevel level)) {
+		return player != null
+				&& (isKilkaFeetInWater(player) || isKilkaHeadUnderwater(player))
+				&& (player.onGround() || hasKilkaFloorSupport(player, 0.6D));
+	}
+
+	private static boolean isKilkaStockMiningSupported(ServerPlayer player) {
+		return player != null && (player.onGround() || hasKilkaFloorSupport(player, 0.1D));
+	}
+
+	private static boolean hasKilkaFloorSupport(ServerPlayer player, double probeDepth) {
+		if (player == null || !(player.level() instanceof ServerLevel level)) {
 			return false;
 		}
 		AABB box = player.getBoundingBox();
-		return box != null && !level.noCollision(player, box.move(0.0D, -0.08D, 0.0D));
+		if (box == null) {
+			return false;
+		}
+		// Probe only below the feet so a side wall cannot be mistaken for support.
+		double inset = Math.min(0.02D, Math.max(0.0D, (box.maxX - box.minX) * 0.2D));
+		AABB floorProbe = new AABB(
+				box.minX + inset,
+				box.minY - Math.max(0.01D, probeDepth),
+				box.minZ + inset,
+				box.maxX - inset,
+				box.minY + 0.01D,
+				box.maxZ - inset
+		);
+		return !level.noCollision(player, floorProbe);
 	}
 
 	private static void removeKilkaStockMiningModifiers(ServerPlayer player) {
 		if (player == null) {
 			return;
 		}
+		restoreKilkaStockClientWalkingSpeed(player);
 		removeAttributeModifier(player.getAttribute(Attributes.BLOCK_BREAK_SPEED), KILKA_STOCK_LAND_MINING_PENALTY_MODIFIER_ID);
+		removeAttributeModifier(player.getAttribute(Attributes.BLOCK_BREAK_SPEED), KILKA_STOCK_UNDERWATER_AIRBORNE_MINING_BONUS_MODIFIER_ID);
 		removeAttributeModifier(player.getAttribute(Attributes.SUBMERGED_MINING_SPEED), KILKA_STOCK_UNDERWATER_MINING_BONUS_MODIFIER_ID);
 		removeAttributeModifier(player.getAttribute(Attributes.MOVEMENT_SPEED), KILKA_STOCK_LAND_MOVEMENT_PENALTY_MODIFIER_ID);
 		removeAttributeModifier(player.getAttribute(Attributes.MOVEMENT_SPEED), KILKA_STOCK_SEAFLOOR_MOVEMENT_SPEED_MODIFIER_ID);

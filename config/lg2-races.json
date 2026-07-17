@@ -466,7 +466,7 @@
       "enabled": true,
       "id": "little_dictator",
       "displayName": "Маленький Диктатор",
-      "ownerNickname": "Rajas_YT",
+      "ownerNickname": "",
       "description": "pines8",
       "attack": {
         "enabled": true,
@@ -531,7 +531,7 @@
       "enabled": true,
       "id": "kilka",
       "displayName": "Килька",
-      "ownerNickname": "",
+      "ownerNickname": "Rajas_YT",
       "description": "",
       "attack": {
         "enabled": true,

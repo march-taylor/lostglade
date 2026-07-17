@@ -14,7 +14,8 @@ public abstract class LivingEntityLittleDictatorPropagandaHasteMixin {
 	@Inject(method = "addEffect(Lnet/minecraft/world/effect/MobEffectInstance;)Z", at = @At("HEAD"), cancellable = true)
 	private void lg2$captureLittleDictatorPropagandaHaste(MobEffectInstance effect, CallbackInfoReturnable<Boolean> cir) {
 		LivingEntity self = (LivingEntity) (Object) this;
-		if (ServerRaceSystem.handleLittleDictatorPropagandaIncomingHaste(self, effect)) {
+		if (ServerRaceSystem.handleLittleDictatorPropagandaIncomingHaste(self, effect)
+				|| ServerRaceSystem.handleKilkaStockIncomingNightVision(self, effect)) {
 			cir.setReturnValue(true);
 		}
 	}
@@ -22,7 +23,8 @@ public abstract class LivingEntityLittleDictatorPropagandaHasteMixin {
 	@Inject(method = "addEffect(Lnet/minecraft/world/effect/MobEffectInstance;Lnet/minecraft/world/entity/Entity;)Z", at = @At("HEAD"), cancellable = true)
 	private void lg2$captureLittleDictatorPropagandaHasteWithSource(MobEffectInstance effect, Entity source, CallbackInfoReturnable<Boolean> cir) {
 		LivingEntity self = (LivingEntity) (Object) this;
-		if (ServerRaceSystem.handleLittleDictatorPropagandaIncomingHaste(self, effect)) {
+		if (ServerRaceSystem.handleLittleDictatorPropagandaIncomingHaste(self, effect)
+				|| ServerRaceSystem.handleKilkaStockIncomingNightVision(self, effect)) {
 			cir.setReturnValue(true);
 		}
 	}
