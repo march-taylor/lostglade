@@ -16,6 +16,15 @@
                                                    }
                                                ]
                                 },
+    "stability_siren":  {
+                             "sounds":  [
+                                            {
+                                                "name":  "lg2:stability_siren",
+                                                "preload":  true,
+                                                "stream":  true
+                                            }
+                                        ]
+                         },
     "camera_print":  {
                          "sounds":  [
                                         {

@@ -1148,6 +1148,13 @@
       "outputPath": "config/lg2-season-start/voice/phase5_menu_race_controls.wav",
       "durationTicks": 335,
       "generatorVersion": 4
+    },
+    "stability_nonpayment_alarm": {
+      "fingerprint": "5d571d805d1338200c7b9a7254fc75ae3ab2f20abfd830717be6c802a4596b13",
+      "text": "Внимание! Обнаружена неуплата!",
+      "outputPath": "config/lg2-season-start/voice/stability_nonpayment_alarm.wav",
+      "durationTicks": 54,
+      "generatorVersion": 4
     }
   }
 }

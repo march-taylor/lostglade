@@ -781,10 +781,6 @@ public final class SeasonStartSystem {
 		return (active || worldRevealActive) && !completed;
 	}
 
-	public static boolean shouldUseFlatNarrationMix() {
-		return active && !completed;
-	}
-
 	/**
 	 * The startup cube is transient presentation geometry, not terrain.  A map
 	 * capture made while it exists would cache the black shell at world centre

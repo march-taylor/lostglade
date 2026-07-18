@@ -170,6 +170,13 @@ public final class SeasonStartConfig {
 					cue.durationTicks = clampedDurationTicks;
 					changed = true;
 				}
+				float clampedVoiceGain = !Float.isFinite(cue.voiceGain)
+						? 1.0F
+						: Math.max(0.25F, Math.min(4.0F, cue.voiceGain));
+				if (Float.compare(clampedVoiceGain, cue.voiceGain) != 0) {
+					cue.voiceGain = clampedVoiceGain;
+					changed = true;
+				}
 				if (cue.requires == null) {
 					cue.requires = new ArrayList<>();
 					changed = true;
@@ -290,6 +297,11 @@ public final class SeasonStartConfig {
 					.onceGlobal());
 			cues.add(VoiceCue.global("season_finish", "season_finished", "voice/season_finish.wav", "Инициализация завершена. Мир прогружен.", 0, 100)
 					.onceGlobal());
+			cues.add(VoiceCue.global("stability_nonpayment_alarm", "stability_nonpayment_alarm", "voice/stability_nonpayment_alarm.wav", "Внимание! Обнаружена неуплата.", 0, 60)
+					.repeatable()
+					.tts("Внимание! Обнаружена неуплата!")
+					.voiceGain(2.2F));
+
 			return cues;
 		}
 	}
@@ -308,6 +320,8 @@ public final class SeasonStartConfig {
 		public boolean onceGlobal = false;
 		public boolean oncePerPlayer = true;
 		public boolean interruptCurrent = false;
+		/** Extra PCM gain for exceptional announcements. Kept at one for ordinary narration. */
+		public float voiceGain = 1.0F;
 		public List<String> requires = new ArrayList<>();
 
 		public VoiceCue require(String cueId) {
@@ -331,6 +345,11 @@ public final class SeasonStartConfig {
 
 		public VoiceCue interruptCurrent() {
 			this.interruptCurrent = true;
+			return this;
+		}
+
+		public VoiceCue voiceGain(float gain) {
+			this.voiceGain = gain;
 			return this;
 		}
 

@@ -22,6 +22,7 @@ import net.minecraft.core.particles.SimpleParticleType;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.Style;
+import net.minecraft.network.protocol.game.ClientboundSoundEntityPacket;
 import net.minecraft.network.protocol.game.ClientboundSoundPacket;
 import net.minecraft.network.protocol.game.ClientboundStopSoundPacket;
 import net.minecraft.resources.Identifier;
@@ -89,6 +90,14 @@ public final class ServerStabilitySystem {
 	private static final float STARTUP_FEED_MUSIC_VOLUME = 8.0F;
 	private static final float STARTUP_FEED_MUSIC_PITCH = 0.86F;
 	private static final float FEED_XP_SOUND_VOLUME = 1.0F;
+	private static final Identifier STABILITY_SIREN_SOUND_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "stability_siren");
+	private static final Holder<SoundEvent> STABILITY_SIREN_SOUND = Holder.direct(SoundEvent.createVariableRangeEvent(STABILITY_SIREN_SOUND_ID));
+	private static final long STABILITY_SIREN_START_TICKS = 20L * 60L * 5L;
+	private static final long STABILITY_SIREN_REPEAT_TICKS = 20L * 20L;
+	private static final long STABILITY_NONPAYMENT_ANNOUNCEMENT_DELAY_TICKS = 20L * 10L;
+	private static final long STABILITY_NONPAYMENT_ANNOUNCEMENT_REPEAT_TICKS = 20L * 7L;
+	private static final float STABILITY_SIREN_VOLUME = 3.0F;
+	private static final Component NONPAYMENT_DISCONNECT_REASON = Component.literal("Сервер не уплачен");
 	private static final SimpleParticleType FEED_PARTICLE = resolveFeedParticle();
 	private static final Gson STABILITY_STATE_GSON = new GsonBuilder().setPrettyPrinting().create();
 	private static final String STABILITY_STATE_FILE_NAME = "lg2-stability.json";
@@ -97,6 +106,10 @@ public final class ServerStabilitySystem {
 	private static long decayTickCounter = 0L;
 	private static double pendingStabilityFraction = 0.0D;
 	private static long nextFeedSoundAllowedTick = Long.MIN_VALUE;
+	private static long stabilitySirenStartedTick = Long.MIN_VALUE;
+	private static long nextStabilitySirenTick = Long.MIN_VALUE;
+	private static long nextNonpaymentAnnouncementTick = Long.MIN_VALUE;
+	private static boolean shutdownHaltRequested = false;
 	private static boolean stabilityStateLoaded = false;
 	private static boolean stabilityDirty = false;
 
@@ -159,12 +172,15 @@ public final class ServerStabilitySystem {
 		decayTickCounter = 0L;
 		pendingStabilityFraction = 0.0D;
 		nextFeedSoundAllowedTick = Long.MIN_VALUE;
+		resetStabilitySiren();
+		shutdownHaltRequested = false;
 		ACTIVE_FEED_SOUND_SOURCES.clear();
 		TRACKED_SERVER_ANCHORS.clear();
 
 		ServerLifecycleEvents.SERVER_STARTED.register(ServerStabilitySystem::loadPersistedStability);
 		ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
 			stopAllFeedSoundSources(server);
+			stopStabilitySiren(server);
 			savePersistedStability(server);
 		});
 
@@ -211,6 +227,7 @@ public final class ServerStabilitySystem {
 		ServerTickEvents.END_SERVER_TICK.register(server -> {
 			tickStabilityDecay(server);
 			tickBitcoinOfferings();
+			tickCriticalStability(server);
 			tickActiveFeedSoundSources(server);
 
 			Set<UUID> online = new HashSet<>();
@@ -435,6 +452,114 @@ public final class ServerStabilitySystem {
 				if (nextFeedSoundAllowedTick > relaxedCooldownTick) {
 					nextFeedSoundAllowedTick = relaxedCooldownTick;
 				}
+			}
+		}
+	}
+
+	/** Maintains the final five-minute alarm and begins the terminal shutdown at zero. */
+	private static void tickCriticalStability(MinecraftServer server) {
+		if (server == null || !stabilityStateLoaded || SeasonStartSystem.shouldSuspendStabilitySystem()) {
+			return;
+		}
+
+		long nowTick = server.overworld().getGameTime();
+		if (getStability() <= 0) {
+			shutdownForNonpayment(server);
+			return;
+		}
+
+		long remainingTicks = getEstimatedTicksUntilShutdown(server);
+		if (remainingTicks > STABILITY_SIREN_START_TICKS) {
+			stopStabilitySiren(server);
+			return;
+		}
+		tickStabilitySiren(server, nowTick);
+	}
+
+	private static void tickStabilitySiren(MinecraftServer server, long nowTick) {
+		if (stabilitySirenStartedTick == Long.MIN_VALUE) {
+			stabilitySirenStartedTick = nowTick;
+			nextStabilitySirenTick = nowTick;
+			nextNonpaymentAnnouncementTick = nowTick + STABILITY_NONPAYMENT_ANNOUNCEMENT_DELAY_TICKS;
+		}
+		if (nowTick >= nextStabilitySirenTick) {
+			playStabilitySiren(server, nowTick);
+			nextStabilitySirenTick = nowTick + STABILITY_SIREN_REPEAT_TICKS;
+		}
+		if (nowTick >= nextNonpaymentAnnouncementTick) {
+			SeasonStartVoiceSystem.stopAllNarration();
+			SeasonStartVoiceSystem.fireTrigger(server, "stability_nonpayment_alarm", null);
+			nextNonpaymentAnnouncementTick = nowTick + STABILITY_NONPAYMENT_ANNOUNCEMENT_REPEAT_TICKS;
+		}
+	}
+
+	private static void playStabilitySiren(MinecraftServer server, long nowTick) {
+		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			if (player.connection == null || RendererBotPresenceSystem.isRendererBot(player)) {
+				continue;
+			}
+			player.connection.send(new ClientboundSoundEntityPacket(
+					STABILITY_SIREN_SOUND,
+					SoundSource.AMBIENT,
+					player,
+					STABILITY_SIREN_VOLUME,
+					1.0F,
+					player.getRandom().nextLong() ^ nowTick
+			));
+		}
+	}
+
+	private static void stopStabilitySiren(MinecraftServer server) {
+		if (server != null && stabilitySirenStartedTick != Long.MIN_VALUE) {
+			for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+				if (player != null && player.connection != null) {
+					player.connection.send(new ClientboundStopSoundPacket(STABILITY_SIREN_SOUND_ID, SoundSource.AMBIENT));
+				}
+			}
+		}
+		resetStabilitySiren();
+	}
+
+	private static void resetStabilitySiren() {
+		stabilitySirenStartedTick = Long.MIN_VALUE;
+		nextStabilitySirenTick = Long.MIN_VALUE;
+		nextNonpaymentAnnouncementTick = Long.MIN_VALUE;
+	}
+
+	private static long getEstimatedTicksUntilShutdown(MinecraftServer server) {
+		if (server == null || getStability() <= 0) {
+			return 0L;
+		}
+		long intervalTicks = Math.max(1L, (long) getEffectiveDecayIntervalSeconds(server) * 20L);
+		long ticksUntilNextPoint = Math.max(1L, intervalTicks - Math.min(decayTickCounter, intervalTicks - 1L));
+		return Math.max(0L, ticksUntilNextPoint + (long) Math.max(0, getStability() - 1) * intervalTicks);
+	}
+
+	private static void shutdownForNonpayment(MinecraftServer server) {
+		if (shutdownHaltRequested) {
+			return;
+		}
+		shutdownHaltRequested = true;
+		stopStabilitySiren(server);
+		SeasonStartVoiceSystem.stopAllNarration();
+		stopAllFeedSoundSources(server);
+		resetStabilityForNextBoot(server);
+		kickPlayersForNonpayment(server);
+		server.halt(false);
+	}
+
+	private static void resetStabilityForNextBoot(MinecraftServer server) {
+		setStability(getMaxStability());
+		decayTickCounter = 0L;
+		pendingStabilityFraction = 0.0D;
+		stabilityDirty = true;
+		savePersistedStability(server);
+	}
+
+	private static void kickPlayersForNonpayment(MinecraftServer server) {
+		for (ServerPlayer player : new ArrayList<>(server.getPlayerList().getPlayers())) {
+			if (player != null && player.connection != null) {
+				player.connection.disconnect(NONPAYMENT_DISCONNECT_REASON);
 			}
 		}
 	}

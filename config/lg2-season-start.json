@@ -134,7 +134,7 @@
       "audience": "player",
       "channel": "player",
       "audioFile": "voice/phase1_intro_blindness.wav",
-      "scriptText": "Сейчас вы видите примерно ничего. Не стоит беспокоиться. Сейчас вам нужно будет запитать сервер чтобы включить свет",
+      "scriptText": "Сейчас вы ничего не видите. Не стоит беспокоиться. Сейчас вам нужно будет запитать сервер чтобы включить свет",
       "delayTicks": 2,
       "durationTicks": 151,
       "onceGlobal": false,
@@ -2056,6 +2056,22 @@
       "onceGlobal": true,
       "oncePerPlayer": false,
       "interruptCurrent": false,
+      "requires": []
+    },
+    {
+      "id": "stability_nonpayment_alarm",
+      "trigger": "stability_nonpayment_alarm",
+      "audience": "all",
+      "channel": "global",
+      "audioFile": "voice/stability_nonpayment_alarm.wav",
+      "scriptText": "Внимание! Обнаружена неуплата.",
+      "ttsText": "Внимание! Обнаружена неуплата!",
+      "delayTicks": 0,
+      "durationTicks": 54,
+      "onceGlobal": false,
+      "oncePerPlayer": false,
+      "interruptCurrent": true,
+      "voiceGain": 2.2,
       "requires": []
     }
   ]
