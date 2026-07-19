@@ -338,6 +338,7 @@ public final class ServerRaceSystem {
 	private static final double KILKA_SALMON_PLAYER_STANDING_BASE_HEIGHT_BLOCKS = 1.8D;
 	private static final double KILKA_SALMON_PLAYER_SWIMMING_BASE_HEIGHT_BLOCKS = 0.6D;
 	private static final double KILKA_SALMON_VIEWER_BACK_OFFSET_BLOCKS = 0.42D;
+	private static final double KILKA_SALMON_VISUAL_RECENTER_BLOCKS_PER_TICK = 0.08D;
 	private static final double KILKA_SALMON_NORMAL_SWIM_BLOCKS_PER_TICK = 0.07D;
 	private static final double KILKA_SALMON_PLAYER_SPRINT_SWIM_BLOCKS_PER_TICK = 0.20D;
 	private static final double KILKA_STOCK_LAND_SPRINT_SPEED_MULTIPLIER = 1.3D;
@@ -4588,6 +4589,7 @@ public final class ServerRaceSystem {
 		private final String collisionTeamName;
 		private int visualWallHoldXSign;
 		private int visualWallHoldZSign;
+		private Vec3 lastVisualOwnerPosition;
 		private boolean lastNaturalWaterState;
 		private boolean airborneFromWater;
 		private boolean forwardInput;
@@ -14687,6 +14689,7 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 				session.visualSalmonId = null;
 				session.visualWallHoldXSign = 0;
 				session.visualWallHoldZSign = 0;
+				session.lastVisualOwnerPosition = null;
 			}
 			applyKilkaSalmonInvisibility(player);
 			boolean aquaticMovementState = updateKilkaSalmonAquaticMovementState(player, session);
@@ -15140,6 +15143,7 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 			session.visualSalmonId = visual == null ? null : visual.getUUID();
 			session.visualWallHoldXSign = 0;
 			session.visualWallHoldZSign = 0;
+			session.lastVisualOwnerPosition = null;
 		}
 		return visual;
 	}
@@ -15413,6 +15417,7 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 			resolved = xzDistance <= zxDistance ? xzFirst : zxFirst;
 		}
 		updateKilkaSalmonVisualWallLock(session, ownerPos, resolved);
+		session.lastVisualOwnerPosition = ownerPos;
 		return resolved;
 	}
 
@@ -15420,25 +15425,37 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		if (session == null || currentPos == null || ownerPos == null) {
 			return ownerPos;
 		}
-		double x = ownerPos.x;
-		double z = ownerPos.z;
-		if (session.visualWallHoldXSign != 0) {
-			if (isKilkaSalmonOwnerPastLockedCenter(ownerPos.x, currentPos.x, session.visualWallHoldXSign)) {
-				x = currentPos.x;
-			} else {
-				session.visualWallHoldXSign = 0;
-			}
-		}
-		if (session.visualWallHoldZSign != 0) {
-			if (isKilkaSalmonOwnerPastLockedCenter(ownerPos.z, currentPos.z, session.visualWallHoldZSign)) {
-				z = currentPos.z;
-			} else {
-				session.visualWallHoldZSign = 0;
-			}
-		}
+		Vec3 previousOwnerPos = session.lastVisualOwnerPosition;
+		double previousOwnerX = previousOwnerPos == null ? ownerPos.x : previousOwnerPos.x;
+		double previousOwnerZ = previousOwnerPos == null ? ownerPos.z : previousOwnerPos.z;
+		double x = getKilkaSalmonVisualAxisTarget(
+				currentPos.x,
+				ownerPos.x,
+				previousOwnerX,
+				session.visualWallHoldXSign
+		);
+		double z = getKilkaSalmonVisualAxisTarget(
+				currentPos.z,
+				ownerPos.z,
+				previousOwnerZ,
+				session.visualWallHoldZSign
+		);
 		return new Vec3(x, ownerPos.y, z);
 	}
 
+	private static double getKilkaSalmonVisualAxisTarget(
+			double currentCoordinate,
+			double ownerCoordinate,
+			double previousOwnerCoordinate,
+			int wallHoldSign
+	) {
+		if (wallHoldSign == 0) {
+			return ownerCoordinate;
+		}
+		double ownerMovement = Math.abs(ownerCoordinate - previousOwnerCoordinate);
+		double maxStep = ownerMovement + KILKA_SALMON_VISUAL_RECENTER_BLOCKS_PER_TICK;
+		return currentCoordinate + Mth.clamp(ownerCoordinate - currentCoordinate, -maxStep, maxStep);
+	}
 	private static boolean isKilkaSalmonOwnerPastLockedCenter(double ownerCoordinate, double lockedCenter, int lockSign) {
 		return lockSign != 0 && (ownerCoordinate - lockedCenter) * lockSign > 1.0E-4D;
 	}
