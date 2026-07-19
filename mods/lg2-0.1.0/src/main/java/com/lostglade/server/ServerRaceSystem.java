@@ -341,6 +341,11 @@ public final class ServerRaceSystem {
 	private static final double KILKA_SALMON_NORMAL_SWIM_BLOCKS_PER_TICK = 0.07D;
 	private static final double KILKA_SALMON_PLAYER_SPRINT_SWIM_BLOCKS_PER_TICK = 0.20D;
 	private static final double KILKA_STOCK_LAND_SPRINT_SPEED_MULTIPLIER = 1.3D;
+	private static final double KILKA_STOCK_VANILLA_WATER_ACCELERATION = 0.02D;
+	private static final double KILKA_STOCK_VANILLA_WATER_WALK_DRAG = 0.8D;
+	private static final double KILKA_STOCK_VANILLA_WATER_SPRINT_DRAG = 0.9D;
+	private static final double KILKA_STOCK_VANILLA_LAND_DRAG = 0.54600006D;
+	private static final double KILKA_STOCK_VANILLA_WALK_SPEED = 0.1D;
 	private static final int KILKA_SHNYAGA_MAX_BEACONS = 5;
 	private static final double KILKA_SHNYAGA_DEFAULT_LINK_RANGE_BLOCKS = 100.0D;
 	private static final double KILKA_SHNYAGA_DEFAULT_BORDER_VISIBILITY_BLOCKS = 2.0D;
@@ -782,6 +787,7 @@ public final class ServerRaceSystem {
 	private static final Identifier KILKA_STOCK_LAND_MOVEMENT_PENALTY_MODIFIER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "kilka_stock_land_movement_penalty");
 	private static final Identifier KILKA_STOCK_UNDERWATER_WALKING_BONUS_MODIFIER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "kilka_stock_underwater_walking_bonus");
 	private static final Identifier KILKA_STOCK_SEAFLOOR_MOVEMENT_SPEED_MODIFIER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "kilka_stock_seafloor_movement_speed");
+
 	private static final Identifier KILKA_ATTACK_CHARGE_SCALE_MODIFIER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "kilka_attack_charge_scale");
 	private static final Identifier KILKA_SALMON_SCALE_MODIFIER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "kilka_salmon_scale");
 	private static final Identifier KILKA_SALMON_LAND_SPEED_MODIFIER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "kilka_salmon_land_speed");
@@ -14217,6 +14223,7 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		AttributeInstance submergedMiningSpeed = player.getAttribute(Attributes.SUBMERGED_MINING_SPEED);
 		AttributeInstance waterMovementEfficiency = player.getAttribute(Attributes.WATER_MOVEMENT_EFFICIENCY);
 		AttributeInstance movementSpeed = player.getAttribute(Attributes.MOVEMENT_SPEED);
+
 		boolean headUnderwater = isKilkaHeadUnderwater(player);
 		boolean feetInWater = isKilkaFeetInWater(player);
 		boolean hasAquaAffinity = hasKilkaAquaAffinity(player);
@@ -14237,8 +14244,9 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 			// Salmon form keeps its own movement attributes. Apply only Kilka's mining
 			// rules so water/land digging is identical to the normal form.
 			removeAttributeModifier(waterMovementEfficiency, KILKA_STOCK_UNDERWATER_WALKING_BONUS_MODIFIER_ID);
-			removeAttributeModifier(movementSpeed, KILKA_STOCK_LAND_MOVEMENT_PENALTY_MODIFIER_ID);
 			removeAttributeModifier(movementSpeed, KILKA_STOCK_SEAFLOOR_MOVEMENT_SPEED_MODIFIER_ID);
+			removeAttributeModifier(movementSpeed, KILKA_STOCK_LAND_MOVEMENT_PENALTY_MODIFIER_ID);
+
 			if (headUnderwater) {
 				removeAttributeModifier(blockBreakSpeed, KILKA_STOCK_LAND_MINING_PENALTY_MODIFIER_ID);
 				removeAttributeModifier(submergedMiningSpeed, KILKA_STOCK_UNDERWATER_MINING_BONUS_MODIFIER_ID);
@@ -14266,15 +14274,11 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		}
 
 		if (headUnderwater) {
-			restoreKilkaStockClientWalkingSpeed(player);
 			removeAttributeModifier(blockBreakSpeed, KILKA_STOCK_LAND_MINING_PENALTY_MODIFIER_ID);
 			removeAttributeModifier(movementSpeed, KILKA_STOCK_LAND_MOVEMENT_PENALTY_MODIFIER_ID);
-			syncKilkaStockSeaFloorMovementSpeedModifier(movementSpeed, player);
-			applyKilkaMissingAttributeBonus(
-					waterMovementEfficiency,
-					KILKA_STOCK_UNDERWATER_WALKING_BONUS_MODIFIER_ID,
-					getKilkaStockWaterMovementEfficiencyTarget(player)
-			);
+			restoreKilkaStockClientWalkingSpeed(player);
+			syncKilkaStockSeaFloorWaterEfficiency(player, waterMovementEfficiency);
+			removeAttributeModifier(movementSpeed, KILKA_STOCK_SEAFLOOR_MOVEMENT_SPEED_MODIFIER_ID);
 			removeAttributeModifier(submergedMiningSpeed, KILKA_STOCK_UNDERWATER_MINING_BONUS_MODIFIER_ID);
 			if (!hasAquaAffinity) {
 				applyKilkaMissingAttributeBonus(
@@ -14288,27 +14292,34 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 
 		removeAttributeModifier(submergedMiningSpeed, KILKA_STOCK_UNDERWATER_MINING_BONUS_MODIFIER_ID);
 		if (feetInWater) {
-			restoreKilkaStockClientWalkingSpeed(player);
 			removeAttributeModifier(movementSpeed, KILKA_STOCK_LAND_MOVEMENT_PENALTY_MODIFIER_ID);
-			// Shallow water still counts as the sea floor: do not remove the
-			// land-speed compensation merely because the eyes are above water.
-			syncKilkaStockSeaFloorMovementSpeedModifier(movementSpeed, player);
-			applyKilkaMissingAttributeBonus(
-					waterMovementEfficiency,
-					KILKA_STOCK_UNDERWATER_WALKING_BONUS_MODIFIER_ID,
-					getKilkaStockWaterMovementEfficiencyTarget(player)
-			);
+			// Only the vanilla water-efficiency attribute changes movement on the sea floor.
+			restoreKilkaStockClientWalkingSpeed(player);
+			syncKilkaStockSeaFloorWaterEfficiency(player, waterMovementEfficiency);
+			removeAttributeModifier(movementSpeed, KILKA_STOCK_SEAFLOOR_MOVEMENT_SPEED_MODIFIER_ID);
 		} else {
 			removeAttributeModifier(waterMovementEfficiency, KILKA_STOCK_UNDERWATER_WALKING_BONUS_MODIFIER_ID);
 			removeAttributeModifier(movementSpeed, KILKA_STOCK_SEAFLOOR_MOVEMENT_SPEED_MODIFIER_ID);
-			double landMovementMultiplier = getKilkaLandMovementInputMultiplier(getKilkaBootsEnchantmentLevel(player, Enchantments.DEPTH_STRIDER));
-			syncKilkaStockAttributeModifier(
+
+			double externalMovementSpeed = getKilkaStockExternalMovementSpeed(
+					movementSpeed,
+					KILKA_STOCK_LAND_MOVEMENT_PENALTY_MODIFIER_ID
+			);
+			double targetDistance = getKilkaStockVanillaWaterDistance(
+					externalMovementSpeed,
+					player.isSprinting(),
+					getKilkaBootsEnchantmentLevel(player, Enchantments.DEPTH_STRIDER)
+			);
+			double targetMovementSpeed = targetDistance * (1.0D - KILKA_STOCK_VANILLA_LAND_DRAG);
+			syncKilkaStockFinalMovementSpeed(
 					movementSpeed,
 					KILKA_STOCK_LAND_MOVEMENT_PENALTY_MODIFIER_ID,
-					landMovementMultiplier - 1.0D,
-					AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL
+					targetMovementSpeed
 			);
-			syncKilkaStockClientWalkingSpeed(player, landMovementMultiplier);
+			syncKilkaStockClientWalkingSpeed(
+					player,
+					getKilkaStockClientWalkingSpeed(player, externalMovementSpeed, targetMovementSpeed)
+			);
 		}
 		if (hasAquaAffinity) {
 			removeAttributeModifier(blockBreakSpeed, KILKA_STOCK_LAND_MINING_PENALTY_MODIFIER_ID);
@@ -14330,14 +14341,32 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 
 	private static double getKilkaLandMovementInputMultiplier(int depthStriderLevel, boolean sprinting) {
 		int clampedLevel = Math.min(3, Math.max(0, depthStriderLevel));
-		double multiplier = 0.55D + (0.45D * clampedLevel / 3.0D);
+		// Depth Strider is inverted for Kilka: it restores the reduced land speed.
+		double multiplier = 0.8D + (0.2D * clampedLevel / 3.0D);
 		return sprinting ? Math.min(1.0D, multiplier * KILKA_STOCK_LAND_SPRINT_SPEED_MULTIPLIER) : multiplier;
 	}
-	private static void syncKilkaStockClientWalkingSpeed(ServerPlayer player, double multiplier) {
+	private static double getKilkaStockVanillaWaterDistance(double movementSpeed, boolean sprinting, int depthStriderLevel) {
+		// Match vanilla water acceleration and drag instead of approximating them with a percentage.
+		double efficiency = Math.min(1.0D, Math.max(0, depthStriderLevel) * 0.33333334D);
+		double baseDrag = sprinting ? KILKA_STOCK_VANILLA_WATER_SPRINT_DRAG : KILKA_STOCK_VANILLA_WATER_WALK_DRAG;
+		double drag = baseDrag + (KILKA_STOCK_VANILLA_LAND_DRAG - baseDrag) * efficiency;
+		double acceleration = KILKA_STOCK_VANILLA_WATER_ACCELERATION
+				+ (Math.max(0.0D, movementSpeed) - KILKA_STOCK_VANILLA_WATER_ACCELERATION) * efficiency;
+		return acceleration / Math.max(1.0E-6D, 1.0D - drag);
+	}
+
+	private static double getKilkaStockClientWalkingSpeed(ServerPlayer player, double externalMovementSpeed, double targetMovementSpeed) {
+		if (player == null || externalMovementSpeed <= 1.0E-6D) {
+			return targetMovementSpeed;
+		}
+		return player.getAbilities().getWalkingSpeed() * targetMovementSpeed / externalMovementSpeed;
+	}
+
+	private static void syncKilkaStockClientWalkingSpeed(ServerPlayer player, double targetWalkingSpeed) {
 		if (player == null || player.connection == null) {
 			return;
 		}
-		float target = Math.max(0.001F, (float) (player.getAbilities().getWalkingSpeed() * multiplier));
+		float target = Math.max(0.001F, (float) targetWalkingSpeed);
 		Float previous = KILKA_STOCK_CLIENT_WALKING_SPEEDS.get(player.getUUID());
 		if (previous != null && Math.abs(previous - target) <= 1.0E-6F) {
 			return;
@@ -14358,37 +14387,25 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		}
 	}
 
-	private static double getKilkaStockWaterMovementEfficiencyTarget(ServerPlayer player) {
-		return isKilkaStockSeaFloorMovement(player) ? 1.0D : 0.0D;
+	private static void syncKilkaStockSeaFloorWaterEfficiency(
+			ServerPlayer player,
+			AttributeInstance waterMovementEfficiency
+	) {
+		applyKilkaMissingAttributeBonus(
+				waterMovementEfficiency,
+				KILKA_STOCK_UNDERWATER_WALKING_BONUS_MODIFIER_ID,
+				isKilkaStockSeaFloorWalking(player) ? 1.0D : 0.0D
+		);
 	}
 
-	private static void syncKilkaStockSeaFloorMovementSpeedModifier(AttributeInstance movementSpeed, ServerPlayer player) {
-		double bonus = getKilkaStockSeaFloorMovementSpeedBonus(player);
-		if (bonus > 1.0E-6D) {
-			syncKilkaStockAttributeModifier(
-					movementSpeed,
-					KILKA_STOCK_SEAFLOOR_MOVEMENT_SPEED_MODIFIER_ID,
-					bonus,
-					AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL
-			);
-		} else {
-			removeAttributeModifier(movementSpeed, KILKA_STOCK_SEAFLOOR_MOVEMENT_SPEED_MODIFIER_ID);
-		}
-	}
-
-	private static double getKilkaStockSeaFloorMovementSpeedBonus(ServerPlayer player) {
-		if (!isKilkaStockSeaFloorMovement(player)) {
-			return 0.0D;
-		}
-		return player.onGround() ? 0.33D : 0.71D;
-	}
-
-	private static boolean isKilkaStockSeaFloorMovement(ServerPlayer player) {
+	private static boolean isKilkaStockSeaFloorWalking(ServerPlayer player) {
 		return player != null
+				&& !isKilkaSalmonForm(player)
 				&& (isKilkaFeetInWater(player) || isKilkaHeadUnderwater(player))
-				&& (player.onGround() || hasKilkaFloorSupport(player, 0.6D));
+				&& (player.onGround()
+						|| player.verticalCollisionBelow
+						|| hasKilkaFloorSupport(player, 0.1D));
 	}
-
 	private static boolean isKilkaStockMiningSupported(ServerPlayer player) {
 		return player != null && (player.onGround() || hasKilkaFloorSupport(player, 0.1D));
 	}
@@ -14424,6 +14441,7 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		removeAttributeModifier(player.getAttribute(Attributes.SUBMERGED_MINING_SPEED), KILKA_STOCK_UNDERWATER_MINING_BONUS_MODIFIER_ID);
 		removeAttributeModifier(player.getAttribute(Attributes.MOVEMENT_SPEED), KILKA_STOCK_LAND_MOVEMENT_PENALTY_MODIFIER_ID);
 		removeAttributeModifier(player.getAttribute(Attributes.MOVEMENT_SPEED), KILKA_STOCK_SEAFLOOR_MOVEMENT_SPEED_MODIFIER_ID);
+
 		removeAttributeModifier(player.getAttribute(Attributes.WATER_MOVEMENT_EFFICIENCY), KILKA_STOCK_UNDERWATER_WALKING_BONUS_MODIFIER_ID);
 	}
 
@@ -14439,6 +14457,56 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 			syncKilkaStockAttributeModifier(attribute, modifierId, missingValue, AttributeModifier.Operation.ADD_VALUE);
 		} else {
 			removeAttributeModifier(attribute, modifierId);
+		}
+	}
+
+	private static double getKilkaStockExternalMovementSpeed(AttributeInstance attribute, Identifier modifierId) {
+		if (attribute == null || modifierId == null) {
+			return KILKA_STOCK_VANILLA_WALK_SPEED;
+		}
+		AttributeModifier current = attribute.getModifier(modifierId);
+		if (current == null) {
+			return attribute.getValue();
+		}
+		if (current.operation() == AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL) {
+			double factor = 1.0D + current.amount();
+			if (Math.abs(factor) > 1.0E-6D) {
+				return attribute.getValue() / factor;
+			}
+		}
+		attribute.removeModifier(modifierId);
+		double externalValue = attribute.getValue();
+		attribute.addTransientModifier(current);
+		return externalValue;
+	}
+
+	private static void syncKilkaStockFinalMovementSpeed(AttributeInstance attribute, Identifier modifierId, double targetValue) {
+		if (attribute == null || modifierId == null) {
+			return;
+		}
+		double sanitizedTarget = Math.max(0.0D, targetValue);
+		if (Math.abs(attribute.getValue() - sanitizedTarget) <= 1.0E-6D) {
+			return;
+		}
+		double externalValue = getKilkaStockExternalMovementSpeed(attribute, modifierId);
+		removeAttributeModifier(attribute, modifierId);
+		if (Math.abs(sanitizedTarget - externalValue) <= 1.0E-6D) {
+			return;
+		}
+		if (Math.abs(externalValue) > 1.0E-6D) {
+			syncKilkaStockAttributeModifier(
+					attribute,
+					modifierId,
+					sanitizedTarget / externalValue - 1.0D,
+					AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL
+			);
+		} else {
+			syncKilkaStockAttributeModifier(
+					attribute,
+					modifierId,
+					sanitizedTarget,
+					AttributeModifier.Operation.ADD_VALUE
+			);
 		}
 	}
 
@@ -14518,7 +14586,7 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		}
 		int maxAir = player.getMaxAirSupply();
 		if ((isKilkaSalmonForm(player) && isKilkaSalmonInWater(player)) || isKilkaInWaterOrRain(player) || isKilkaDefenseActiveFor(player) || player.hasEffect(MobEffects.WATER_BREATHING)) {
-			int restoredAir = Math.min(maxAir, previousAirSupply + 8);
+			int restoredAir = Math.min(maxAir, previousAirSupply + 4);
 			// Vanilla hides the air HUD only at its exact maximum outside water. Keep the
 			// reserve visually full but one point below that threshold for Kilka.
 			player.setAirSupply(maxAir > 1 && restoredAir >= maxAir ? maxAir - 1 : restoredAir);
