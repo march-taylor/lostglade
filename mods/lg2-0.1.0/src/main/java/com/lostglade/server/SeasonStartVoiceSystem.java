@@ -104,6 +104,15 @@ public final class SeasonStartVoiceSystem {
 		clearChannel("player:" + player.getUUID());
 	}
 
+	/** Stops every queued or playing line before a terminal server-wide announcement. */
+	public static void stopAllNarration() {
+		for (ActiveCuePlayback playback : new ArrayList<>(ACTIVE_PLAYBACKS.values())) {
+			cancelActivePlayback(playback);
+		}
+		ACTIVE_PLAYBACKS.clear();
+		CHANNEL_QUEUES.clear();
+	}
+
 	/**
 	 * Progress narration is a live status, not a historical log. A later value
 	 * replaces any earlier percentage line that has not finished yet.
@@ -425,12 +434,6 @@ public final class SeasonStartVoiceSystem {
 			return;
 		}
 
-		ServerPlayer focusPlayer = queuedCue.focusPlayerId == null ? null : server.getPlayerList().getPlayer(queuedCue.focusPlayerId);
-		Vec3 origin = SeasonStartSystem.resolveServerVoiceOrigin(server, focusPlayer);
-		if (origin == null) {
-			origin = new Vec3(0.5D, 64.0D, 0.5D);
-		}
-
 		Path audioPath = resolveAudioPath(queuedCue.cue.audioFile);
 		PcmClip clip = loadClip(audioPath);
 		VoicechatApi voicechatApi = ServerVoicechatIntegration.getApi();
@@ -457,44 +460,34 @@ public final class SeasonStartVoiceSystem {
 			return;
 		}
 
-		CompletableFuture<Void> actualFuture;
-		if (SeasonStartSystem.shouldUseFlatNarrationMix()) {
-			List<CompletableFuture<Void>> futures = new ArrayList<>();
-			for (UUID recipientId : voiceRecipientIds) {
-				ServerPlayer recipient = server.getPlayerList().getPlayer(recipientId);
-				if (recipient == null) {
-					continue;
-				}
-				Vec3 personalOrigin = new Vec3(recipient.getX(), recipient.getEyeY() - 0.35D, recipient.getZ());
-				futures.add(playClipToRecipients(
-						server,
-						voicechatApi,
-						voicechatServerApi,
-						clip,
-						personalOrigin,
-						List.of(recipientId),
-						queuedCue.channelKey,
-						playback.playbackId
-				));
+		float voiceGain = resolveVoiceGain(queuedCue.cue);
+		// Server narration is a world-wide radio channel, not a physical speaker at
+		// the core. Every listener receives an individual positional stream at their
+		// own camera, which keeps volume identical anywhere in the world.
+		List<CompletableFuture<Void>> futures = new ArrayList<>();
+		for (UUID recipientId : voiceRecipientIds) {
+			ServerPlayer recipient = server.getPlayerList().getPlayer(recipientId);
+			if (recipient == null) {
+				continue;
 			}
-			if (futures.isEmpty()) {
-				bridgePlaybackFuture(playback, delayedFuture(queuedCue.cue.durationTicks));
-				return;
-			}
-			actualFuture = combineInterruptibleFutures(futures);
-		} else {
-			actualFuture = playClipToRecipients(
+			Vec3 personalOrigin = new Vec3(recipient.getX(), recipient.getEyeY() - 0.35D, recipient.getZ());
+			futures.add(playClipToRecipients(
 					server,
 					voicechatApi,
 					voicechatServerApi,
 					clip,
-					origin,
-					voiceRecipientIds,
+					personalOrigin,
+					List.of(recipientId),
 					queuedCue.channelKey,
-					playback.playbackId
-			);
+					playback.playbackId,
+					voiceGain
+			));
 		}
-		bridgePlaybackFuture(playback, actualFuture);
+		if (futures.isEmpty()) {
+			bridgePlaybackFuture(playback, delayedFuture(queuedCue.cue.durationTicks));
+			return;
+		}
+		bridgePlaybackFuture(playback, combineInterruptibleFutures(futures));
 	}
 
 	private static List<ServerPlayer> resolveRecipients(MinecraftServer server, VoiceCue cue, UUID focusPlayerId) {
@@ -530,7 +523,8 @@ public final class SeasonStartVoiceSystem {
 			Vec3 origin,
 			List<UUID> recipientIds,
 			String channelKey,
-			long playbackId
+			long playbackId,
+			float voiceGain
 	) {
 		CompletableFuture<Void> future = new CompletableFuture<>();
 		ScheduledExecutorService executor = ensurePlaybackExecutor();
@@ -557,6 +551,7 @@ public final class SeasonStartVoiceSystem {
 				recipientIds,
 				channelKey,
 				playbackId,
+				voiceGain,
 				0,
 				System.nanoTime(),
 				future,
@@ -577,6 +572,7 @@ public final class SeasonStartVoiceSystem {
 			List<UUID> recipientIds,
 			String channelKey,
 			long playbackId,
+			float voiceGain,
 			int frameIndex,
 			long playbackStartNanos,
 			CompletableFuture<Void> future,
@@ -602,7 +598,7 @@ public final class SeasonStartVoiceSystem {
 				return;
 			}
 			try {
-				byte[] opus = encoder.encode(clip.frames[frameIndex]);
+				byte[] opus = encoder.encode(applyVoiceGain(clip.frames[frameIndex], voiceGain));
 				LocationSoundPacket soundPacket = new LocationSoundPacket(
 						channelId,
 						SERVER_VOICE_SOURCE_ID,
@@ -637,6 +633,7 @@ public final class SeasonStartVoiceSystem {
 						recipientIds,
 						channelKey,
 						playbackId,
+						voiceGain,
 						frameIndex + 1,
 						playbackStartNanos,
 						future,
@@ -647,6 +644,27 @@ public final class SeasonStartVoiceSystem {
 				future.completeExceptionally(throwable);
 			}
 		}, delayNanos, TimeUnit.NANOSECONDS);
+	}
+
+	private static float resolveVoiceGain(VoiceCue cue) {
+		if (cue == null || !Float.isFinite(cue.voiceGain)) {
+			return 1.0F;
+		}
+		return Math.max(0.25F, Math.min(4.0F, cue.voiceGain));
+	}
+
+	private static short[] applyVoiceGain(short[] frame, float gain) {
+		if (frame == null || gain <= 1.001F) {
+			return frame;
+		}
+		short[] amplified = new short[frame.length];
+		double normalizer = Math.tanh(gain);
+		for (int index = 0; index < frame.length; index++) {
+			double normalized = frame[index] / (double) Short.MAX_VALUE;
+			int scaled = (int) Math.round(Short.MAX_VALUE * Math.tanh(normalized * gain) / normalizer);
+			amplified[index] = (short) Math.max(Short.MIN_VALUE, Math.min(Short.MAX_VALUE, scaled));
+		}
+		return amplified;
 	}
 
 	private static CompletableFuture<Void> delayedFuture(int durationTicks) {
@@ -968,6 +986,9 @@ public final class SeasonStartVoiceSystem {
 		}
 		String id = cue.id == null ? "" : cue.id;
 		String trigger = cue.trigger == null ? "" : cue.trigger;
+		if (id.startsWith("stability_nonpayment_alarm")) {
+			return CueRole.URGENT;
+		}
 		if (id.startsWith("guide_wrong_way_")
 				|| id.startsWith("guide_passed_server_")
 				|| id.startsWith("intro_guide_wrong_way_")
