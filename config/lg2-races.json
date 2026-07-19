@@ -216,7 +216,7 @@
       "enabled": true,
       "id": "woman",
       "displayName": "ЖЕНЩИНА!!!",
-      "ownerNickname": "Rajas_YT",
+      "ownerNickname": "",
       "description": "Хрупкая снаружи, но опасная внутри.",
       "attack": {
         "enabled": true,
@@ -346,7 +346,7 @@
       "enabled": true,
       "id": "mark_potroshitel",
       "displayName": "Марк Потрошитель",
-      "ownerNickname": "",
+      "ownerNickname": "Rajas_YT",
       "description": "У всех нас есть сила в руках для того, чтобы убить, но большинство боится ее использовать.",
       "attack": {
         "enabled": true,
@@ -375,7 +375,7 @@
         "enabled": true,
         "abilityId": "mark_potroshitel_unique",
         "name": "Шкала гнева",
-        "description": "Заполняйте шкалу убийствами. При полной шкале вы входите в состояние ярости: получаете силу, скорость и сопротивление, а ваши удары вызывают сильное кровотечение.",
+        "description": "Включить и выключить шкалу можно с помощью /ragebar. Заполняйте шкалу убийствами. При активации вы входите в состояние ярости: получаете силу, скорость и сопротивление, а ваши удары вызывают сильное кровотечение.",
         "priceBitcoins": 1000,
         "markRageMaxPoints": 100.0,
         "markRagePassiveKillPoints": 1.0,

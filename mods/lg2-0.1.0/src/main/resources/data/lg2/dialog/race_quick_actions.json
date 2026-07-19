@@ -24,7 +24,7 @@
                         "width":  180,
                         "action":  {
                                        "type":  "minecraft:run_command",
-                                       "command":  "/race use attack"
+                                       "command":  "/use attack"
                                    }
                     },
                     {
@@ -39,7 +39,7 @@
                         "width":  180,
                         "action":  {
                                        "type":  "minecraft:run_command",
-                                       "command":  "/race use defense"
+                                       "command":  "/use defense"
                                    }
                     },
                     {
@@ -54,7 +54,7 @@
                         "width":  180,
                         "action":  {
                                        "type":  "minecraft:run_command",
-                                       "command":  "/race use attack"
+                                       "command":  "/use attack"
                                    }
                     },
                     {
@@ -69,7 +69,7 @@
                         "width":  180,
                         "action":  {
                                        "type":  "minecraft:run_command",
-                                       "command":  "/race use defense"
+                                       "command":  "/use defense"
                                    }
                     },
                     {
@@ -84,7 +84,7 @@
                         "width":  180,
                         "action":  {
                                        "type":  "minecraft:run_command",
-                                       "command":  "/race use attack"
+                                       "command":  "/use attack"
                                    }
                     },
                     {
@@ -99,7 +99,7 @@
                         "width":  180,
                         "action":  {
                                        "type":  "minecraft:run_command",
-                                       "command":  "/race use defense"
+                                       "command":  "/use defense"
                                    }
                     },
                     {
@@ -114,7 +114,7 @@
                         "width":  180,
                         "action":  {
                                        "type":  "minecraft:run_command",
-                                       "command":  "/race use attack"
+                                       "command":  "/use attack"
                                    }
                     },
                     {
@@ -129,7 +129,7 @@
                         "width":  180,
                         "action":  {
                                        "type":  "minecraft:run_command",
-                                       "command":  "/race use defense"
+                                       "command":  "/use defense"
                                    }
                     },
                     {
@@ -144,7 +144,7 @@
                         "width":  180,
                         "action":  {
                                        "type":  "minecraft:run_command",
-                                       "command":  "/race use attack"
+                                       "command":  "/use attack"
                                    }
                     },
                     {
@@ -159,7 +159,7 @@
                         "width":  180,
                         "action":  {
                                        "type":  "minecraft:run_command",
-                                       "command":  "/race use defense"
+                                       "command":  "/use defense"
                                    }
                     },
                     {
@@ -174,7 +174,7 @@
                         "width":  180,
                         "action":  {
                                        "type":  "minecraft:run_command",
-                                       "command":  "/race use ability"
+                                       "command":  "/use ability"
                                    }
                     },
                     {
@@ -189,7 +189,7 @@
                         "width":  180,
                         "action":  {
                                        "type":  "minecraft:run_command",
-                                       "command":  "/race use shnyaga"
+                                       "command":  "/use shnyaga"
                                    }
                     },
                     {
@@ -204,7 +204,7 @@
                         "width":  180,
                         "action":  {
                                        "type":  "minecraft:run_command",
-                                       "command":  "/race use ability"
+                                       "command":  "/use ability"
                                    }
                     },
                     {
@@ -219,7 +219,7 @@
                         "width":  180,
                         "action":  {
                                        "type":  "minecraft:run_command",
-                                       "command":  "/race use shnyaga"
+                                       "command":  "/use shnyaga"
                                    }
                     },
                     {
@@ -234,7 +234,7 @@
                         "width":  180,
                         "action":  {
                                        "type":  "minecraft:run_command",
-                                       "command":  "/race use ability"
+                                       "command":  "/use ability"
                                    }
                     },
                     {
@@ -249,7 +249,7 @@
                         "width":  180,
                         "action":  {
                                        "type":  "minecraft:run_command",
-                                       "command":  "/race use shnyaga"
+                                       "command":  "/use shnyaga"
                                    }
                     },
                     {
@@ -264,7 +264,7 @@
                         "width":  180,
                         "action":  {
                                        "type":  "minecraft:run_command",
-                                       "command":  "/race use ability"
+                                       "command":  "/use ability"
                                    }
                     },
                     {
@@ -279,7 +279,7 @@
                         "width":  180,
                         "action":  {
                                        "type":  "minecraft:run_command",
-                                       "command":  "/race use shnyaga"
+                                       "command":  "/use shnyaga"
                                    }
                     },
                     {
@@ -294,7 +294,7 @@
                         "width":  180,
                         "action":  {
                                        "type":  "minecraft:run_command",
-                                       "command":  "/race use ability"
+                                       "command":  "/use ability"
                                    }
                     },
                     {
@@ -309,7 +309,7 @@
                         "width":  180,
                         "action":  {
                                        "type":  "minecraft:run_command",
-                                       "command":  "/race use shnyaga"
+                                       "command":  "/use shnyaga"
                                    }
                     }
                 ],

@@ -1641,6 +1641,7 @@ public final class ServerRaceSystem {
 					restoreLongPassiveEffectsForPlayer(server, handler.player);
 					clearStaleKilkaSalmonInvisibility(handler.player);
 					refreshKilkaSalmonFormsForJoiningViewer(server, handler.player);
+					server.getCommands().sendCommands(handler.player);
 				})
 		);
 		EntityTrackingEvents.START_TRACKING.register((entity, viewer) -> {
@@ -1821,66 +1822,58 @@ public final class ServerRaceSystem {
 	}
 
 	private static void registerCommands() {
-		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
-				dispatcher.register(literal("race")
-						.then(literal("menu").executes(ServerRaceSystem::openMenu))
-						.then(literal("reload")
-							.requires(source -> source.permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER))
-							.executes(ServerRaceSystem::reloadFromCommand)
-					)
+		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> {
+			dispatcher.register(literal("race")
+					.requires(ServerRaceSystem::canUseRaceAdminCommand)
+					.then(literal("reload").executes(ServerRaceSystem::reloadFromCommand))
 					.then(literal("set")
-							.requires(source -> source.permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER))
 							.then(argument("race_id", StringArgumentType.word())
 									.suggests((context, builder) -> {
 										for (PlayerRaceConfig race : RaceConfig.get().races) {
-											if (race == null || race.id == null || race.id.isBlank()) {
-												continue;
+											if (race != null && race.id != null && !race.id.isBlank()) {
+												builder.suggest(race.id);
 											}
-											builder.suggest(race.id);
 										}
 										return builder.buildFuture();
 									})
 									.executes(ServerRaceSystem::setOwnRaceFromCommand)
-									.then(argument("player", EntityArgument.player())
-											.executes(ServerRaceSystem::setPlayerRaceFromCommand)
-									)
+									.then(argument("player", EntityArgument.player()).executes(ServerRaceSystem::setPlayerRaceFromCommand))
 							)
 					)
 					.then(literal("clear")
-							.requires(source -> source.permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER))
 							.executes(ServerRaceSystem::clearOwnRaceFromCommand)
-							.then(argument("player", EntityArgument.player())
-									.executes(ServerRaceSystem::clearPlayerRaceFromCommand)
+							.then(argument("player", EntityArgument.player()).executes(ServerRaceSystem::clearPlayerRaceFromCommand))
+					)
+					.then(literal("reset_cooldown").executes(ServerRaceSystem::resetAllRaceAbilityCooldownsFromCommand))
+			);
+
+			dispatcher.register(literal("use")
+					.then(literal("attack").executes(context -> useAbility(context, RaceAbilitySlot.ATTACK)))
+					.then(literal("defense").executes(context -> useAbility(context, RaceAbilitySlot.DEFENSE)))
+					.then(literal("ability").executes(context -> useAbility(context, RaceAbilitySlot.UNIQUE_ABILITY)))
+					.then(literal("shnyaga").executes(context -> useAbility(context, RaceAbilitySlot.SHNYAGA)))
+					.then(argument("internal_action", StringArgumentType.word())
+							.suggests((context, builder) -> builder.buildFuture())
+							.then(argument("response", StringArgumentType.word())
+									.suggests((context, builder) -> builder.buildFuture())
+									.executes(ServerRaceSystem::handleInternalRaceCommand)
 							)
 					)
-					.then(literal("reset_cooldown")
-								.requires(source -> source.permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER))
-								.executes(ServerRaceSystem::resetAllRaceAbilityCooldownsFromCommand)
-						)
-						.then(literal("ragebar")
-								.requires(ServerRaceSystem::canUseMarkRageBarCommand)
-								.executes(ServerRaceSystem::toggleMarkRageBarFromCommand)
-						)
-						.then(literal("use")
-								.then(literal("attack").executes(context -> useAbility(context, RaceAbilitySlot.ATTACK)))
-								.then(literal("defense").executes(context -> useAbility(context, RaceAbilitySlot.DEFENSE)))
-								.then(literal("ability").executes(context -> useAbility(context, RaceAbilitySlot.UNIQUE_ABILITY)))
-								.then(literal("shnyaga").executes(context -> useAbility(context, RaceAbilitySlot.SHNYAGA)))
-						)
-						.then(argument("internal_action", StringArgumentType.word())
-								.suggests((context, builder) -> builder.buildFuture())
-								.then(argument("response", StringArgumentType.word())
-										.suggests((context, builder) -> builder.buildFuture())
-										.executes(ServerRaceSystem::handleInternalRaceCommand)
-								)
-						)
-				)
-		);
+			);
+
+			dispatcher.register(literal("ragebar")
+					.requires(ServerRaceSystem::canUseMarkRageBarCommand)
+					.executes(ServerRaceSystem::toggleMarkRageBarFromCommand)
+			);
+		});
 	}
 
 	private static int reloadFromCommand(CommandContext<CommandSourceStack> context) {
 		reload();
 		syncGeneratedDialogs(context.getSource().getServer(), true);
+		for (ServerPlayer onlinePlayer : context.getSource().getServer().getPlayerList().getPlayers()) {
+			context.getSource().getServer().getCommands().sendCommands(onlinePlayer);
+		}
 		context.getSource().sendSuccess(() -> Component.literal("Race config and race dialogs reloaded"), true);
 		return 1;
 	}
@@ -1927,9 +1920,11 @@ public final class ServerRaceSystem {
 			return 0;
 		}
 	}
-
 	private static int setRaceForPlayerFromCommand(CommandContext<CommandSourceStack> context, ServerPlayer target) {
-		String raceId = StringArgumentType.getString(context, "race_id");
+		return setRaceForPlayerFromCommand(context, target, StringArgumentType.getString(context, "race_id"));
+	}
+
+	private static int setRaceForPlayerFromCommand(CommandContext<CommandSourceStack> context, ServerPlayer target, String raceId) {
 		PlayerRaceConfig targetRace = findConfiguredRaceById(raceId);
 		if (targetRace == null) {
             context.getSource().sendFailure(Component.literal("Race '" + raceId + "' was not found."));
@@ -2024,6 +2019,8 @@ public final class ServerRaceSystem {
 			return;
 		}
 		clearRaceCommandRuntimeState(server, player);
+		// Rebuild client-side suggestions after a race-dependent command predicate changes.
+		server.getCommands().sendCommands(player);
 		CartelSecretRecipeBookSystem.syncJoinedPlayer(player);
 		CopperManGogglesSystem.syncPlayerRecipeBook(player);
 		MarkShieldRecipeSystem.syncJoinedPlayer(player);
@@ -2097,6 +2094,16 @@ public final class ServerRaceSystem {
 		MILK_DEFENSE_COOLDOWNS.remove(playerId);
 	}
 
+	private static boolean canUseRaceAdminCommand(CommandSourceStack source) {
+		if (source == null) {
+			return false;
+		}
+		ServerPlayer player = source.getPlayer();
+		return player == null
+				? source.permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER)
+				: source.getServer().getPlayerList().getOps().get(new net.minecraft.server.players.NameAndId(player.getGameProfile())) != null;
+	}
+
 	private static boolean canUseMarkRageBarCommand(CommandSourceStack source) {
 		ServerPlayer player = source == null ? null : source.getPlayer();
 		return player != null && isMarkPotroshitelPlayer(player);
@@ -2144,34 +2151,6 @@ public final class ServerRaceSystem {
 		clearAllGennadiyReportCooldowns(server);
 		CopperManGogglesSystem.resetAllAbilityCooldowns(server);
 		CopperManRepulsorSystem.resetAllAbilityCooldowns(server);
-	}
-
-	private static int openMenu(CommandContext<CommandSourceStack> context) {
-		ServerPlayer player = context.getSource().getPlayer();
-		if (player == null) {
-			context.getSource().sendFailure(Component.literal(localizeRaceMessageText(null, "player_only")));
-			return 0;
-		}
-
-		Optional<PlayerRaceConfig> raceOptional = getRace(player);
-		if (raceOptional.isEmpty()) {
-			player.sendSystemMessage(localizedRaceMessage(player, "no_race"));
-			return 0;
-		}
-
-		String dialogId = DIALOG_ID_BY_NICKNAME.get(normalizeNickname(player.getGameProfile().name()));
-		if (dialogId == null || dialogId.isBlank()) {
-			player.sendSystemMessage(localizedRaceMessage(player, "no_menu"));
-			return 0;
-		}
-
-		if (!runDialogCommand(player, "show @s " + dialogId)) {
-			player.sendSystemMessage(localizedRaceMessage(player, "no_menu"));
-			Lg2.LOGGER.warn("Failed to open race dialog '{}' for {}", dialogId, player.getGameProfile().name());
-			return 0;
-		}
-
-		return 1;
 	}
 
 	private static boolean onAllowChatMessage(PlayerChatMessage message, ServerPlayer sender, ChatType.Bound params) {
@@ -10682,7 +10661,7 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 								.withColor(0xFF7FD4)
 								.withUnderlined(true)
 								.withItalic(false)
-								.withClickEvent(new ClickEvent.RunCommand("/race woman_shnyaga accept")))
+								.withClickEvent(new ClickEvent.RunCommand("/use woman_shnyaga accept")))
 		);
 		root.append(Component.literal(" "));
 		root.append(
@@ -10691,7 +10670,7 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 								.withColor(0x59B7FF)
 								.withUnderlined(true)
 								.withItalic(false)
-								.withClickEvent(new ClickEvent.RunCommand("/race woman_shnyaga reject")))
+								.withClickEvent(new ClickEvent.RunCommand("/use woman_shnyaga reject")))
 		);
 		return root;
 	}
@@ -19168,7 +19147,7 @@ private static void tickMilkOligarchStock(MinecraftServer server) {
 				.withStyle(style -> style
 						.withColor(ChatFormatting.DARK_RED)
 						.withBold(true)
-						.withClickEvent(new ClickEvent.RunCommand("/race gennadiy_report confirm")));
+						.withClickEvent(new ClickEvent.RunCommand("/use gennadiy_report confirm")));
 		player.sendSystemMessage(message.append(Component.literal("\n")).append(centeredGennadiyReportComponent(button, "")));
 		Lg2.LOGGER.info("Queued Gennadiy REPORT confirmation for {} ({})", player.getGameProfile().name(), race.id);
 		return 1;
@@ -22609,17 +22588,17 @@ private static InteractionHand selectGennadiyReportHand(ServerPlayer player) {
 		root.put("columns", DEFAULT_DIALOG_COLUMNS);
 
 		List<Map<String, Object>> actions = new ArrayList<>();
-		appendAbilityAction(actions, race, race.attack, "/race use attack");
-		appendAbilityAction(actions, race, race.defense, "/race use defense");
-		appendAbilityAction(actions, race, race.uniqueAbility, "/race use ability");
-		appendAbilityAction(actions, race, race.shnyaga, "/race use shnyaga");
+		appendAbilityAction(actions, race, race.attack, "/use attack");
+		appendAbilityAction(actions, race, race.defense, "/use defense");
+		appendAbilityAction(actions, race, race.uniqueAbility, "/use ability");
+		appendAbilityAction(actions, race, race.shnyaga, "/use shnyaga");
 
 		if (actions.isEmpty()) {
 			Map<String, Object> action = new LinkedHashMap<>();
 			action.put("label", textComponent("No active abilities"));
 			action.put("tooltip", textComponent("This race has no active ability buttons"));
 			action.put("width", DEFAULT_ACTION_WIDTH);
-			action.put("action", runCommandAction("/race use ability"));
+			action.put("action", runCommandAction("/use ability"));
 			actions.add(action);
 		}
 
@@ -23901,7 +23880,7 @@ private static final CartelManualPage[] CARTEL_MANUAL_PAGES_EN = {
 		stack.set(DataComponents.PROFILE, ResolvableProfile.createResolved(profile));
 		stack.set(
 				DataComponents.CUSTOM_NAME,
-				Component.literal("Пригласить")
+				Component.literal("\u041f\u0440\u0438\u0433\u043b\u0430\u0441\u0438\u0442\u044c")
 						.withStyle(style -> style.withColor(ChatFormatting.LIGHT_PURPLE).withItalic(false).withBold(true))
 		);
 		return stack;
@@ -24194,7 +24173,7 @@ private static final CartelManualPage[] CARTEL_MANUAL_PAGES_EN = {
 		boolean english = locale.startsWith("en");
 		return switch (key) {
 			case "passport" -> english ? "Passport" : "Паспорт";
-			case "accept" -> english ? "Accept" : "Принять";
+			case "accept" -> english ? "Disguise" : "\u0417\u0430\u043c\u0430\u0441\u043a\u0438\u0440\u043e\u0432\u0430\u0442\u044c\u0441\u044f";
 			case "previous" -> english ? "Previous" : "Назад";
 			case "next" -> english ? "Next" : "Далее";
 			case "empty" -> english ? "No players" : "Нет игроков";
@@ -24208,7 +24187,7 @@ private static final CartelManualPage[] CARTEL_MANUAL_PAGES_EN = {
 		boolean english = locale.startsWith("en");
 		return switch (key) {
 			case "recipient" -> english ? "Recipient: " : "Получатель: ";
-			case "select" -> "Select";
+			case "select" -> english ? "Write" : "\u041d\u0430\u043f\u0438\u0441\u0430\u0442\u044c";
 			case "previous" -> english ? "Previous" : "Назад";
 			case "next" -> english ? "Next" : "Далее";
 			case "empty" -> english ? "No players" : "Нет игроков";
@@ -25830,6 +25809,24 @@ private static final CartelManualPage[] CARTEL_MANUAL_PAGES_EN = {
 		@Override
 		public boolean stillValid(Player player) {
 			return player.isAlive();
+		}
+
+		@Override
+		public void broadcastChanges() {
+			super.broadcastChanges();
+			hideCartelDisguiseInventoryVisuals(this.viewer, this);
+		}
+
+		@Override
+		public void broadcastFullState() {
+			super.broadcastFullState();
+			hideCartelDisguiseInventoryVisuals(this.viewer, this);
+		}
+
+		@Override
+		public void removed(Player player) {
+			super.removed(player);
+			restoreCartelDisguiseInventoryVisuals(this.viewer, this);
 		}
 
 		private void refreshContents() {

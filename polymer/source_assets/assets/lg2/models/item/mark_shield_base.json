@@ -1,9 +1,10 @@
-﻿{
+{
+	"gui_light": "front",
 	"format_version": "1.21.11",
 	"credit": "Exported from Minecraft ShieldModel geometry for Blockbench editing",
 	"texture_size": [64, 64],
 	"textures": {
-		"particle": "#shield"
+"particle": "#shield"
 	},
 	"elements": [
 		{
@@ -57,8 +58,8 @@
 			"scale": [0.25, 0.25, 0.25]
 		},
 		"gui": {
-			"rotation": [-15, -155, 5],
-			"translation": [-2, 0, 0],
+			"rotation": [15, 155, 5],
+			"translation": [-1, 0, 0],
 			"scale": [0.65, 0.65, 0.65]
 		},
 		"fixed": {
