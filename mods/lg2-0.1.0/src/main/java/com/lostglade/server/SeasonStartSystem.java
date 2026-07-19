@@ -170,6 +170,10 @@ public final class SeasonStartSystem {
 	private static final long GUIDANCE_STALL_AFTER_ALIGNMENT_TICKS = 20L;
 	private static final long GUIDANCE_STALL_AFTER_TURN_TICKS = 18L;
 	private static final long ROUTE_STALL_AFTER_TICKS = 20L * 2L;
+	private static final long ROUTE_TURN_REPEAT_TICKS = 20L * 3L;
+	private static final long ROUTE_WRONG_WAY_GRACE_TICKS = 20L * 2L;
+	private static final long ROUTE_WRONG_WAY_REPEAT_TICKS = 20L * 5L;
+	private static final long ROUTE_PROGRESS_CUE_TICKS = 20L * 2L;
 	private static final double ROUTE_WAYPOINT_REACHED_DISTANCE = 1.25D;
 	private static final double ROUTE_MOVEMENT_SQR = 0.045D * 0.045D;
 	private static final double ROUTE_PROGRESS_AWAY = 0.12D;
@@ -197,10 +201,11 @@ public final class SeasonStartSystem {
 	private static final double GUIDANCE_PROGRESS_AWAY = 0.16D;
 	private static final double GUIDANCE_PROGRESS_TOWARD = -0.14D;
 	private static final double GUIDANCE_STALL_DELTA = 0.05D;
-	private static final double GUIDED_OFFERING_RETURN_SPEED_MIN = 0.08D;
-	private static final double GUIDED_OFFERING_RETURN_SPEED_MAX = 0.42D;
-	private static final double GUIDED_OFFERING_RETURN_PICKUP_DISTANCE = 0.75D;
-	private static final long GUIDED_OFFERING_VISIBLE_TICKS = 5L;
+	private static final double GUIDED_OFFERING_ESCAPE_SPEED_MIN = 0.18D;
+	private static final double GUIDED_OFFERING_ESCAPE_SPEED_MAX = 0.56D;
+	private static final double GUIDED_OFFERING_ESCAPE_TARGET_DISTANCE = 0.45D;
+	private static final double GUIDED_OFFERING_RECOVERY_DISTANCE = 1.2D;
+	private static final long GUIDED_OFFERING_ESCAPE_DELAY_TICKS = 5L;
 	private static final double GUIDANCE_RECOVER_WORSEN_THRESHOLD = 8.0D;
 	private static final String START_WORD_EN = "start";
 	private static final String START_WORD_RU = "старт";
@@ -234,7 +239,12 @@ public final class SeasonStartSystem {
 	private static final String[] INTRO_GUIDE_WRONG_WAY_TRIGGERS = {
 			"intro_guide_wrong_way_01",
 			"intro_guide_wrong_way_02",
-			"intro_guide_wrong_way_03"
+			"intro_guide_wrong_way_03",
+			"intro_guide_wrong_way_04",
+			"intro_guide_wrong_way_05",
+			"intro_guide_wrong_way_06",
+			"intro_guide_wrong_way_07",
+			"intro_guide_wrong_way_08"
 	};
 	private static final String[] INTRO_GUIDE_ROUTE_START_TRIGGERS = {
 			"intro_guide_route_start_01",
@@ -343,11 +353,27 @@ public final class SeasonStartSystem {
 			"guide_drop_coin_03",
 			"guide_drop_coin_04"
 	};
+	private static final String[] INTRO_GUIDED_BITCOIN_LOST_TRIGGERS = {
+			"intro_guided_bitcoin_lost_01",
+			"intro_guided_bitcoin_lost_02",
+			"intro_guided_bitcoin_lost_03"
+	};
+	private static final String[] INTRO_GUIDED_BITCOIN_RECOVERED_TRIGGERS = {
+			"intro_guided_bitcoin_recovered"
+	};
 	private static final String[] GUIDE_WRONG_WAY_TRIGGERS = {
 			"guide_wrong_way_01",
 			"guide_wrong_way_02",
 			"guide_wrong_way_03",
-			"guide_wrong_way_04"
+			"guide_wrong_way_04",
+			"guide_wrong_way_05",
+			"guide_wrong_way_06",
+			"guide_wrong_way_07",
+			"guide_wrong_way_08",
+			"guide_wrong_way_09",
+			"guide_wrong_way_10",
+			"guide_wrong_way_11",
+			"guide_wrong_way_12"
 	};
 	private static final String[] GUIDE_STALL_ALIGNED_TRIGGERS = {
 			"guide_stall_aligned_01",
@@ -362,7 +388,45 @@ public final class SeasonStartSystem {
 	private static final String[] GUIDE_PASSED_SERVER_TRIGGERS = {
 			"guide_passed_server_01",
 			"guide_passed_server_02",
-			"guide_passed_server_03"
+			"guide_passed_server_03",
+			"guide_passed_server_04",
+			"guide_passed_server_05",
+			"guide_passed_server_06",
+			"guide_passed_server_07",
+			"guide_passed_server_08"
+	};
+	private static final String[] GUIDE_ROUTE_REVERSE_LEFT_TRIGGERS = {
+			"guide_route_reverse_left_01",
+			"guide_route_reverse_left_02",
+			"guide_route_reverse_left_03"
+	};
+	private static final String[] GUIDE_ROUTE_REVERSE_RIGHT_TRIGGERS = {
+			"guide_route_reverse_right_01",
+			"guide_route_reverse_right_02",
+			"guide_route_reverse_right_03"
+	};
+	private static final String[] GUIDE_ROUTE_RETURN_PROGRESS_TRIGGERS = {
+			"guide_route_return_progress_01",
+			"guide_route_return_progress_02",
+			"guide_route_return_progress_03",
+			"guide_route_return_progress_04"
+	};
+	private static final String[] GUIDE_ROUTE_RESUME_LEFT_TRIGGERS = {
+			"guide_route_resume_left_01",
+			"guide_route_resume_left_02",
+			"guide_route_resume_left_03",
+			"guide_route_resume_left_04"
+	};
+	private static final String[] GUIDE_ROUTE_RESUME_RIGHT_TRIGGERS = {
+			"guide_route_resume_right_01",
+			"guide_route_resume_right_02",
+			"guide_route_resume_right_03",
+			"guide_route_resume_right_04"
+	};
+	private static final String[] GUIDE_ROUTE_RESUME_FORWARD_TRIGGERS = {
+			"guide_route_resume_forward_01",
+			"guide_route_resume_forward_02",
+			"guide_route_resume_forward_03"
 	};
 	// At the fastest expected rate (10 players x 10 bitcoins/minute), 1,700
 	// offerings keep the shared launch running for 17 minutes.
@@ -377,10 +441,10 @@ public final class SeasonStartSystem {
 	private static final double SHARED_FEED_PLAYER_MATCH_DISTANCE = 8.0D;
 	private static final long SHARED_FINISH_DELAY_TICKS = 20L * 2L;
 	private static final long MENU_PRICE_REACTION_COOLDOWN_TICKS = 20L * 3L;
-	private static final int MENU_EXPLANATION_UNLOCK_PERCENT = 55;
-	private static final int SHARED_LAUNCH_RACE_CONTROLS_PERCENT = 65;
-	private static final long MENU_EXPLANATION_AFTER_HALFWAY_DELAY_TICKS = 0L;
-	private static final int[] SHARED_LAUNCH_MILESTONES = {10, 20, 30, 40, 50, 60, 70, 80, 90, 100};
+	private static final int SHARED_LAUNCH_SERVER_POWER_PERCENT = 45;
+	private static final int MENU_EXPLANATION_UNLOCK_PERCENT = 65;
+	private static final int SHARED_LAUNCH_RACE_CONTROLS_PERCENT = 85;
+	private static final long MENU_EXPLANATION_DELAY_TICKS = 0L;
 	private static final String STARTUP_WORLDGEN_DISPLAY_TAG = "lg2_season_start_display";
 	private static final int STARTUP_WORLDGEN_FRAME_COUNT = 35;
 	private static final float STARTUP_WORLDGEN_VIEW_RANGE = 96.0F;
@@ -554,8 +618,8 @@ public final class SeasonStartSystem {
 	private static int sharedLaunchBitcoinSpawned = 0;
 	private static int sharedLaunchBitcoinSupplyVersion = 0;
 	private static boolean sharedLaunchBitcoinPositionIndexLoaded = false;
-	private static int sharedLaunchMilestoneCursor = 0;
 	private static boolean sharedLaunchIntroTriggered = false;
+	private static boolean sharedLaunchServerPowerNarrationTriggered = false;
 	private static boolean sharedLaunchRaceControlsTriggered = false;
 	private static boolean menuExplanationActive = false;
 	private static int startupWorldgenFrameIndex = Integer.MIN_VALUE;
@@ -603,8 +667,8 @@ public final class SeasonStartSystem {
 		sharedLaunchBitcoinSpawned = 0;
 		sharedLaunchBitcoinSupplyVersion = SHARED_LAUNCH_SUPPLY_VERSION;
 		sharedLaunchBitcoinPositionIndexLoaded = false;
-		sharedLaunchMilestoneCursor = 0;
 		sharedLaunchIntroTriggered = false;
+		sharedLaunchServerPowerNarrationTriggered = false;
 		sharedLaunchRaceControlsTriggered = false;
 		menuExplanationActive = false;
 		startupWorldgenFrameIndex = Integer.MIN_VALUE;
@@ -1650,8 +1714,8 @@ public final class SeasonStartSystem {
 		sharedLaunchBitcoinSpawned = 0;
 		sharedLaunchBitcoinSupplyVersion = SHARED_LAUNCH_SUPPLY_VERSION;
 		sharedLaunchBitcoinPositionIndexLoaded = false;
-		sharedLaunchMilestoneCursor = 0;
 		sharedLaunchIntroTriggered = false;
+		sharedLaunchServerPowerNarrationTriggered = false;
 		sharedLaunchRaceControlsTriggered = false;
 		menuExplanationActive = false;
 		startupWorldgenFrameIndex = Integer.MIN_VALUE;
@@ -1869,6 +1933,9 @@ public final class SeasonStartSystem {
 			return;
 		}
 		long nowTick = player.level().getGameTime();
+		if (tickLostGuidedBitcoinRecovery(server, player, state, nowTick)) {
+			return;
+		}
 		GuidanceSnapshot serverSnapshot = resolveGuidanceSnapshot(player);
 		if (serverSnapshot == null || !hasBitcoin(player)) {
 			return;
@@ -1948,7 +2015,7 @@ public final class SeasonStartSystem {
 		if (instruction == null) {
 			return;
 		}
-		fireGuidanceInstruction(server, player, state, instruction, snapshot, nowTick);
+		fireRouteGuidanceInstruction(server, player, state, instruction, snapshot, nowTick);
 	}
 
 	/**
@@ -1988,8 +2055,8 @@ public final class SeasonStartSystem {
 		}
 
 		if (!state.guidanceRouteLegAnnounced) {
-			GuidanceInstruction opening = resolveRouteLegOpening(routeKind, routeLeg);
-			if (opening != null && fireGuidanceInstruction(server, player, state, opening, snapshot, nowTick)) {
+			GuidanceInstruction opening = resolveRouteLegOpening(routeKind, routeLeg, snapshot);
+			if (opening != null && fireRouteGuidanceInstruction(server, player, state, opening, snapshot, nowTick)) {
 				state.guidanceRouteLegAnnounced = true;
 			}
 			return;
@@ -1998,20 +2065,9 @@ public final class SeasonStartSystem {
 				? snapshot.horizontalDistance - state.guidanceRouteLastDistance
 				: 0.0D;
 		state.guidanceRouteLastDistance = snapshot.horizontalDistance;
-		GuidanceInstruction instruction = null;
-		if (moving) {
-			instruction = resolveRouteTurnInstruction(snapshot, state, nowTick);
-			if (instruction == null && distanceDelta >= ROUTE_PROGRESS_AWAY) {
-				instruction = routeKind == GuidanceRouteKind.INTRO_ORE
-						? new GuidanceInstruction("intro_guide_wrong_way", "intro_guide_wrong_way", INTRO_GUIDE_WRONG_WAY_TRIGGERS, GUIDANCE_CATEGORY_COOLDOWN_TICKS)
-						: new GuidanceInstruction("guide_wrong_way", "guide_wrong_way", GUIDE_WRONG_WAY_TRIGGERS, GUIDANCE_CATEGORY_COOLDOWN_TICKS);
-			}
-			if (instruction == null && distanceDelta <= ROUTE_PROGRESS_TOWARD) {
-				instruction = resolveRouteForwardInstruction(snapshot);
-			}
-		} else if (nowTick - state.guidanceRouteLegStartedTick >= ROUTE_STALL_AFTER_TICKS) {
-			instruction = new GuidanceInstruction("guide_stall_aligned", "guide_stall_aligned", GUIDE_STALL_ALIGNED_TRIGGERS, GUIDANCE_STALL_COOLDOWN_TICKS);
-		}
+		GuidanceInstruction instruction = moving
+				? resolveRouteMovementInstruction(routeKind, snapshot, state, distanceDelta, nowTick)
+				: resolveRouteStallInstruction(snapshot, state, nowTick);
 		if (nowTick < state.nextGuidanceEarliestTick) {
 			if (isUrgentRouteCorrection(instruction) && nowTick >= state.guidanceRouteInterruptAfterTick) {
 				SeasonStartVoiceSystem.clearPlayerChannel(player);
@@ -2023,7 +2079,7 @@ public final class SeasonStartSystem {
 			}
 		}
 		if (instruction != null) {
-			fireGuidanceInstruction(server, player, state, instruction, snapshot, nowTick);
+			fireRouteGuidanceInstruction(server, player, state, instruction, snapshot, nowTick);
 		}
 	}
 
@@ -2052,6 +2108,7 @@ public final class SeasonStartSystem {
 		state.guidanceRouteLastPlayerX = player.getX();
 		state.guidanceRouteLastPlayerZ = player.getZ();
 		state.guidanceRouteLegStartedTick = nowTick;
+		resetRouteInstructionCadence(state, nowTick);
 		state.guidanceRouteStarted = true;
 	}
 
@@ -2116,6 +2173,7 @@ public final class SeasonStartSystem {
 			state.guidanceRouteLegAnnounced = false;
 			state.guidanceRouteLastDistance = Double.NaN;
 			state.guidanceRouteLegStartedTick = nowTick;
+			resetRouteInstructionCadence(state, nowTick);
 			return;
 		}
 		state.guidanceRouteFinished = true;
@@ -2130,15 +2188,33 @@ public final class SeasonStartSystem {
 		}
 	}
 
-	private static GuidanceInstruction resolveRouteLegOpening(GuidanceRouteKind routeKind, int routeLeg) {
+	private static GuidanceInstruction resolveRouteLegOpening(GuidanceRouteKind routeKind, int routeLeg, GuidanceSnapshot snapshot) {
 		return switch (routeLeg) {
 			case 0 -> routeKind == GuidanceRouteKind.INTRO_ORE
 					? new GuidanceInstruction("intro_guide_route_start", "intro_guide_route_start", INTRO_GUIDE_ROUTE_START_TRIGGERS, GUIDANCE_FORWARD_COOLDOWN_TICKS)
 					: new GuidanceInstruction("guide_forward_far", "guide_forward_far", GUIDE_FORWARD_FAR_TRIGGERS, GUIDANCE_FORWARD_COOLDOWN_TICKS);
-			case 1 -> new GuidanceInstruction("guide_passed_server", "guide_passed_server", GUIDE_PASSED_SERVER_TRIGGERS, GUIDANCE_CATEGORY_COOLDOWN_TICKS);
-			case 2 -> new GuidanceInstruction("guide_heading_lost", "guide_heading_lost", GUIDE_HEADING_LOST_TRIGGERS, GUIDANCE_CORRECTION_COOLDOWN_TICKS);
+			case 1 -> resolveRouteReverseInstruction(snapshot);
+			case 2 -> resolveRouteResumeInstruction(snapshot);
 			default -> new GuidanceInstruction("guide_forward_near", "guide_forward_near", GUIDE_FORWARD_NEAR_TRIGGERS, GUIDANCE_FORWARD_COOLDOWN_TICKS);
 		};
+	}
+
+	private static GuidanceInstruction resolveRouteReverseInstruction(GuidanceSnapshot snapshot) {
+		if (snapshot == null) {
+			return new GuidanceInstruction("guide_passed_server", "guide_passed_server", GUIDE_PASSED_SERVER_TRIGGERS, GUIDANCE_CATEGORY_COOLDOWN_TICKS);
+		}
+		return snapshot.deltaYaw < 0.0D
+				? new GuidanceInstruction("guide_route_reverse_left", "guide_route_reverse_left", GUIDE_ROUTE_REVERSE_LEFT_TRIGGERS, GUIDANCE_CATEGORY_COOLDOWN_TICKS)
+				: new GuidanceInstruction("guide_route_reverse_right", "guide_route_reverse_right", GUIDE_ROUTE_REVERSE_RIGHT_TRIGGERS, GUIDANCE_CATEGORY_COOLDOWN_TICKS);
+	}
+
+	private static GuidanceInstruction resolveRouteResumeInstruction(GuidanceSnapshot snapshot) {
+		if (snapshot == null || Math.abs(snapshot.deltaYaw) < GUIDANCE_MICRO_ANGLE) {
+			return new GuidanceInstruction("guide_route_resume_forward", "guide_route_resume_forward", GUIDE_ROUTE_RESUME_FORWARD_TRIGGERS, GUIDANCE_FORWARD_COOLDOWN_TICKS);
+		}
+		return snapshot.deltaYaw < 0.0D
+				? new GuidanceInstruction("guide_route_resume_left", "guide_route_resume_left", GUIDE_ROUTE_RESUME_LEFT_TRIGGERS, GUIDANCE_CORRECTION_COOLDOWN_TICKS)
+				: new GuidanceInstruction("guide_route_resume_right", "guide_route_resume_right", GUIDE_ROUTE_RESUME_RIGHT_TRIGGERS, GUIDANCE_CORRECTION_COOLDOWN_TICKS);
 	}
 
 	private static GuidanceInstruction resolveRouteForwardInstruction(GuidanceSnapshot snapshot) {
@@ -2150,13 +2226,128 @@ public final class SeasonStartSystem {
 		};
 	}
 
+	private static GuidanceInstruction resolveRouteMovementInstruction(
+			GuidanceRouteKind routeKind,
+			GuidanceSnapshot snapshot,
+			PlayerSceneState state,
+			double distanceDelta,
+			long nowTick
+	) {
+		if (snapshot == null || state == null) {
+			return null;
+		}
+		GuidanceInstruction turn = resolveRouteTurnInstruction(snapshot, state, nowTick);
+		if (isTurnRecoveryInstruction(turn)) {
+			return turn;
+		}
+		// A moving player needs a usable direction before criticism. After a correction, force a
+		// fresh direction again; only sustained refusal earns another route warning.
+		if (isNormalTurnInstruction(turn) && (!state.guidanceRouteDirectionIssued
+				|| nowTick >= state.guidanceRouteNextTurnCueTick)) {
+			return turn;
+		}
+		if (distanceDelta >= ROUTE_PROGRESS_AWAY
+				&& nowTick >= state.guidanceRouteNextWrongWayTick
+				&& ((state.guidanceRouteDirectionIssued
+						&& nowTick - state.guidanceRouteLastTurnCueTick >= ROUTE_WRONG_WAY_GRACE_TICKS)
+						|| (!isNormalTurnInstruction(turn)
+						&& nowTick - state.guidanceRouteLegStartedTick >= ROUTE_WRONG_WAY_GRACE_TICKS))) {
+			return routeKind == GuidanceRouteKind.INTRO_ORE
+					? new GuidanceInstruction("intro_guide_wrong_way", "intro_guide_wrong_way", INTRO_GUIDE_WRONG_WAY_TRIGGERS, GUIDANCE_CATEGORY_COOLDOWN_TICKS)
+					: new GuidanceInstruction("guide_wrong_way", "guide_wrong_way", GUIDE_WRONG_WAY_TRIGGERS, GUIDANCE_CATEGORY_COOLDOWN_TICKS);
+		}
+		if (distanceDelta <= ROUTE_PROGRESS_TOWARD && nowTick >= state.guidanceRouteNextProgressCueTick) {
+			if (state.guidanceRouteLegIndex == 1) {
+				return new GuidanceInstruction(
+						"guide_route_return_progress",
+						"guide_route_return_progress",
+						GUIDE_ROUTE_RETURN_PROGRESS_TRIGGERS,
+						GUIDANCE_FORWARD_COOLDOWN_TICKS
+				);
+			}
+			return resolveRouteForwardInstruction(snapshot);
+		}
+		return null;
+	}
+
+	private static GuidanceInstruction resolveRouteStallInstruction(
+			GuidanceSnapshot snapshot,
+			PlayerSceneState state,
+			long nowTick
+	) {
+		if (snapshot == null || state == null || nowTick - state.guidanceRouteLegStartedTick < ROUTE_STALL_AFTER_TICKS) {
+			return null;
+		}
+		return snapshot.aligned
+				? new GuidanceInstruction("guide_stall_aligned", "guide_stall_aligned", GUIDE_STALL_ALIGNED_TRIGGERS, GUIDANCE_STALL_COOLDOWN_TICKS)
+				: new GuidanceInstruction("guide_stall_misaligned", "guide_stall_misaligned", GUIDE_STALL_MISALIGNED_TRIGGERS, GUIDANCE_STALL_COOLDOWN_TICKS);
+	}
+
+	private static boolean fireRouteGuidanceInstruction(
+			MinecraftServer server,
+			ServerPlayer player,
+			PlayerSceneState state,
+			GuidanceInstruction instruction,
+			GuidanceSnapshot snapshot,
+			long nowTick
+	) {
+		if (!fireGuidanceInstruction(server, player, state, instruction, snapshot, nowTick)) {
+			return false;
+		}
+		if (isNormalTurnInstruction(instruction) || isTurnRecoveryInstruction(instruction)) {
+			state.guidanceRouteLastTurnCueTick = nowTick;
+			state.guidanceRouteNextTurnCueTick = nowTick + ROUTE_TURN_REPEAT_TICKS;
+			state.guidanceRouteNextProgressCueTick = nowTick + GUIDANCE_MIN_VOICE_GAP_TICKS;
+			state.guidanceRouteDirectionIssued = true;
+		} else if ("guide_wrong_way".equals(instruction.stateKey) || "intro_guide_wrong_way".equals(instruction.stateKey)) {
+			state.guidanceRouteDirectionIssued = false;
+			state.guidanceRouteNextWrongWayTick = nowTick + ROUTE_WRONG_WAY_REPEAT_TICKS;
+		} else if (isRouteForwardInstruction(instruction)) {
+			state.guidanceRouteNextProgressCueTick = nowTick + ROUTE_PROGRESS_CUE_TICKS;
+		}
+		return true;
+	}
+
+	private static void resetRouteInstructionCadence(PlayerSceneState state, long nowTick) {
+		if (state == null) {
+			return;
+		}
+		state.guidanceRouteLastTurnCueTick = nowTick;
+		state.guidanceRouteNextTurnCueTick = nowTick;
+		state.guidanceRouteNextProgressCueTick = nowTick;
+		state.guidanceRouteNextWrongWayTick = nowTick;
+		state.guidanceRouteDirectionIssued = false;
+	}
+
+	private static boolean isNormalTurnInstruction(GuidanceInstruction instruction) {
+		if (instruction == null || instruction.stateKey == null) {
+			return false;
+		}
+		return (instruction.stateKey.startsWith("guide_turn_") && !instruction.stateKey.endsWith("_recover"))
+				|| "guide_route_resume_left".equals(instruction.stateKey)
+				|| "guide_route_resume_right".equals(instruction.stateKey)
+				|| "guide_route_reverse_left".equals(instruction.stateKey)
+				|| "guide_route_reverse_right".equals(instruction.stateKey);
+	}
+
+	private static boolean isTurnRecoveryInstruction(GuidanceInstruction instruction) {
+		return instruction != null
+				&& ("guide_turn_left_recover".equals(instruction.stateKey)
+				|| "guide_turn_right_recover".equals(instruction.stateKey));
+	}
+
+	private static boolean isRouteForwardInstruction(GuidanceInstruction instruction) {
+		return instruction != null
+				&& instruction.stateKey != null
+				&& (instruction.stateKey.startsWith("guide_forward_")
+				|| "guide_route_resume_forward".equals(instruction.stateKey));
+	}
+
 	private static boolean isUrgentRouteCorrection(GuidanceInstruction instruction) {
 		if (instruction == null || instruction.stateKey == null) {
 			return false;
 		}
-		return instruction.stateKey.startsWith("guide_turn_")
-				|| "guide_wrong_way".equals(instruction.stateKey)
-				|| "intro_guide_wrong_way".equals(instruction.stateKey);
+		return isTurnRecoveryInstruction(instruction);
 	}
 
 	private static GuidanceInstruction resolveRouteTurnInstruction(GuidanceSnapshot snapshot, PlayerSceneState state, long nowTick) {
@@ -2204,7 +2395,7 @@ public final class SeasonStartSystem {
 		if (verticalAimHint == VerticalAimHint.DOWN) {
 			return new GuidanceInstruction("intro_target_look_down", "intro_target_look_down", INTRO_TARGET_LOOK_DOWN_TRIGGERS, GUIDANCE_STALL_COOLDOWN_TICKS);
 		}
-		return resolveRouteTurnInstruction(snapshot, state, nowTick);
+		return resolveThrottledRouteTurnInstruction(snapshot, state, nowTick);
 	}
 
 	private static void tickLooseServerApproach(
@@ -2220,10 +2411,22 @@ public final class SeasonStartSystem {
 					snapshot, nowTick);
 			return;
 		}
-		GuidanceInstruction turn = resolveRouteTurnInstruction(snapshot, state, nowTick);
+		GuidanceInstruction turn = resolveThrottledRouteTurnInstruction(snapshot, state, nowTick);
 		if (turn != null) {
-			fireGuidanceInstruction(server, player, state, turn, snapshot, nowTick);
+			fireRouteGuidanceInstruction(server, player, state, turn, snapshot, nowTick);
 		}
+	}
+
+	private static GuidanceInstruction resolveThrottledRouteTurnInstruction(
+			GuidanceSnapshot snapshot,
+			PlayerSceneState state,
+			long nowTick
+	) {
+		GuidanceInstruction instruction = resolveRouteTurnInstruction(snapshot, state, nowTick);
+		if (isNormalTurnInstruction(instruction) && nowTick < state.guidanceRouteNextTurnCueTick) {
+			return null;
+		}
+		return instruction;
 	}
 
 	private static Vec3 resolveServerRouteDestination(ServerPlayer player) {
@@ -2297,6 +2500,11 @@ public final class SeasonStartSystem {
 		state.guidanceRouteDestinationZ = Double.NaN;
 		state.guidanceRouteLastDistance = Double.NaN;
 		state.guidanceRouteInterruptAfterTick = Long.MIN_VALUE;
+		state.guidanceRouteLastTurnCueTick = 0L;
+		state.guidanceRouteNextTurnCueTick = 0L;
+		state.guidanceRouteNextProgressCueTick = 0L;
+		state.guidanceRouteNextWrongWayTick = 0L;
+		state.guidanceRouteDirectionIssued = false;
 	}
 
 	private static void tickIsolatedPhaseReactions(MinecraftServer server, ServerPlayer player, PlayerSceneState state, SlotDefinition slot) {
@@ -2705,11 +2913,15 @@ public final class SeasonStartSystem {
 			case "guide_turn_left_soft",
 					"guide_turn_left_medium",
 					"guide_turn_left_hard",
-					"guide_turn_around_left" -> TurnHintDirection.LEFT;
+					"guide_turn_around_left",
+					"guide_route_resume_left",
+					"guide_route_reverse_left" -> TurnHintDirection.LEFT;
 			case "guide_turn_right_soft",
 					"guide_turn_right_medium",
 					"guide_turn_right_hard",
-					"guide_turn_around_right" -> TurnHintDirection.RIGHT;
+					"guide_turn_around_right",
+					"guide_route_resume_right",
+					"guide_route_reverse_right" -> TurnHintDirection.RIGHT;
 			default -> TurnHintDirection.NONE;
 		};
 	}
@@ -2973,10 +3185,11 @@ public final class SeasonStartSystem {
 		if (countSharedPlayers() <= 0) {
 			return;
 		}
+		ensureSharedServerPowerNarration(server);
 		ensureSharedRaceControlsNarration(server);
 		if (!menuExplanationActive && sharedLaunchRequiredBitcoins > 0 && getSharedLaunchPercent() >= MENU_EXPLANATION_UNLOCK_PERCENT
 				&& pendingMenuExplanationTick == Long.MIN_VALUE) {
-			pendingMenuExplanationTick = nowTick + MENU_EXPLANATION_AFTER_HALFWAY_DELAY_TICKS;
+			pendingMenuExplanationTick = nowTick + MENU_EXPLANATION_DELAY_TICKS;
 		}
 		if (!menuExplanationActive && pendingMenuExplanationTick != Long.MIN_VALUE && nowTick >= pendingMenuExplanationTick) {
 			beginMenuExplanationPhase(server);
@@ -3004,6 +3217,7 @@ public final class SeasonStartSystem {
 			state.menuNarrationMuted = false;
 			state.raceMenuReached = false;
 			state.racePurchaseExplained = false;
+			state.raceMenuReminderExplained = false;
 			state.seenMenuSections.clear();
 			state.activeMenuSection = MenuSection.ROOT.id;
 			if (!state.menuRaceAllowanceGranted) {
@@ -5769,8 +5983,8 @@ public final class SeasonStartSystem {
 	}
 
 	/**
-	 * A missed first payment stays a private, real item. It can feed the server only through an
-	 * actual hit; otherwise, after landing, it returns to its owner like an experience orb.
+	 * A missed first payment stays a private, real item. Instead of silently returning, it escapes
+	 * to a distant point in the room and temporarily becomes the player's navigation target.
 	 */
 	private static void tickGuidedBitcoinOfferings(MinecraftServer server, ServerLevel level, ServerStructureBounds bounds) {
 		if (server == null || level == null || bounds == null || serverAnchor == null) {
@@ -5794,6 +6008,7 @@ public final class SeasonStartSystem {
 			}
 			if (distanceToServerStructureSqr(itemEntity.position(), bounds) <= SHARED_FEED_RADIUS * SHARED_FEED_RADIUS) {
 				GUIDED_OFFERING_VISIBLE_SINCE_TICKS.remove(offeringId);
+				clearEscapedGuidedBitcoinState(PLAYER_STATES.get(owner.getUUID()));
 				consumeOffering(itemEntity, 1);
 				spawnLaunchFeedParticles(level, itemEntity.position());
 				transitionPlayerAfterFirstPayment(server, owner);
@@ -5801,37 +6016,213 @@ public final class SeasonStartSystem {
 			}
 
 			long visibleSince = GUIDED_OFFERING_VISIBLE_SINCE_TICKS.computeIfAbsent(offeringId, ignored -> nowTick);
-			if (nowTick - visibleSince < GUIDED_OFFERING_VISIBLE_TICKS
-					|| (!itemEntity.onGround() && !itemEntity.isNoGravity())) {
+			PlayerSceneState ownerState = PLAYER_STATES.get(owner.getUUID());
+			if (ownerState == null) {
 				continue;
 			}
-
-			Vec3 target = new Vec3(owner.getX(), owner.getY() + 0.45D, owner.getZ());
-			Vec3 offset = target.subtract(itemEntity.position());
-			double distance = offset.length();
-			if (distance <= GUIDED_OFFERING_RETURN_PICKUP_DISTANCE) {
-				ItemStack returning = itemEntity.getItem().copy();
-				int returnedCount = returning.getCount();
-				if (owner.getInventory().add(returning)) {
-					GUIDED_OFFERING_VISIBLE_SINCE_TICKS.remove(offeringId);
-					owner.take(itemEntity, returnedCount);
-					itemEntity.discard();
-				} else {
-					// Keep the item recoverable even if a non-standard inventory is full.
-					itemEntity.setNoGravity(false);
+			if (ownerState.escapedGuidedOfferingId == null) {
+				if (nowTick - visibleSince < GUIDED_OFFERING_ESCAPE_DELAY_TICKS) {
+					continue;
 				}
+				beginGuidedBitcoinEscape(server, level, owner, ownerState, itemEntity, scene, bounds, nowTick);
 				continue;
 			}
-
-			itemEntity.setNoGravity(true);
-			double pullSpeed = Mth.clamp(
-					GUIDED_OFFERING_RETURN_SPEED_MIN + distance * 0.025D,
-					GUIDED_OFFERING_RETURN_SPEED_MIN,
-					GUIDED_OFFERING_RETURN_SPEED_MAX
-			);
-			Vec3 velocity = itemEntity.getDeltaMovement().scale(0.45D).add(offset.scale(pullSpeed / distance));
-			itemEntity.setDeltaMovement(velocity);
+			if (!offeringId.equals(ownerState.escapedGuidedOfferingId)) {
+				continue;
+			}
+			tickEscapedGuidedBitcoinFlight(itemEntity, ownerState);
 		}
+	}
+
+	private static void beginGuidedBitcoinEscape(
+			MinecraftServer server,
+			ServerLevel level,
+			ServerPlayer owner,
+			PlayerSceneState state,
+			ItemEntity itemEntity,
+			BoxGeometry scene,
+			ServerStructureBounds bounds,
+			long nowTick
+	) {
+		if (server == null || level == null || owner == null || state == null || itemEntity == null || scene == null || bounds == null) {
+			return;
+		}
+		Vec3 target = chooseGuidedBitcoinEscapeTarget(owner, itemEntity, scene, bounds);
+		state.escapedGuidedOfferingId = itemEntity.getUUID();
+		state.escapedGuidedOfferingTarget = target;
+		state.escapedGuidedOfferingLanded = false;
+		GUIDED_OFFERING_VISIBLE_SINCE_TICKS.remove(itemEntity.getUUID());
+		resetGuidanceRoute(state);
+		SeasonStartVoiceSystem.clearPlayerChannel(owner);
+		long narrationLock = resolveGuidanceNarrationLockTicks(INTRO_GUIDED_BITCOIN_LOST_TRIGGERS);
+		state.guidanceNarrationGateTick = nowTick + narrationLock;
+		state.nextGuidanceTick = nowTick;
+		state.nextGuidanceVoiceTick = nowTick + narrationLock;
+		state.nextGuidanceEarliestTick = nowTick + narrationLock;
+		state.lastGuidanceStateKey = "";
+		fireTriggerCycle(server, owner, state, "intro_guided_bitcoin_lost", INTRO_GUIDED_BITCOIN_LOST_TRIGGERS);
+
+		itemEntity.setPickUpDelay((int) narrationLock);
+		itemEntity.setNoGravity(true);
+		Vec3 offset = target.subtract(itemEntity.position());
+		double distance = offset.length();
+		if (distance > 1.0E-4D) {
+			itemEntity.setDeltaMovement(offset.scale(Math.min(GUIDED_OFFERING_ESCAPE_SPEED_MAX, 0.38D) / distance));
+		}
+	}
+
+	private static Vec3 chooseGuidedBitcoinEscapeTarget(
+			ServerPlayer owner,
+			ItemEntity itemEntity,
+			BoxGeometry scene,
+			ServerStructureBounds bounds
+	) {
+		long seed = itemEntity.getUUID().getMostSignificantBits() ^ itemEntity.getUUID().getLeastSignificantBits();
+		Random random = new Random(seed);
+		double centerX = (bounds.minX + bounds.maxX) * 0.5D;
+		double centerZ = (bounds.minZ + bounds.maxZ) * 0.5D;
+		double awayX = owner.getX() - centerX;
+		double awayZ = owner.getZ() - centerZ;
+		double awayLength = Math.sqrt(awayX * awayX + awayZ * awayZ);
+		if (awayLength < 0.25D) {
+			double angle = random.nextDouble() * Math.PI * 2.0D;
+			awayX = Math.cos(angle);
+			awayZ = Math.sin(angle);
+			awayLength = 1.0D;
+		}
+		awayX /= awayLength;
+		awayZ /= awayLength;
+		double interiorWidth = Math.max(2.0D, scene.maxX - scene.minX - 2.0D);
+		double interiorDepth = Math.max(2.0D, scene.maxZ - scene.minZ - 2.0D);
+		double targetDistance = Math.min(10.0D, Math.max(5.0D, Math.min(interiorWidth, interiorDepth) * 0.42D));
+		double minimumServerDistance = SHARED_FEED_RADIUS + 2.5D;
+		for (int attempt = 0; attempt < 18; attempt++) {
+			double angleOffset = (random.nextDouble() - 0.5D) * 1.7D;
+			double cos = Math.cos(angleOffset);
+			double sin = Math.sin(angleOffset);
+			double directionX = awayX * cos - awayZ * sin;
+			double directionZ = awayX * sin + awayZ * cos;
+			double distance = targetDistance * (0.82D + random.nextDouble() * 0.34D);
+			Vec3 candidate = new Vec3(
+					Mth.clamp(owner.getX() + directionX * distance, scene.minX + 1.5D, scene.maxX - 0.5D),
+					scene.floorY + 2.0D,
+					Mth.clamp(owner.getZ() + directionZ * distance, scene.minZ + 1.5D, scene.maxZ - 0.5D)
+			);
+			if (candidate.distanceToSqr(owner.position()) >= 4.5D * 4.5D
+					&& distanceToServerStructureSqr(candidate, bounds) >= minimumServerDistance * minimumServerDistance) {
+				return candidate;
+			}
+		}
+		return new Vec3(
+				Mth.clamp(owner.getX() + awayX * targetDistance, scene.minX + 1.5D, scene.maxX - 0.5D),
+				scene.floorY + 2.0D,
+				Mth.clamp(owner.getZ() + awayZ * targetDistance, scene.minZ + 1.5D, scene.maxZ - 0.5D)
+		);
+	}
+
+	private static void tickEscapedGuidedBitcoinFlight(ItemEntity itemEntity, PlayerSceneState state) {
+		if (itemEntity == null || state == null || state.escapedGuidedOfferingTarget == null || state.escapedGuidedOfferingLanded) {
+			return;
+		}
+		if (!itemEntity.isNoGravity()) {
+			if (itemEntity.onGround()) {
+				state.escapedGuidedOfferingLanded = true;
+				state.escapedGuidedOfferingTarget = itemEntity.position();
+			}
+			return;
+		}
+		Vec3 offset = state.escapedGuidedOfferingTarget.subtract(itemEntity.position());
+		double distance = offset.length();
+		if (distance <= GUIDED_OFFERING_ESCAPE_TARGET_DISTANCE) {
+			itemEntity.setDeltaMovement(Vec3.ZERO);
+			itemEntity.setNoGravity(false);
+			return;
+		}
+		double speed = Mth.clamp(
+				GUIDED_OFFERING_ESCAPE_SPEED_MIN + distance * 0.045D,
+				GUIDED_OFFERING_ESCAPE_SPEED_MIN,
+				GUIDED_OFFERING_ESCAPE_SPEED_MAX
+		);
+		Vec3 desiredVelocity = offset.scale(speed / distance);
+		itemEntity.setDeltaMovement(itemEntity.getDeltaMovement().scale(0.35D).add(desiredVelocity.scale(0.65D)));
+	}
+
+	private static boolean tickLostGuidedBitcoinRecovery(MinecraftServer server, ServerPlayer player, PlayerSceneState state, long nowTick) {
+		if (server == null || player == null || state == null || !(player.level() instanceof ServerLevel level)
+				|| state.escapedGuidedOfferingId == null) {
+			return false;
+		}
+		ItemEntity itemEntity = findEscapedGuidedBitcoin(level, state.escapedGuidedOfferingId);
+		if (itemEntity == null) {
+			// The item should never vanish during the private scene. Recover it rather than trapping the player.
+			giveOrDrop(player, new ItemStack(ModItems.BITCOIN));
+			clearEscapedGuidedBitcoinState(state);
+			resetGuidanceRoute(state);
+			return true;
+		}
+		if (!state.escapedGuidedOfferingLanded) {
+			return true;
+		}
+		if (player.distanceToSqr(itemEntity) <= GUIDED_OFFERING_RECOVERY_DISTANCE * GUIDED_OFFERING_RECOVERY_DISTANCE) {
+			ItemStack returning = itemEntity.getItem().copy();
+			int returnedCount = returning.getCount();
+			if (player.getInventory().add(returning)) {
+				GUIDED_OFFERING_VISIBLE_SINCE_TICKS.remove(itemEntity.getUUID());
+				player.take(itemEntity, returnedCount);
+				itemEntity.discard();
+				clearEscapedGuidedBitcoinState(state);
+				resetGuidanceRoute(state);
+				SeasonStartVoiceSystem.clearPlayerChannel(player);
+				long narrationLock = resolveGuidanceNarrationLockTicks(INTRO_GUIDED_BITCOIN_RECOVERED_TRIGGERS);
+				state.guidanceNarrationGateTick = nowTick + narrationLock;
+				state.nextGuidanceTick = nowTick;
+				state.nextGuidanceVoiceTick = nowTick + narrationLock;
+				state.nextGuidanceEarliestTick = nowTick + narrationLock;
+				state.lastGuidanceStateKey = "";
+				fireTriggerCycle(server, player, state, "intro_guided_bitcoin_recovered", INTRO_GUIDED_BITCOIN_RECOVERED_TRIGGERS);
+			}
+			return true;
+		}
+		if (nowTick < state.guidanceNarrationGateTick || nowTick < state.nextGuidanceTick) {
+			return true;
+		}
+		state.nextGuidanceTick = nowTick + GUIDANCE_EVALUATE_TICKS;
+		BoxGeometry barrier = computeBarrierGeometry(resolveServerAnchor(level));
+		if (!state.guidanceRouteFinished) {
+			tickConfusedRoute(server, player, state, GuidanceRouteKind.LOST_BITCOIN, itemEntity.position(), barrier, nowTick);
+			return true;
+		}
+		GuidanceSnapshot snapshot = resolveGuidanceSnapshot(player, itemEntity.position());
+		if (snapshot == null) {
+			return true;
+		}
+		GuidanceInstruction instruction = resolveThrottledRouteTurnInstruction(snapshot, state, nowTick);
+		if (instruction == null) {
+			instruction = resolveRouteForwardInstruction(snapshot);
+		}
+		fireRouteGuidanceInstruction(server, player, state, instruction, snapshot, nowTick);
+		return true;
+	}
+
+	private static ItemEntity findEscapedGuidedBitcoin(ServerLevel level, UUID offeringId) {
+		if (level == null || offeringId == null || serverAnchor == null) {
+			return null;
+		}
+		BoxGeometry scene = computeBarrierGeometry(serverAnchor);
+		AABB sceneBounds = new AABB(scene.minX, scene.floorY, scene.minZ, scene.maxX + 1.0D, scene.roofY + 1.0D, scene.maxZ + 1.0D);
+		for (ItemEntity itemEntity : level.getEntitiesOfClass(ItemEntity.class, sceneBounds, entity -> offeringId.equals(entity.getUUID()))) {
+			return itemEntity;
+		}
+		return null;
+	}
+
+	private static void clearEscapedGuidedBitcoinState(PlayerSceneState state) {
+		if (state == null) {
+			return;
+		}
+		state.escapedGuidedOfferingId = null;
+		state.escapedGuidedOfferingTarget = null;
+		state.escapedGuidedOfferingLanded = false;
 	}
 
 	private static boolean isGuidedBitcoinOffering(ItemEntity itemEntity) {
@@ -5908,31 +6299,20 @@ public final class SeasonStartSystem {
 		long nowTick = overworld == null ? 0L : overworld.getGameTime();
 		sharedLaunchCollectedBitcoins = Math.min(sharedLaunchRequiredBitcoins, sharedLaunchCollectedBitcoins + bitcoins);
 		lastSharedLaunchProgressTick = nowTick;
-		String newestMilestoneTrigger = null;
-		while (sharedLaunchMilestoneCursor < SHARED_LAUNCH_MILESTONES.length
-				&& getSharedLaunchPercent() >= SHARED_LAUNCH_MILESTONES[sharedLaunchMilestoneCursor]) {
-			newestMilestoneTrigger = resolveSharedLaunchMilestoneTrigger(
-					SHARED_LAUNCH_MILESTONES[sharedLaunchMilestoneCursor]
-			);
-			sharedLaunchMilestoneCursor++;
-		}
 		if (sharedLaunchCollectedBitcoins >= sharedLaunchRequiredBitcoins) {
 			// The finale takes exclusive ownership of narration. This prevents an
-			// unfinished personal menu line or an old percentage from leaking into it.
+			// unfinished personal menu line from leaking into it.
 			menuExplanationActive = false;
 			pendingMenuExplanationTick = Long.MIN_VALUE;
 			SeasonStartVoiceSystem.resetSceneState();
-			if (newestMilestoneTrigger != null) {
-				SeasonStartVoiceSystem.fireTrigger(server, newestMilestoneTrigger, null);
-			}
-		} else if (newestMilestoneTrigger != null) {
-			SeasonStartVoiceSystem.replaceSharedLaunchProgressNarration(server, newestMilestoneTrigger);
+			SeasonStartVoiceSystem.fireTrigger(server, "shared_launch_complete", null);
 		}
+		ensureSharedServerPowerNarration(server);
 		ensureSharedRaceControlsNarration(server);
 		if (!menuExplanationActive
 				&& getSharedLaunchPercent() >= MENU_EXPLANATION_UNLOCK_PERCENT
 				&& pendingMenuExplanationTick == Long.MIN_VALUE) {
-			pendingMenuExplanationTick = nowTick + MENU_EXPLANATION_AFTER_HALFWAY_DELAY_TICKS;
+			pendingMenuExplanationTick = nowTick + MENU_EXPLANATION_DELAY_TICKS;
 		}
 		if (sharedLaunchCollectedBitcoins >= sharedLaunchRequiredBitcoins && pendingSharedFinishTick == Long.MIN_VALUE) {
 			pendingSharedFinishTick = nowTick
@@ -5943,26 +6323,18 @@ public final class SeasonStartSystem {
 		stateDirty = true;
 	}
 
-	private static String resolveSharedLaunchMilestoneTrigger(int milestone) {
-		return switch (milestone) {
-			case 10 -> "shared_launch_ten";
-			case 20 -> "shared_launch_twenty";
-			case 30 -> "shared_launch_thirty";
-			case 40 -> "shared_launch_forty";
-			case 50 -> "shared_launch_halfway";
-			case 60 -> "shared_launch_sixty";
-			case 70 -> "shared_launch_seventy";
-			case 80 -> "shared_launch_eighty";
-			case 90 -> "shared_launch_ninety";
-			case 100 -> "shared_launch_complete";
-			default -> null;
-		};
+	private static void ensureSharedServerPowerNarration(MinecraftServer server) {
+		if (server == null || sharedLaunchServerPowerNarrationTriggered
+				|| sharedLaunchCollectedBitcoins >= sharedLaunchRequiredBitcoins
+				|| getSharedLaunchPercent() < SHARED_LAUNCH_SERVER_POWER_PERCENT) {
+			return;
+		}
+		sharedLaunchServerPowerNarrationTriggered = true;
+		SeasonStartVoiceSystem.fireTrigger(server, "shared_launch_server_power", null);
+		stateDirty = true;
 	}
 
-	/**
-	 * Race controls are a shared progress beat delivered through each player's personal channel.
-	 * This lets it start at 55% even for players who still have an open menu, without overlap.
-	 */
+	/** Race controls are delivered through personal channels so a menu interaction cannot mask them. */
 	private static void ensureSharedRaceControlsNarration(MinecraftServer server) {
 		if (server == null || sharedLaunchRaceControlsTriggered
 				|| sharedLaunchCollectedBitcoins >= sharedLaunchRequiredBitcoins
@@ -5970,23 +6342,21 @@ public final class SeasonStartSystem {
 			return;
 		}
 		sharedLaunchRaceControlsTriggered = true;
-		SeasonStartVoiceSystem.clearSharedLaunchProgressNarration();
 		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
 			if (!isInSharedPhase(player)) {
 				continue;
 			}
-			SeasonStartVoiceSystem.clearPlayerChannel(player);
+			PlayerSceneState state = PLAYER_STATES.get(player.getUUID());
+			if (state == null) {
+				continue;
+			}
 			SeasonStartVoiceSystem.fireTrigger(server, "shared_launch_race_controls", player);
+			if (!state.racePurchaseExplained && !state.raceMenuReminderExplained) {
+				state.raceMenuReminderExplained = true;
+				SeasonStartVoiceSystem.fireTrigger(server, "shared_launch_race_menu_reminder", player);
+			}
 		}
 		stateDirty = true;
-	}
-
-	private static int resolveSharedLaunchMilestoneCursor(int percent) {
-		int cursor = 0;
-		while (cursor < SHARED_LAUNCH_MILESTONES.length && percent >= SHARED_LAUNCH_MILESTONES[cursor]) {
-			cursor++;
-		}
-		return cursor;
 	}
 
 	private static String resolveMenuItemExplanationTrigger(String upgradeId) {
@@ -7411,8 +7781,8 @@ public final class SeasonStartSystem {
 		sharedLaunchBitcoinSpawned = 0;
 		sharedLaunchBitcoinSupplyVersion = SHARED_LAUNCH_SUPPLY_VERSION;
 		sharedLaunchBitcoinPositionIndexLoaded = false;
-		sharedLaunchMilestoneCursor = 0;
 		sharedLaunchIntroTriggered = false;
+		sharedLaunchServerPowerNarrationTriggered = false;
 		sharedLaunchRaceControlsTriggered = false;
 		menuExplanationActive = false;
 		startupWorldgenFrameIndex = Integer.MIN_VALUE;
@@ -7455,8 +7825,8 @@ public final class SeasonStartSystem {
 			sharedLaunchBitcoinSpawned = Math.max(0, state.sharedLaunchBitcoinSpawned);
 			sharedLaunchBitcoinSupplyVersion = Math.max(0, state.sharedLaunchBitcoinSupplyVersion);
 			sharedLaunchBitcoinPositionIndexLoaded = false;
-			sharedLaunchMilestoneCursor = resolveSharedLaunchMilestoneCursor(getSharedLaunchPercent());
 			sharedLaunchIntroTriggered = state.sharedLaunchIntroTriggered;
+			sharedLaunchServerPowerNarrationTriggered = state.sharedLaunchServerPowerNarrationTriggered;
 			sharedLaunchRaceControlsTriggered = state.sharedLaunchRaceControlsTriggered;
 			menuExplanationActive = state.menuExplanationActive;
 			if (state.players != null) {
@@ -7474,10 +7844,11 @@ public final class SeasonStartSystem {
 					if (runtime.poweredServer) {
 						runtime.phase = PlayerPhase.SHARED;
 					}
-					runtime.menuOpened = persisted.menuOpened;
+				runtime.menuOpened = persisted.menuOpened;
 				runtime.menuNarrationMuted = persisted.menuNarrationMuted;
 				runtime.raceMenuReached = persisted.raceMenuReached;
 				runtime.racePurchaseExplained = persisted.racePurchaseExplained;
+				runtime.raceMenuReminderExplained = persisted.raceMenuReminderExplained;
 				runtime.menuRaceAllowanceGranted = persisted.menuRaceAllowanceGranted;
 					if (persisted.seenMenuSections != null) {
 						runtime.seenMenuSections.addAll(persisted.seenMenuSections);
@@ -7506,8 +7877,8 @@ public final class SeasonStartSystem {
 		state.sharedLaunchRequiredBitcoins = sharedLaunchRequiredBitcoins;
 		state.sharedLaunchBitcoinSpawned = sharedLaunchBitcoinSpawned;
 		state.sharedLaunchBitcoinSupplyVersion = sharedLaunchBitcoinSupplyVersion;
-		state.sharedLaunchMilestoneCursor = sharedLaunchMilestoneCursor;
 		state.sharedLaunchIntroTriggered = sharedLaunchIntroTriggered;
+		state.sharedLaunchServerPowerNarrationTriggered = sharedLaunchServerPowerNarrationTriggered;
 		state.sharedLaunchRaceControlsTriggered = sharedLaunchRaceControlsTriggered;
 		state.menuExplanationActive = menuExplanationActive;
 		state.players = new LinkedHashMap<>();
@@ -7525,6 +7896,7 @@ public final class SeasonStartSystem {
 			persisted.menuNarrationMuted = runtime.menuNarrationMuted;
 			persisted.raceMenuReached = runtime.raceMenuReached;
 			persisted.racePurchaseExplained = runtime.racePurchaseExplained;
+			persisted.raceMenuReminderExplained = runtime.raceMenuReminderExplained;
 			persisted.menuRaceAllowanceGranted = runtime.menuRaceAllowanceGranted;
 			persisted.seenMenuSections = new ArrayList<>(runtime.seenMenuSections);
 			state.players.put(entry.getKey().toString(), persisted);
@@ -7829,7 +8201,8 @@ public final class SeasonStartSystem {
 	private enum GuidanceRouteKind {
 		NONE,
 		INTRO_ORE,
-		SERVER
+		SERVER,
+		LOST_BITCOIN
 	}
 
 	private enum MenuSection {
@@ -7929,6 +8302,14 @@ public final class SeasonStartSystem {
 		private long guidanceRouteLastMoveTick = Long.MIN_VALUE;
 		private long guidanceRouteLegStartedTick = Long.MIN_VALUE;
 		private long guidanceRouteInterruptAfterTick = Long.MIN_VALUE;
+		private long guidanceRouteLastTurnCueTick = 0L;
+		private long guidanceRouteNextTurnCueTick = 0L;
+		private long guidanceRouteNextProgressCueTick = 0L;
+		private long guidanceRouteNextWrongWayTick = 0L;
+		private boolean guidanceRouteDirectionIssued = false;
+		private UUID escapedGuidedOfferingId;
+		private Vec3 escapedGuidedOfferingTarget;
+		private boolean escapedGuidedOfferingLanded = false;
 		private long lastActivityTick = 0L;
 		private long nextIdleReactionTick = 0L;
 		private long nextLeaveReactionTick = 0L;
@@ -7952,6 +8333,7 @@ public final class SeasonStartSystem {
 		private boolean menuNarrationMuted;
 		private boolean raceMenuReached;
 		private boolean racePurchaseExplained;
+		private boolean raceMenuReminderExplained;
 		private boolean menuRaceAllowanceGranted;
 		private String activeMenuSection = "";
 		private long nextMenuPriceReactionTick = Long.MIN_VALUE;
@@ -8292,8 +8674,8 @@ public final class SeasonStartSystem {
 		private int sharedLaunchRequiredBitcoins;
 		private int sharedLaunchBitcoinSpawned;
 		private int sharedLaunchBitcoinSupplyVersion;
-		private int sharedLaunchMilestoneCursor;
 		private boolean sharedLaunchIntroTriggered;
+		private boolean sharedLaunchServerPowerNarrationTriggered;
 		private boolean sharedLaunchRaceControlsTriggered;
 		private boolean menuExplanationActive;
 		private Map<String, PersistedPlayerState> players;
@@ -8308,6 +8690,7 @@ public final class SeasonStartSystem {
 		private boolean menuNarrationMuted;
 		private boolean raceMenuReached;
 		private boolean racePurchaseExplained;
+		private boolean raceMenuReminderExplained;
 		private boolean menuRaceAllowanceGranted;
 		private List<String> seenMenuSections;
 	}

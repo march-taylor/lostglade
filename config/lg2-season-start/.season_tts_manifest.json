@@ -912,10 +912,10 @@
       "generatorVersion": 4
     },
     "shared_launch_complete": {
-      "fingerprint": "b1bb18dbfc44f415368cb4295d4be0478fbe830bbb47d2cef2567db92710f019",
-      "text": "Сто процентов. Сейчас разберусь что делаем дальше.",
+      "fingerprint": "c490c6ae47fb402fe7691f16cfe2089040e04d4a1cd3779b3be9873e652541a7",
+      "text": "Запускаю Lost Glade.",
       "outputPath": "config/lg2-season-start/voice/shared_launch_complete.wav",
-      "durationTicks": 76,
+      "durationTicks": 39,
       "generatorVersion": 4
     },
     "phase5_menu_power_received": {
@@ -1168,6 +1168,321 @@
       "text": "Вы на месте. Руда где-то перед вами.",
       "outputPath": "config/lg2-season-start/voice/intro_route_arrived_03.wav",
       "durationTicks": 55,
+      "generatorVersion": 4
+    },
+    "intro_guided_bitcoin_lost_01": {
+      "fingerprint": "e203457f240c7f05cac159ba20d50d1e63b7249145d0f9d825e6d38f0694b2a7",
+      "text": "Ну ты дуралей, конечно. Как ты умудрился потерять единственный биткоин? Он улетел. Теперь ищи его.",
+      "outputPath": "config/lg2-season-start/voice/intro_guided_bitcoin_lost_01.wav",
+      "durationTicks": 135,
+      "generatorVersion": 4
+    },
+    "intro_guided_bitcoin_lost_02": {
+      "fingerprint": "a897465d2dca8e02fab35afb7757533fb475b39a4b31d3a7307841c06a914eb5",
+      "text": "Блестяще. Биткоин был у тебя в руках и уже сбежал. Найди его.",
+      "outputPath": "config/lg2-season-start/voice/intro_guided_bitcoin_lost_02.wav",
+      "durationTicks": 108,
+      "generatorVersion": 4
+    },
+    "intro_guided_bitcoin_lost_03": {
+      "fingerprint": "29f36ef1de6a5ce163d3da2e348c49188e94f551b9e2b73c56e7a39da9c58c61",
+      "text": "Это была не передача серверу. Это был запуск биткоина в свободный полёт. Иди ищи.",
+      "outputPath": "config/lg2-season-start/voice/intro_guided_bitcoin_lost_03.wav",
+      "durationTicks": 115,
+      "generatorVersion": 4
+    },
+    "intro_guided_bitcoin_recovered": {
+      "fingerprint": "742f4bdf0ce2353daf00b6e0a8e11bcbee07979260af338b7ee1825533f21544",
+      "text": "Нашёл. Невероятно. Теперь не теряй его снова и иди ко мне.",
+      "outputPath": "config/lg2-season-start/voice/intro_guided_bitcoin_recovered.wav",
+      "durationTicks": 83,
+      "generatorVersion": 4
+    },
+    "intro_guide_wrong_way_04": {
+      "fingerprint": "ee30477734e5c54b18095bc9aa6f4dc725ae2d428444e3eeeccd654a55950e29",
+      "text": "Прямо. Нет, стой. Руда осталась сзади. Разворачивайся.",
+      "outputPath": "config/lg2-season-start/voice/intro_guide_wrong_way_04.wav",
+      "durationTicks": 100,
+      "generatorVersion": 4
+    },
+    "intro_guide_wrong_way_05": {
+      "fingerprint": "053c3ccebf651943c67a12b4bd7015817e1b5f658ead281375cadc44685da56d",
+      "text": "Отмена движения. Ты удаляешься от руды. Вернись.",
+      "outputPath": "config/lg2-season-start/voice/intro_guide_wrong_way_05.wav",
+      "durationTicks": 81,
+      "generatorVersion": 4
+    },
+    "intro_guide_wrong_way_06": {
+      "fingerprint": "e1632b65dec3a70c888c9655a90ba25570b7ba81d33fd654983d5bd674d3b70f",
+      "text": "Стой. Эта сторона уже проверена. Руда в обратном направлении.",
+      "outputPath": "config/lg2-season-start/voice/intro_guide_wrong_way_06.wav",
+      "durationTicks": 91,
+      "generatorVersion": 4
+    },
+    "intro_guide_wrong_way_07": {
+      "fingerprint": "7133065245c247ce2e4945b59fae9531faa369d00e9e6f79ab5d286695d8af16",
+      "text": "Не продолжай. Цель за спиной. Разворот и назад.",
+      "outputPath": "config/lg2-season-start/voice/intro_guide_wrong_way_07.wav",
+      "durationTicks": 81,
+      "generatorVersion": 4
+    },
+    "intro_guide_wrong_way_08": {
+      "fingerprint": "6e4df4a9d06ccd15988e9e444a7bd4044095638a4c07fcf00d7a5172dd5381bb",
+      "text": "Маршрут перестроен. Возвращайся к последней точке.",
+      "outputPath": "config/lg2-season-start/voice/intro_guide_wrong_way_08.wav",
+      "durationTicks": 75,
+      "generatorVersion": 4
+    },
+    "guide_wrong_way_05": {
+      "fingerprint": "8f1c0d6d5d0d573eb3ae9f1b124b5138fcf9d651d4565fd5f95afcd455d0c52e",
+      "text": "Прямо. Нет. Стой. Я вижу: это было не прямо. Возвращайся.",
+      "outputPath": "config/lg2-season-start/voice/guide_wrong_way_05.wav",
+      "durationTicks": 100,
+      "generatorVersion": 4
+    },
+    "guide_wrong_way_06": {
+      "fingerprint": "dc49963211bed831e4d8f7cd8a1dde8ae6c1ff4b7c12e23dd64a3f4de9ad375a",
+      "text": "Маршрут перестроен. Разворачивайся и возвращайся к предыдущей точке.",
+      "outputPath": "config/lg2-season-start/voice/guide_wrong_way_06.wav",
+      "durationTicks": 99,
+      "generatorVersion": 4
+    },
+    "guide_wrong_way_07": {
+      "fingerprint": "82f698ca7cf8147eb776b7c9f600a113d9dc80c8e35e4fba081b6eba54e2aece",
+      "text": "Стой. Дальше пустота. Цель осталась позади.",
+      "outputPath": "config/lg2-season-start/voice/guide_wrong_way_07.wav",
+      "durationTicks": 78,
+      "generatorVersion": 4
+    },
+    "guide_wrong_way_08": {
+      "fingerprint": "11283f701ccd3c8f0729a8605214de64b01b84d36e5018fcd8ebcc5851a7947e",
+      "text": "Так, фиксирую поправку. Не продолжай. Назад.",
+      "outputPath": "config/lg2-season-start/voice/guide_wrong_way_08.wav",
+      "durationTicks": 89,
+      "generatorVersion": 4
+    },
+    "guide_wrong_way_09": {
+      "fingerprint": "0f7f1081fdff8d4f08637f2e37769a3cfbf62b4036a988086f8b6bac00fe1cc8",
+      "text": "Курс неверный. Возвращайся. Следующий поворот дам на месте.",
+      "outputPath": "config/lg2-season-start/voice/guide_wrong_way_09.wav",
+      "durationTicks": 94,
+      "generatorVersion": 4
+    },
+    "guide_wrong_way_10": {
+      "fingerprint": "475e28b7cab73fb75846564044ceef0a5c52531e3bbbc2624551e9bfe70eb803",
+      "text": "Не туда. Разворот. Сейчас выведу на правильную ветку.",
+      "outputPath": "config/lg2-season-start/voice/guide_wrong_way_10.wav",
+      "durationTicks": 91,
+      "generatorVersion": 4
+    },
+    "guide_wrong_way_11": {
+      "fingerprint": "3d79568d09c2f68ee5e0d0d0af33a10ac896a3129db17b72290c290a0000201e",
+      "text": "Стоп. Точку уже прошли. Вернись на несколько блоков.",
+      "outputPath": "config/lg2-season-start/voice/guide_wrong_way_11.wav",
+      "durationTicks": 75,
+      "generatorVersion": 4
+    },
+    "guide_wrong_way_12": {
+      "fingerprint": "38aefcb93657eff11c7240b71a6762fe527165104a6c64f329da8a9a838e53ac",
+      "text": "Вот здесь ошибка. Назад. Не сворачивай до моей команды.",
+      "outputPath": "config/lg2-season-start/voice/guide_wrong_way_12.wav",
+      "durationTicks": 86,
+      "generatorVersion": 4
+    },
+    "guide_passed_server_04": {
+      "fingerprint": "f420e1555506b8a131862d04bac7b8eb73250f0858a9e9ed726d34f30c205688",
+      "text": "Прямо. Нет. Стой. Новый расчёт: вернитесь к предыдущей точке.",
+      "outputPath": "config/lg2-season-start/voice/guide_passed_server_04.wav",
+      "durationTicks": 113,
+      "generatorVersion": 4
+    },
+    "guide_passed_server_05": {
+      "fingerprint": "1c31bdda7ffb429888fd6bfa31252b7e51f5b4c2751739d5012a2680bb13613f",
+      "text": "Маршрут перестроен. Разворачивайтесь. Эта ветка закрыта.",
+      "outputPath": "config/lg2-season-start/voice/guide_passed_server_05.wav",
+      "durationTicks": 86,
+      "generatorVersion": 4
+    },
+    "guide_passed_server_06": {
+      "fingerprint": "1ec7016efd4cca8ac370fe587b8c358b07cd9e1cfe4ddb3b3e468cf5d7546940",
+      "text": "Стоп. Точку прошли. Назад, до последнего поворота.",
+      "outputPath": "config/lg2-season-start/voice/guide_passed_server_06.wav",
+      "durationTicks": 81,
+      "generatorVersion": 4
+    },
+    "guide_passed_server_07": {
+      "fingerprint": "34420e5a7bc5f892d57dbc7d0c29d346a9d41bc28846749054806016bd480ad2",
+      "text": "Так, корректировка. Вернитесь. Дальше поведу точнее.",
+      "outputPath": "config/lg2-season-start/voice/guide_passed_server_07.wav",
+      "durationTicks": 83,
+      "generatorVersion": 4
+    },
+    "guide_passed_server_08": {
+      "fingerprint": "6c9b87ffd357729f76d80c3a0eb70ea919735cb035b396bad6be91e8dfdd04b4",
+      "text": "Не туда. Разворачивайтесь. Сейчас восстановим курс.",
+      "outputPath": "config/lg2-season-start/voice/guide_passed_server_08.wav",
+      "durationTicks": 75,
+      "generatorVersion": 4
+    },
+    "guide_route_resume_left_01": {
+      "fingerprint": "57f1206f6d544de8697244a4f8c0a6df3398c2080d672c0f4e2558aa9c5cf91f",
+      "text": "Отлично. Вернулись. Теперь налево.",
+      "outputPath": "config/lg2-season-start/voice/guide_route_resume_left_01.wav",
+      "durationTicks": 65,
+      "generatorVersion": 4
+    },
+    "guide_route_resume_left_02": {
+      "fingerprint": "75981f11fd84c0074778ac325471156e2749982a9aa09ede021246cd0cfeb7f7",
+      "text": "Есть. Контрольная точка пройдена. Налево.",
+      "outputPath": "config/lg2-season-start/voice/guide_route_resume_left_02.wav",
+      "durationTicks": 75,
+      "generatorVersion": 4
+    },
+    "guide_route_resume_left_03": {
+      "fingerprint": "323840b8df962574f4e75521539cc352d51727768a1135785e6c396390b494cf",
+      "text": "Вот. Маршрут перестроен. Следующий поворот налево.",
+      "outputPath": "config/lg2-season-start/voice/guide_route_resume_left_03.wav",
+      "durationTicks": 78,
+      "generatorVersion": 4
+    },
+    "guide_route_resume_left_04": {
+      "fingerprint": "6aa085d77da7402c72056a7ac4e0bef9ac219068cf6bd85bf510d60549b8c75c",
+      "text": "Верно. Теперь налево. Держите этот курс.",
+      "outputPath": "config/lg2-season-start/voice/guide_route_resume_left_04.wav",
+      "durationTicks": 63,
+      "generatorVersion": 4
+    },
+    "guide_route_resume_right_01": {
+      "fingerprint": "e90003053cc439f1002862c2a34687f1d1b574c107e70f3db53e554dbdd6a8ef",
+      "text": "Отлично. Вернулись. Теперь направо.",
+      "outputPath": "config/lg2-season-start/voice/guide_route_resume_right_01.wav",
+      "durationTicks": 70,
+      "generatorVersion": 4
+    },
+    "guide_route_resume_right_02": {
+      "fingerprint": "469dfcedc40eeb05f6d3faf2f54c5ecb0062fb153ec9ea1887f52ac317968c3e",
+      "text": "Есть. Контрольная точка пройдена. Направо.",
+      "outputPath": "config/lg2-season-start/voice/guide_route_resume_right_02.wav",
+      "durationTicks": 75,
+      "generatorVersion": 4
+    },
+    "guide_route_resume_right_03": {
+      "fingerprint": "716dd7fe49d69d8500f101e9406396ee6fa82d0fd48fdeb5c45c947690da0a24",
+      "text": "Вот. Маршрут перестроен. Следующий поворот направо.",
+      "outputPath": "config/lg2-season-start/voice/guide_route_resume_right_03.wav",
+      "durationTicks": 87,
+      "generatorVersion": 4
+    },
+    "guide_route_resume_right_04": {
+      "fingerprint": "5dd90b4c03303af2163e7ce137d0f82675c5eda7af85622c8af3d692410722a3",
+      "text": "Верно. Теперь направо. Держите этот курс.",
+      "outputPath": "config/lg2-season-start/voice/guide_route_resume_right_04.wav",
+      "durationTicks": 83,
+      "generatorVersion": 4
+    },
+    "guide_route_resume_forward_01": {
+      "fingerprint": "9d223b9867d6a2b7cd6efdf5b8ed13789b9221f227d64b4f6c2abd8ef7a75866",
+      "text": "Отлично. Вернулись. Теперь прямо.",
+      "outputPath": "config/lg2-season-start/voice/guide_route_resume_forward_01.wav",
+      "durationTicks": 59,
+      "generatorVersion": 4
+    },
+    "guide_route_resume_forward_02": {
+      "fingerprint": "2478f5c44b77178a10f4253fdaa90c44388b6af99f533a97e80cd498cb06b3a4",
+      "text": "Есть. Маршрут перестроен. Идите прямо.",
+      "outputPath": "config/lg2-season-start/voice/guide_route_resume_forward_02.wav",
+      "durationTicks": 71,
+      "generatorVersion": 4
+    },
+    "guide_route_resume_forward_03": {
+      "fingerprint": "d7ef7d4c27a3082c075f510ec88ebc7df3c2415c033947d9476ba5273c4a206c",
+      "text": "Контрольная точка пройдена. Прямо, не сворачивайте.",
+      "outputPath": "config/lg2-season-start/voice/guide_route_resume_forward_03.wav",
+      "durationTicks": 75,
+      "generatorVersion": 4
+    },
+    "guide_route_return_progress_01": {
+      "fingerprint": "7bacf51c877a8f5ea691ea5de3af8c67b8b469c46b5ddd2fd2e196cdc7943f3f",
+      "text": "Да. Назад. До точки возврата не сворачивай.",
+      "outputPath": "config/lg2-season-start/voice/guide_route_return_progress_01.wav",
+      "durationTicks": 78,
+      "generatorVersion": 4
+    },
+    "guide_route_return_progress_02": {
+      "fingerprint": "837d4549859b03e837c7d21451ecf25dc1b012726325e5190afde16124d59286",
+      "text": "Верно. Продолжай обратно. Новый поворот будет на месте.",
+      "outputPath": "config/lg2-season-start/voice/guide_route_return_progress_02.wav",
+      "durationTicks": 83,
+      "generatorVersion": 4
+    },
+    "guide_route_return_progress_03": {
+      "fingerprint": "b5f673f532a78688cdc3ab0dc793402d5b27d33239958c7eb0154b9c7e0e3167",
+      "text": "Так. Именно в эту сторону. Ещё немного назад.",
+      "outputPath": "config/lg2-season-start/voice/guide_route_return_progress_03.wav",
+      "durationTicks": 79,
+      "generatorVersion": 4
+    },
+    "guide_route_return_progress_04": {
+      "fingerprint": "5cd9dc15109890784dacd934d7a1ff4f0a8e534b645916f7c689c216e4ec47d7",
+      "text": "Возвращение засчитано. Держи обратный курс.",
+      "outputPath": "config/lg2-season-start/voice/guide_route_return_progress_04.wav",
+      "durationTicks": 71,
+      "generatorVersion": 4
+    },
+    "guide_route_reverse_left_01": {
+      "fingerprint": "a8c20e90eab3c85a843b1b6d4c223021a07893fd7d3a393f7f819529d0a9046b",
+      "text": "Прямо. Почти. Теперь почти полный разворот налево.",
+      "outputPath": "config/lg2-season-start/voice/guide_route_reverse_left_01.wav",
+      "durationTicks": 83,
+      "generatorVersion": 4
+    },
+    "guide_route_reverse_left_02": {
+      "fingerprint": "d1d1441daa77d1946d3dfb5d03bff2883ad72e7ece995f9c80b14cbd13b4f29f",
+      "text": "Стой. Прямая часть закончилась. Разворачивайся через левое плечо.",
+      "outputPath": "config/lg2-season-start/voice/guide_route_reverse_left_02.wav",
+      "durationTicks": 100,
+      "generatorVersion": 4
+    },
+    "guide_route_reverse_left_03": {
+      "fingerprint": "9f4b678f8e2ce9818039d59bcf9efae1c11343b6a0c33ab92c80bb44dd08b8a0",
+      "text": "Хорошо. Назад и левее. Большой поворот.",
+      "outputPath": "config/lg2-season-start/voice/guide_route_reverse_left_03.wav",
+      "durationTicks": 68,
+      "generatorVersion": 4
+    },
+    "guide_route_reverse_right_01": {
+      "fingerprint": "e6e033d2e14e7a969c9aa1967a995ccd6c932f2f00c0476270aba598250a4f43",
+      "text": "Прямо. Почти. Теперь почти полный разворот направо.",
+      "outputPath": "config/lg2-season-start/voice/guide_route_reverse_right_01.wav",
+      "durationTicks": 87,
+      "generatorVersion": 4
+    },
+    "guide_route_reverse_right_02": {
+      "fingerprint": "c72a6bc758ba16ebf66477fed506800e2624d9278c82b8a12faacb6b1317047f",
+      "text": "Стой. Прямая часть закончилась. Разворачивайся через правое плечо.",
+      "outputPath": "config/lg2-season-start/voice/guide_route_reverse_right_02.wav",
+      "durationTicks": 94,
+      "generatorVersion": 4
+    },
+    "guide_route_reverse_right_03": {
+      "fingerprint": "da043d26999275f61ec730c5db14f1fe8897241b39a22f422f345564e1539a34",
+      "text": "Хорошо. Назад и правее. Большой поворот.",
+      "outputPath": "config/lg2-season-start/voice/guide_route_reverse_right_03.wav",
+      "durationTicks": 71,
+      "generatorVersion": 4
+    },
+    "shared_launch_server_power": {
+      "fingerprint": "5aaa66d6d5705e2f86dd5fbe53f57a1846427b5239b77bfad7d4da7eecf4d187",
+      "text": "Биткоин нужен не только для запуска. Это питание сервера. Пока ядро получает биткоины, сервер работает. Перестанет получать - стабильность начнёт падать. На нуле сервер выключится. Сезон закончится.",
+      "outputPath": "config/lg2-season-start/voice/shared_launch_server_power.wav",
+      "durationTicks": 291,
+      "generatorVersion": 4
+    },
+    "phase5_menu_race_reminder": {
+      "fingerprint": "f39272f679130bd7349360d170a6b6d9f77ea0aa0dcf19bd5288f92d0f51d766",
+      "text": "Если вы ещё ничего не купили, вернитесь к ядру и откройте меню сервера. Способности сами себя не получат.",
+      "outputPath": "config/lg2-season-start/voice/phase5_menu_race_reminder.wav",
+      "durationTicks": 135,
       "generatorVersion": 4
     }
   }
