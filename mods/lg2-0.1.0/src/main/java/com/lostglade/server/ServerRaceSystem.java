@@ -333,7 +333,8 @@ public final class ServerRaceSystem {
 	private static final double KILKA_UNIQUE_DEFAULT_COOLDOWN_SECONDS = 5.0D;
 	private static final double KILKA_UNIQUE_DEFAULT_SALMON_SPRINT_SWIM_MULTIPLIER = 1.2D;
 	private static final int KILKA_SALMON_LAND_SLOWNESS_AMPLIFIER = 7;
-	private static final double KILKA_SALMON_LAND_SPEED_MODIFIER_AMOUNT = -1.0D;
+	private static final double KILKA_SALMON_LAND_MOVEMENT_MULTIPLIER = 0.001D;
+	private static final double KILKA_SALMON_LAND_SPEED_MODIFIER_AMOUNT = KILKA_SALMON_LAND_MOVEMENT_MULTIPLIER - 1.0D;
 	private static final double KILKA_SALMON_PLAYER_HEIGHT_BLOCKS = 0.171875D;
 	private static final double KILKA_SALMON_PLAYER_STANDING_BASE_HEIGHT_BLOCKS = 1.8D;
 	private static final double KILKA_SALMON_PLAYER_SWIMMING_BASE_HEIGHT_BLOCKS = 0.6D;
@@ -7315,8 +7316,8 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		if (landingOnSolidGround || (!inWater && (player.onGround() || packet.isOnGround()))) {
 			// Evaluate the packet target as well as the current position. Otherwise the
 			// first packet that leaves water is incorrectly capped as aquatic movement.
-			syncKilkaSalmonLandSpeedModifier(player, true);
 			syncKilkaSalmonAquaticSpeedModifier(player, session, false);
+			syncKilkaSalmonLandSpeedModifier(player, true);
 			return packet;
 		}
 		double packetX = packet.getX(player.getX());
@@ -15610,7 +15611,9 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		if (session == null || !inWater || movementSpeed == null || waterEfficiency == null) {
 			removeAttributeModifier(movementSpeed, KILKA_SALMON_AQUATIC_SPEED_MODIFIER_ID);
 			removeAttributeModifier(waterEfficiency, KILKA_SALMON_WATER_EFFICIENCY_MODIFIER_ID);
-			syncKilkaSalmonClientWalkingSpeed(player, session, session == null ? player.getAbilities().getWalkingSpeed() : session.originalWalkingSpeed);
+			if (session == null || inWater) {
+				syncKilkaSalmonClientWalkingSpeed(player, session, session == null ? player.getAbilities().getWalkingSpeed() : session.originalWalkingSpeed);
+			}
 			return;
 		}
 
@@ -15649,7 +15652,7 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		if (player == null) {
 			return;
 		}
-		float target = Math.max(0.001F, targetSpeed);
+		float target = Math.max(0.000001F, targetSpeed);
 		if (Math.abs(player.getAbilities().getWalkingSpeed() - target) <= 1.0E-6F) {
 			return;
 		}
@@ -15685,6 +15688,14 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 				attribute.removeModifier(KILKA_SALMON_LAND_SPEED_MODIFIER_ID);
 			}
 			attribute.addTransientModifier(new AttributeModifier(KILKA_SALMON_LAND_SPEED_MODIFIER_ID, KILKA_SALMON_LAND_SPEED_MODIFIER_AMOUNT, AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL));
+		}
+		KilkaSalmonFormSession session = KILKA_SALMON_FORMS.get(player.getUUID());
+		if (session != null) {
+			syncKilkaSalmonClientWalkingSpeed(
+					player,
+					session,
+					(float) (session.originalWalkingSpeed * KILKA_SALMON_LAND_MOVEMENT_MULTIPLIER)
+			);
 		}
 	}
 	private static boolean isKilkaFeetInWater(ServerPlayer player) {

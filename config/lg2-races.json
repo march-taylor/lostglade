@@ -567,7 +567,7 @@
         "description": "",
         "priceBitcoins": 1000,
         "cooldownSeconds": 5.0,
-        "kilkaSalmonSprintSwimMultiplier": 1.2
+        "kilkaSalmonSprintSwimMultiplier": 2.0
       },
       "shnyaga": {
         "enabled": true,
@@ -576,7 +576,7 @@
         "description": "",
         "priceBitcoins": 1500,
         "kilkaSeaBeaconLinkRangeBlocks": 100.0,
-        "kilkaSeaBorderVisibilityBlocks": 2.0
+        "kilkaSeaBorderVisibilityBlocks": 1.8
       },
       "stock": {
         "enabled": true,
