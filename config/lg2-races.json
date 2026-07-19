@@ -216,7 +216,7 @@
       "enabled": true,
       "id": "woman",
       "displayName": "ЖЕНЩИНА!!!",
-      "ownerNickname": "",
+      "ownerNickname": "Rajas_YT",
       "description": "Хрупкая снаружи, но опасная внутри.",
       "attack": {
         "enabled": true,
@@ -262,7 +262,7 @@
         "description": "Вы предлагаете игроку стать вашим парнем. Согласившийся передает вам 3 сердца максимального здоровья. Рядом с вами он получает силу, скорость, регенерацию и спешку. Если он убьёт вас — сердца возвращаются. При отказе вы получаете урон, голод и замедление.",
         "priceBitcoins": 1500,
         "cooldownSeconds": 3600.0,
-        "womanShnyagaTransferHearts": 2.0,
+        "womanShnyagaTransferHearts": 3.0,
         "womanShnyagaBuffRangeBlocks": 16.0,
         "womanShnyagaRejectDamageHearts": 5.0,
         "womanShnyagaRejectDebuffSeconds": 900.0
@@ -531,7 +531,7 @@
       "enabled": true,
       "id": "kilka",
       "displayName": "Килька",
-      "ownerNickname": "Rajas_YT",
+      "ownerNickname": "",
       "description": "",
       "attack": {
         "enabled": true,
