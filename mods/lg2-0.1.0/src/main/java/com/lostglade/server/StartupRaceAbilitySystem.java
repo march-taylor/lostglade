@@ -253,11 +253,12 @@ public final class StartupRaceAbilitySystem {
 			direction = new Vec3(0.0D, 0.0D, 1.0D);
 		}
 		direction = direction.normalize();
-		Vec3 position = player.getEyePosition().add(direction.scale(0.74D));
+		Vec3 position = player.getEyePosition().add(direction.scale(1.30D));
 		float scaleVariation = BUBBLE_MIN_SCALE_VARIATION
 				+ random.nextFloat() * (BUBBLE_MAX_SCALE_VARIATION - BUBBLE_MIN_SCALE_VARIATION);
 		float displayScale = BUBBLE_DISPLAY_SCALE * scaleVariation;
-		float hitRadius = Math.max(0.16F, BUBBLE_SPRITE_BASE_SIZE / 16.0F * displayScale);
+		// The 7 px sprite size is its full width, not its collision radius.
+		float hitRadius = Math.max(0.11F, BUBBLE_SPRITE_BASE_SIZE / 32.0F * displayScale);
 		Display.ItemDisplay display = createDisplay(
 				level,
 				createSoapBubbleDisplayStack(),
@@ -284,10 +285,11 @@ public final class StartupRaceAbilitySystem {
 				display.getUUID(),
 				trigger.getUUID(),
 				position,
-				newRandomBubbleDirection(random).scale(0.045D + random.nextDouble() * 0.055D),
-				newRandomBubbleDirection(random),
+				// Start safely ahead of the caster before the bubble begins its random drift.
+				direction.scale(0.105D).add(newRandomBubbleDirection(random).scale(0.012D)),
+				direction,
 				hitRadius,
-				level.getGameTime() + 8L + random.nextInt(18),
+				level.getGameTime() + 18L + random.nextInt(16),
 				level.getGameTime() + BUBBLE_LIFETIME_TICKS
 		);
 		BUBBLES.put(display.getUUID(), state);
@@ -410,12 +412,12 @@ public final class StartupRaceAbilitySystem {
 			Vec3 next = state.position.add(state.velocity);
 			BlockHitResult hit = level.clip(new ClipContext(state.position, next, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, display));
 			boolean hitBlock = hit.getType() != HitResult.Type.MISS;
+			// Only real dropped items pop a drifting bubble. Interaction entities used by
+			// balloons and other abilities are pickable too, but must not act as obstacles.
 			boolean hitEntity = !level.getEntities(
 					display,
 					AABB.ofSize(next, state.hitRadius * 2.0D, state.hitRadius * 2.0D, state.hitRadius * 2.0D),
-					entity -> entity != trigger
-							&& !entity.getUUID().equals(state.casterId)
-							&& (entity instanceof Player || entity instanceof ItemEntity || entity.isPickable())
+					entity -> entity instanceof ItemEntity
 			).isEmpty();
 			if (hitBlock || hitEntity) {
 				popBubble(server, state, true);
