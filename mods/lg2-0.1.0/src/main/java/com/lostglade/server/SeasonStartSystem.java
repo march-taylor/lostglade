@@ -912,10 +912,7 @@ public final class SeasonStartSystem {
 	}
 
 	public static void onServerMenuRequestedTooEarly(ServerPlayer player) {
-		if (player == null || !active) {
-			return;
-		}
-		player.displayClientMessage(Component.literal("Меню прогресса станет доступно после запуска ядра."), true);
+		// Before the menu phase begins, interacting with the server is intentionally silent.
 	}
 
 	public static int resolveStartupMenuPrice(ServerPlayer player, String upgradeId, int configuredPrice) {
@@ -3076,7 +3073,7 @@ public final class SeasonStartSystem {
 	private static void handleIntroOreBroken(ServerLevel level, ServerPlayer player, BlockPos pos, PlayerSceneState state) {
 		SeasonStartVoiceSystem.clearPlayerChannel(player);
 		restoreStartupLight(level, pos);
-		if (level.getBlockState(pos.below()).is(Blocks.BLACK_CONCRETE)) {
+		if (isStartupShellBlock(level.getBlockState(pos.below()))) {
 			level.setBlock(pos.below(), Blocks.AIR.defaultBlockState(), 3);
 		}
 		level.sendParticles(ParticleTypes.CRIT, pos.getX() + 0.5D, pos.getY() + 0.5D, pos.getZ() + 0.5D, 16, 0.3D, 0.3D, 0.3D, 0.02D);
@@ -3238,10 +3235,11 @@ public final class SeasonStartSystem {
 		}
 		for (int i = 0; i < DISSOLVE_BATCH_BLOCKS && dissolveCursor < SHELL_DISSOLVE_ORDER.size(); i++, dissolveCursor++) {
 			BlockPos pos = SHELL_DISSOLVE_ORDER.get(dissolveCursor);
-			if (!overworld.getBlockState(pos).is(Blocks.BLACK_CONCRETE) && !overworld.getBlockState(pos).is(Blocks.BARRIER)) {
+			BlockState state = overworld.getBlockState(pos);
+			if (!isStartupShellBlock(state) && !state.is(Blocks.BARRIER)) {
 				continue;
 			}
-			if (overworld.getBlockState(pos).is(Blocks.BLACK_CONCRETE)) {
+			if (isStartupShellBlock(state)) {
 				overworld.sendParticles(ParticleTypes.SMOKE, pos.getX() + 0.5D, pos.getY() + 0.5D, pos.getZ() + 0.5D, 4, 0.2D, 0.2D, 0.2D, 0.01D);
 			}
 			overworld.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
@@ -3377,8 +3375,8 @@ public final class SeasonStartSystem {
 		}
 		BoxGeometry outerGeometry = computeOuterBoxGeometry(resolveServerAnchor(level));
 		BoxGeometry barrierGeometry = computeBarrierGeometry(resolveServerAnchor(level));
-		return level.getBlockState(new BlockPos(outerGeometry.minX, outerGeometry.floorY, outerGeometry.minZ)).is(Blocks.BLACK_CONCRETE)
-				|| level.getBlockState(new BlockPos(outerGeometry.minX, outerGeometry.roofY, outerGeometry.minZ)).is(Blocks.BLACK_CONCRETE)
+		return isStartupShellBlock(level.getBlockState(new BlockPos(outerGeometry.minX, outerGeometry.floorY, outerGeometry.minZ)))
+				|| isStartupShellBlock(level.getBlockState(new BlockPos(outerGeometry.minX, outerGeometry.roofY, outerGeometry.minZ)))
 				|| level.getBlockState(new BlockPos(barrierGeometry.minX, barrierGeometry.floorY, barrierGeometry.minZ)).is(Blocks.BARRIER);
 	}
 
@@ -3391,13 +3389,13 @@ public final class SeasonStartSystem {
 		if (level == null || outer == null || barrier == null) {
 			return false;
 		}
-		return isBlock(level, outer.minX, outer.floorY, outer.minZ, Blocks.BLACK_CONCRETE)
-				&& isBlock(level, outer.maxX, outer.floorY, outer.maxZ, Blocks.BLACK_CONCRETE)
-				&& isBlock(level, outer.minX, outer.roofY, outer.maxZ, Blocks.BLACK_CONCRETE)
-				&& isBlock(level, outer.maxX, outer.roofY, outer.minZ, Blocks.BLACK_CONCRETE)
-				&& isBlock(level, outer.minX, (outer.floorY + outer.roofY) / 2, (outer.minZ + outer.maxZ) / 2, Blocks.BLACK_CONCRETE)
-				&& isBlock(level, outer.maxX, (outer.floorY + outer.roofY) / 2, (outer.minZ + outer.maxZ) / 2, Blocks.BLACK_CONCRETE)
-				&& isBlock(level, (outer.minX + outer.maxX) / 2, outer.roofY, (outer.minZ + outer.maxZ) / 2, Blocks.BLACK_CONCRETE)
+		return isStartupShellBlock(level.getBlockState(new BlockPos(outer.minX, outer.floorY, outer.minZ)))
+				&& isStartupShellBlock(level.getBlockState(new BlockPos(outer.maxX, outer.floorY, outer.maxZ)))
+				&& isStartupShellBlock(level.getBlockState(new BlockPos(outer.minX, outer.roofY, outer.maxZ)))
+				&& isStartupShellBlock(level.getBlockState(new BlockPos(outer.maxX, outer.roofY, outer.minZ)))
+				&& isStartupShellBlock(level.getBlockState(new BlockPos(outer.minX, (outer.floorY + outer.roofY) / 2, (outer.minZ + outer.maxZ) / 2)))
+				&& isStartupShellBlock(level.getBlockState(new BlockPos(outer.maxX, (outer.floorY + outer.roofY) / 2, (outer.minZ + outer.maxZ) / 2)))
+				&& isStartupShellBlock(level.getBlockState(new BlockPos((outer.minX + outer.maxX) / 2, outer.roofY, (outer.minZ + outer.maxZ) / 2)))
 				&& isBlock(level, barrier.minX, barrier.floorY, barrier.minZ, Blocks.BARRIER)
 				&& isBlock(level, barrier.maxX, barrier.floorY, barrier.maxZ, Blocks.BARRIER)
 				&& isBlock(level, barrier.minX, barrier.roofY, barrier.maxZ, Blocks.BARRIER)
@@ -3406,6 +3404,11 @@ public final class SeasonStartSystem {
 
 	private static boolean isBlock(ServerLevel level, int x, int y, int z, Block block) {
 		return level.getBlockState(new BlockPos(x, y, z)).is(block);
+	}
+
+	/** Includes legacy black-concrete boxes so an interrupted old startup can still recover safely. */
+	private static boolean isStartupShellBlock(BlockState state) {
+		return state != null && (state.is(ModBlocks.STARTUP_VOID) || state.is(Blocks.BLACK_CONCRETE));
 	}
 
 	private static void captureSceneSnapshotFromWorld(ServerLevel level) {
@@ -3596,7 +3599,7 @@ public final class SeasonStartSystem {
 		if (state.is(Blocks.LIGHT)) {
 			return true;
 		}
-		boolean blackShell = state.is(Blocks.BLACK_CONCRETE)
+		boolean blackShell = isStartupShellBlock(state)
 				&& outerGeometry != null
 				&& (pos.getY() == outerGeometry.floorY
 						|| pos.getY() == outerGeometry.roofY
@@ -4626,7 +4629,7 @@ public final class SeasonStartSystem {
 		}
 		BlockState targetState = WORLD_REVEAL_TARGET_STATES.get(key);
 		BlockState currentState = level.getBlockState(pos);
-		boolean shellBlock = currentState.is(Blocks.BLACK_CONCRETE) || currentState.is(Blocks.BARRIER);
+		boolean shellBlock = isStartupShellBlock(currentState) || currentState.is(Blocks.BARRIER);
 		if (targetState == null && !shellBlock) {
 			WORLD_REVEAL_REVEALED_POSITIONS.add(key);
 			WORLD_REVEAL_DEFERRED_POSITIONS.remove(key);
@@ -4634,7 +4637,7 @@ public final class SeasonStartSystem {
 		}
 		if (shellBlock) {
 			// The crack sheds the actual shell material rather than generic white steam.
-			BlockState shellFragments = currentState.is(Blocks.BARRIER) ? Blocks.BLACK_CONCRETE.defaultBlockState() : currentState;
+			BlockState shellFragments = Blocks.BLACK_CONCRETE.defaultBlockState();
 			emitWorldRevealBlockFragments(level, pos, shellFragments, 18, 0.24D);
 		}
 		if (targetState != null && !targetState.isAir()) {
@@ -5574,7 +5577,7 @@ public final class SeasonStartSystem {
 
 	private static void clearStaleSceneBlock(ServerLevel level, BlockPos pos) {
 		BlockState state = level.getBlockState(pos);
-		if (state.is(Blocks.BLACK_CONCRETE) || state.is(Blocks.BARRIER) || state.is(Blocks.LIGHT)) {
+		if (isStartupShellBlock(state) || state.is(Blocks.BARRIER) || state.is(Blocks.LIGHT)) {
 			setSceneBlockSilently(level, pos, Blocks.AIR.defaultBlockState());
 		}
 	}
@@ -5587,7 +5590,7 @@ public final class SeasonStartSystem {
 				|| pos.getZ() == task.outer.minZ
 				|| pos.getZ() == task.outer.maxZ;
 		if (outerShell) {
-			setSceneBlockSilently(level, pos, Blocks.BLACK_CONCRETE.defaultBlockState());
+			setSceneBlockSilently(level, pos, ModBlocks.STARTUP_VOID.defaultBlockState());
 			return;
 		}
 		if (!task.structureFootprint.contains(pos.asLong()) && !level.getBlockState(pos).isAir()) {
@@ -5750,7 +5753,7 @@ public final class SeasonStartSystem {
 		clearStartupWorldgenDisplay(level);
 		for (BlockPos pos : collectSceneShellBlocks(serverAnchor)) {
 			BlockState state = level.getBlockState(pos);
-			if (state.is(Blocks.BLACK_CONCRETE) || state.is(Blocks.BARRIER) || state.is(Blocks.LIGHT)) {
+			if (isStartupShellBlock(state) || state.is(Blocks.BARRIER) || state.is(Blocks.LIGHT)) {
 				setSceneBlockSilently(level, pos, Blocks.AIR.defaultBlockState());
 			}
 		}
@@ -5858,7 +5861,7 @@ public final class SeasonStartSystem {
 			return false;
 		}
 		BlockState blockState = level.getBlockState(pos);
-		if (blockState.is(Blocks.BLACK_CONCRETE) || blockState.is(Blocks.BARRIER) || isStartupLight(blockState)) {
+		if (isStartupShellBlock(blockState) || blockState.is(Blocks.BARRIER) || isStartupLight(blockState)) {
 			return true;
 		}
 		if (isServerStructureFootprint(pos)) {
@@ -5894,7 +5897,7 @@ public final class SeasonStartSystem {
 		if (level == null || slot == null) {
 			return;
 		}
-		if (level.getBlockState(slot.oreSupportPos).is(Blocks.BLACK_CONCRETE)) {
+		if (isStartupShellBlock(level.getBlockState(slot.oreSupportPos))) {
 			level.setBlock(slot.oreSupportPos, Blocks.AIR.defaultBlockState(), 3);
 		}
 		level.setBlock(slot.orePos, ModBlocks.BITCOIN_ORE.defaultBlockState(), 3);
@@ -5907,7 +5910,7 @@ public final class SeasonStartSystem {
 		if (level.getBlockState(slot.orePos).is(ModBlocks.BITCOIN_ORE)) {
 			restoreStartupLight(level, slot.orePos);
 		}
-		if (level.getBlockState(slot.oreSupportPos).is(Blocks.BLACK_CONCRETE)) {
+		if (isStartupShellBlock(level.getBlockState(slot.oreSupportPos))) {
 			level.setBlock(slot.oreSupportPos, Blocks.AIR.defaultBlockState(), 3);
 		}
 	}
@@ -7318,7 +7321,7 @@ public final class SeasonStartSystem {
 		return state != null
 				&& (state.is(ModBlocks.SERVER)
 				|| state.is(Blocks.BARRIER)
-				|| state.is(Blocks.BLACK_CONCRETE));
+				|| isStartupShellBlock(state));
 	}
 
 	private static boolean isBootstrapVolumeClear(ServerLevel level, BlockPos anchor, Direction.Axis axis) {

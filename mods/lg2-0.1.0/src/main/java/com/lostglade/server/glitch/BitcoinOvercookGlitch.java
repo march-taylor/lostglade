@@ -41,6 +41,7 @@ public final class BitcoinOvercookGlitch implements FurnaceSmeltGlitchHandler {
 	private static final int RESULT_SLOT = 2;
 	private static final String EXPERIENCE = "experience";
 	private static final Item TECHNICAL_RESULT_ITEM = Items.BARRIER;
+	private static final Identifier STARTUP_VOID_ITEM_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "startup_void");
 	private static final String FIRST_TRIGGER_FILE_NAME = "lg2-bitcoin-overcook-first-players.json";
 	private static final List<Item> ITEM_POOL = collectItemPool();
 	private static final Gson FIRST_TRIGGER_GSON = new GsonBuilder().setPrettyPrinting().create();
@@ -211,6 +212,9 @@ public final class BitcoinOvercookGlitch implements FurnaceSmeltGlitchHandler {
 			}
 
 			Identifier id = BuiltInRegistries.ITEM.getKey(item);
+			if (STARTUP_VOID_ITEM_ID.equals(id)) {
+				continue;
+			}
 			if (id != null && ("minecraft".equals(id.getNamespace()) || Lg2.MOD_ID.equals(id.getNamespace()))) {
 				items.add(item);
 			}

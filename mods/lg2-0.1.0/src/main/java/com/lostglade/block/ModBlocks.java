@@ -30,6 +30,7 @@ public final class ModBlocks {
 	private static final Identifier DICTATOR_IRON_TRAPDOOR_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "dictator_iron_trapdoor");
 	private static final Identifier EXIT_SIGN_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "exit_sign");
 	private static final Identifier EXIT_WALL_SIGN_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "exit_wall_sign");
+	private static final Identifier STARTUP_VOID_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "startup_void");
 	private static final Identifier SERVER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "server");
 	private static final Identifier SPEAKER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "speaker");
 	private static final Identifier MICROPHONE_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "microphone");
@@ -48,6 +49,7 @@ public final class ModBlocks {
 	private static final ResourceKey<Block> DICTATOR_IRON_TRAPDOOR_KEY = ResourceKey.create(Registries.BLOCK, DICTATOR_IRON_TRAPDOOR_ID);
 	private static final ResourceKey<Block> EXIT_SIGN_KEY = ResourceKey.create(Registries.BLOCK, EXIT_SIGN_ID);
 	private static final ResourceKey<Block> EXIT_WALL_SIGN_KEY = ResourceKey.create(Registries.BLOCK, EXIT_WALL_SIGN_ID);
+	private static final ResourceKey<Block> STARTUP_VOID_KEY = ResourceKey.create(Registries.BLOCK, STARTUP_VOID_ID);
 	private static final ResourceKey<Block> SERVER_KEY = ResourceKey.create(Registries.BLOCK, SERVER_ID);
 	private static final ResourceKey<Block> SPEAKER_KEY = ResourceKey.create(Registries.BLOCK, SPEAKER_ID);
 	private static final ResourceKey<Block> MICROPHONE_KEY = ResourceKey.create(Registries.BLOCK, MICROPHONE_ID);
@@ -95,6 +97,21 @@ public final class ModBlocks {
 					createDeepslateOreProperties(),
 					Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "block/deepslate_bitcoin_ore"),
 					net.minecraft.world.level.block.Blocks.INFESTED_DEEPSLATE
+			)
+	);
+
+	/**
+	 * Technical shell for the season-start scene. It deliberately has no
+	 * BlockItem, so it cannot be obtained or selected as a furnace glitch drop.
+	 */
+	public static final Block STARTUP_VOID = Registry.register(
+			BuiltInRegistries.BLOCK,
+			STARTUP_VOID_ID,
+			new BackroomsBlock(
+					createStartupVoidProperties(),
+					Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "block/startup_void"),
+					Blocks.BLACK_CONCRETE,
+					Blocks.BLACK_CONCRETE
 			)
 	);
 
@@ -448,6 +465,14 @@ public final class ModBlocks {
 				.noLootTable()
 				.noOcclusion()
 				.setId(SERVER_KEY);
+	}
+
+	private static BlockBehaviour.Properties createStartupVoidProperties() {
+		return BlockBehaviour.Properties.ofFullCopy(Blocks.BLACK_CONCRETE)
+				.mapColor(MapColor.COLOR_BLACK)
+				.strength(-1.0F, 3600000.0F)
+				.noLootTable()
+				.setId(STARTUP_VOID_KEY);
 	}
 
 	private static BlockBehaviour.Properties createSpeakerProperties() {

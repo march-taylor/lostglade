@@ -30,10 +30,10 @@
       "generatorVersion": 4
     },
     "phase1_intro_blindness": {
-      "fingerprint": "7725b784fc531c0bd48d0ed55689eb32576aa358996e8f751192e72c36d180d2",
-      "text": "Сейчас вы видите примерно ничего. Не стоит беспокоиться. Сейчас вам нужно будет запитать сервер чтобы включить свет",
+      "fingerprint": "c8ebdd704c1ea662318171b42dfebf9a5390888a47c71c029a9827308a728080",
+      "text": "Сейчас вы ничего не видите. Не стоит беспокоиться. Сейчас вам нужно будет запитать сервер чтобы включить свет",
       "outputPath": "config/lg2-season-start/voice/phase1_intro_blindness.wav",
-      "durationTicks": 151,
+      "durationTicks": 140,
       "generatorVersion": 4
     },
     "phase1_intro_block": {
@@ -1024,10 +1024,10 @@
       "generatorVersion": 4
     },
     "phase5_menu_race_purchase": {
-      "fingerprint": "f72d914a9221d419e6dc8dc08981c5b3a6336a2ed12eb8eedb2616b763c39621",
-      "text": "Способность открыта. Теперь вы можете её использовать в меню способностей.",
+      "fingerprint": "e7f828e81e38a58362851dc3d8ee9b55f4c6e01d39cd4b9edbef16451eb2a8fd",
+      "text": "Способность открыта. Позже я научу вас её использовать",
       "outputPath": "config/lg2-season-start/voice/phase5_menu_race_purchase.wav",
-      "durationTicks": 99,
+      "durationTicks": 75,
       "generatorVersion": 4
     },
     "phase5_menu_price_limit": {
@@ -1136,10 +1136,10 @@
       "generatorVersion": 4
     },
     "phase5_menu_race_controls": {
-      "fingerprint": "5493cda36fd40b83ff5a9b606693be969e822ca8be4f0396826b9b2aa8116934",
-      "text": "Меню расы открывается на G. Если эта клавиша неудобна, зайдите в настройки: управление, назначение клавиш. Советую перенести её на кнопку мыши. В сложный момент так быстрее. Если меню не открылось, используйте команду /race.",
+      "fingerprint": "d9e7a01ae99f3240b01e5752e2a7f95e9d05f2eb8681cc2241a24e5ca1759cb1",
+      "text": "Меню расы открывается на клавишу G. Если меню не открылось, используйте команду слэш юз. также меню рас для удобства можно переназначить на другую клавишу",
       "outputPath": "config/lg2-season-start/voice/phase5_menu_race_controls.wav",
-      "durationTicks": 335,
+      "durationTicks": 236,
       "generatorVersion": 4
     },
     "stability_nonpayment_alarm": {

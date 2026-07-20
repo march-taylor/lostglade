@@ -231,8 +231,7 @@ public final class StartupRaceAbilitySystem {
 			removeEntity(server, state.triggerId);
 		}
 		for (BalloonState state : BALLOONS.values()) {
-			removeEntity(server, state.displayId);
-			removeEntity(server, state.triggerId);
+			removeAttachedBalloonVisuals(server, state);
 		}
 		for (FreeBalloonState state : FREE_BALLOONS.values()) {
 			removeEntity(server, state.displayId);
@@ -437,9 +436,9 @@ public final class StartupRaceAbilitySystem {
 			ServerPlayer target = server.getPlayerList().getPlayer(state.targetId);
 			Display.ItemDisplay display = findEntity(server, state.displayId, Display.ItemDisplay.class);
 			Interaction trigger = findEntity(server, state.triggerId, Interaction.class);
-			if (target == null || !target.isAlive() || display == null || trigger == null || !target.level().dimension().equals(state.dimension)) {
-				removeEntity(server, state.displayId);
-				removeEntity(server, state.triggerId);
+			if (target == null || !target.isAlive() || display == null || trigger == null
+					|| !target.level().dimension().equals(state.dimension)) {
+				removeAttachedBalloonVisuals(server, state);
 				iterator.remove();
 				continue;
 			}
@@ -491,8 +490,7 @@ public final class StartupRaceAbilitySystem {
 		while (current.size() > expected) {
 			BalloonState removed = current.remove(current.size() - 1);
 			BALLOONS.remove(removed.displayId);
-			removeEntity(server, removed.displayId);
-			removeEntity(server, removed.triggerId);
+			removeAttachedBalloonVisuals(server, removed);
 		}
 		while (current.size() < expected) {
 			BalloonState created = createAttachedBalloon(level, target);
@@ -925,7 +923,6 @@ public final class StartupRaceAbilitySystem {
 		ServerLevel level = server.getLevel(state.dimension);
 		if (visible && level != null) {
 			Vec3 position = state.position;
-			level.sendParticles(ParticleTypes.FIREWORK, position.x, position.y, position.z, 18, 0.18D, 0.18D, 0.18D, 0.06D);
 			level.sendParticles(ParticleTypes.POOF, position.x, position.y, position.z, 7, 0.12D, 0.12D, 0.12D, 0.02D);
 			playNearbyPackSound(level, position, CONFETTI_SOUND, SoundSource.PLAYERS, 0.78F, 0.96F + level.getRandom().nextFloat() * 0.10F);
 		}
@@ -950,10 +947,8 @@ public final class StartupRaceAbilitySystem {
 			}
 		}
 		BALLOONS.remove(state.displayId);
-		removeEntity(server, state.displayId);
-		removeEntity(server, state.triggerId);
+		removeAttachedBalloonVisuals(server, state);
 		if (level != null && position != null) {
-			level.sendParticles(ParticleTypes.FIREWORK, position.x, position.y, position.z, 14, 0.16D, 0.16D, 0.16D, 0.04D);
 			level.sendParticles(ParticleTypes.POOF, position.x, position.y, position.z, 6, 0.12D, 0.12D, 0.12D, 0.02D);
 			playNearbyPackSound(level, position, CONFETTI_SOUND, SoundSource.PLAYERS, 0.72F, 1.0F);
 		}
@@ -976,11 +971,18 @@ public final class StartupRaceAbilitySystem {
 		while (iterator.hasNext()) {
 			BalloonState state = iterator.next();
 			if (predicate.test(state)) {
-				removeEntity(server, state.displayId);
-				removeEntity(server, state.triggerId);
+				removeAttachedBalloonVisuals(server, state);
 				iterator.remove();
 			}
 		}
+	}
+
+	private static void removeAttachedBalloonVisuals(MinecraftServer server, BalloonState state) {
+		if (state == null) {
+			return;
+		}
+		removeEntity(server, state.displayId);
+		removeEntity(server, state.triggerId);
 	}
 
 	private static void removeFreeBalloons(MinecraftServer server, java.util.function.Predicate<FreeBalloonState> predicate) {
