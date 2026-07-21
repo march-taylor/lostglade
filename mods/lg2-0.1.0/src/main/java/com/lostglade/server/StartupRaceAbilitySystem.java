@@ -29,7 +29,6 @@ import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
-import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.Display;
 import net.minecraft.world.entity.Entity;
@@ -39,6 +38,7 @@ import net.minecraft.world.entity.Interaction;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemDisplayContext;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.ClipContext;
@@ -69,6 +69,16 @@ public final class StartupRaceAbilitySystem {
 	private static final Holder<SoundEvent> CONFETTI_SOUND = Holder.direct(SoundEvent.createVariableRangeEvent(CONFETTI_SOUND_ID));
 	private static final Holder<SoundEvent> JACK_SCREAM_SOUND = Holder.direct(SoundEvent.createVariableRangeEvent(JACK_SCREAM_SOUND_ID));
 	private static final int BUBBLE_LIFETIME_TICKS = 20 * 18;
+	private static final int CONFETTI_LIFETIME_TICKS = 18;
+	private static final Item[] CONFETTI_ITEMS = {
+			Items.RED_CARPET,
+			Items.ORANGE_CARPET,
+			Items.YELLOW_CARPET,
+			Items.LIME_CARPET,
+			Items.LIGHT_BLUE_CARPET,
+			Items.MAGENTA_CARPET,
+			Items.PINK_CARPET
+	};
 	private static final int FREE_BALLOON_LIFETIME_TICKS = 20 * 90;
 	private static final int JACK_LIFETIME_TICKS = 20 * 75;
 	private static final int JACK_OPEN_TICKS = 12;
@@ -84,7 +94,14 @@ public final class StartupRaceAbilitySystem {
 	private static final float BUBBLE_MAX_SCALE_VARIATION = 1.34F;
 	private static final double JACK_ARM_DISTANCE_SQR = 3.5D * 3.5D;
 	private static final double JACK_TRIGGER_DISTANCE_SQR = 1.45D * 1.45D;
+	private static final ManagedInfiniteEffect BALLOON_JUMP_BOOST = new ManagedInfiniteEffect(
+			MobEffects.JUMP_BOOST,
+			false,
+			false,
+			true
+	);
 	private static final Map<UUID, BubbleState> BUBBLES = new HashMap<>();
+	private static final Map<UUID, ConfettiState> CONFETTI = new HashMap<>();
 	private static final Map<UUID, BalloonState> BALLOONS = new HashMap<>();
 	private static final Map<UUID, FreeBalloonState> FREE_BALLOONS = new HashMap<>();
 	private static final Map<UUID, JackBoxState> JACK_BOXES = new HashMap<>();
@@ -94,6 +111,7 @@ public final class StartupRaceAbilitySystem {
 
 	public static void register() {
 		BUBBLES.clear();
+		CONFETTI.clear();
 		BALLOONS.clear();
 		FREE_BALLOONS.clear();
 		JACK_BOXES.clear();
@@ -214,13 +232,16 @@ public final class StartupRaceAbilitySystem {
 			return;
 		}
 		removeBalloons(server, state -> state.ownerId.equals(playerId) || state.targetId.equals(playerId));
+		BALLOON_JUMP_BOOST.clear(server.getPlayerList().getPlayer(playerId));
 		removeFreeBalloons(server, state -> state.ownerId.equals(playerId));
 		removeJackBoxes(server, state -> state.ownerId.equals(playerId));
 	}
 
 	public static void clearSeasonStartState(MinecraftServer server) {
 		if (server == null) {
+			BALLOON_JUMP_BOOST.clearAll(null);
 			BUBBLES.clear();
+			CONFETTI.clear();
 			BALLOONS.clear();
 			FREE_BALLOONS.clear();
 			JACK_BOXES.clear();
@@ -229,6 +250,9 @@ public final class StartupRaceAbilitySystem {
 		for (BubbleState state : BUBBLES.values()) {
 			removeEntity(server, state.displayId);
 			removeEntity(server, state.triggerId);
+		}
+		for (ConfettiState state : CONFETTI.values()) {
+			removeEntity(server, state.displayId);
 		}
 		for (BalloonState state : BALLOONS.values()) {
 			removeAttachedBalloonVisuals(server, state);
@@ -240,7 +264,9 @@ public final class StartupRaceAbilitySystem {
 		for (JackBoxState state : JACK_BOXES.values()) {
 			removeJackVisuals(server, state);
 		}
+		BALLOON_JUMP_BOOST.clearAll(server);
 		BUBBLES.clear();
+		CONFETTI.clear();
 		BALLOONS.clear();
 		FREE_BALLOONS.clear();
 		JACK_BOXES.clear();
@@ -299,29 +325,39 @@ public final class StartupRaceAbilitySystem {
 
 	private static boolean fireConfetti(ServerPlayer player, ServerLevel level) {
 		RandomSource random = level.getRandom();
-		Vec3 origin = player.getEyePosition().add(player.getLookAngle().normalize().scale(0.55D));
-		int[] colors = {
-				0xFF2130,
-				0xFFD114,
-				0x2EBFFF,
-				0xCF3AFF,
-				0x4DFF73
-		};
-		for (int i = 0; i < 78; i++) {
-			int color = colors[random.nextInt(colors.length)];
-			DustParticleOptions particle = new DustParticleOptions(color, 1.15F + random.nextFloat() * 0.65F);
-			double spread = 0.38D + random.nextDouble() * 0.7D;
-			level.sendParticles(
-					particle,
-					origin.x,
-					origin.y,
-					origin.z,
-					1,
-					(random.nextDouble() - 0.5D) * spread,
-					0.08D + random.nextDouble() * 0.35D,
-					(random.nextDouble() - 0.5D) * spread,
-					0.55D
+		Vec3 direction = player.getLookAngle().normalize();
+		Vec3 side = new Vec3(-direction.z, 0.0D, direction.x).normalize();
+		Vec3 origin = player.getEyePosition().add(direction.scale(0.52D)).add(0.0D, -0.10D, 0.0D);
+		for (int index = 0; index < 46; index++) {
+			int colorIndex = random.nextInt(CONFETTI_ITEMS.length);
+			float stripScale = 0.105F + random.nextFloat() * 0.055F;
+			Vec3 velocity = direction.scale(0.24D + random.nextDouble() * 0.22D)
+					.add(side.scale((random.nextDouble() - 0.5D) * 0.58D))
+					.add(0.0D, 0.18D + random.nextDouble() * 0.27D, 0.0D);
+			Display.ItemDisplay strip = createDisplay(
+					level,
+					new ItemStack(CONFETTI_ITEMS[colorIndex]),
+					origin,
+					Display.BillboardConstraints.FIXED,
+					stripScale
 			);
+			if (strip == null) {
+				continue;
+			}
+			strip.setShadowRadius(0.0F);
+			strip.setShadowStrength(0.0F);
+			CONFETTI.put(strip.getUUID(), new ConfettiState(
+					level.dimension(),
+					strip.getUUID(),
+					origin,
+					velocity,
+					random.nextFloat() * ((float) Math.PI * 2.0F),
+					random.nextFloat() * ((float) Math.PI * 2.0F),
+					random.nextFloat() * ((float) Math.PI * 2.0F),
+					stripScale,
+					level.getGameTime(),
+					level.getGameTime() + CONFETTI_LIFETIME_TICKS + random.nextInt(9)
+			));
 		}
 		playNearbyPackSound(level, origin, CONFETTI_SOUND, SoundSource.PLAYERS, 1.0F, 1.0F);
 		return true;
@@ -380,6 +416,7 @@ public final class StartupRaceAbilitySystem {
 			return;
 		}
 		syncEquippedBalloons(server);
+		tickConfetti(server);
 		tickBubbles(server);
 		tickBalloons(server);
 		tickFreeBalloons(server);
@@ -430,6 +467,37 @@ public final class StartupRaceAbilitySystem {
 		}
 	}
 
+	private static void tickConfetti(MinecraftServer server) {
+		Iterator<ConfettiState> iterator = CONFETTI.values().iterator();
+		while (iterator.hasNext()) {
+			ConfettiState state = iterator.next();
+			ServerLevel level = server.getLevel(state.dimension);
+			Display.ItemDisplay display = findEntity(server, state.displayId, Display.ItemDisplay.class);
+			if (level == null || display == null || level.getGameTime() >= state.expiresAtTick) {
+				if (display != null) {
+					display.discard();
+				}
+				iterator.remove();
+				continue;
+			}
+			state.velocity = state.velocity.scale(0.945D).add(0.0D, -0.022D, 0.0D);
+			state.position = state.position.add(state.velocity);
+			display.setPos(state.position.x, state.position.y, state.position.z);
+			long age = level.getGameTime() - state.createdAtTick;
+			Quaternionf rotation = new Quaternionf().rotateXYZ(
+					state.pitch + age * 0.43F,
+					state.yaw + age * 0.31F,
+					state.roll + age * 0.56F
+			);
+			display.setTransformation(new Transformation(
+					new Vector3f(),
+					rotation,
+					new Vector3f(state.scale, state.scale * 0.72F, state.scale),
+					new Quaternionf()
+			));
+		}
+	}
+
 	private static void tickBalloons(MinecraftServer server) {
 		Map<UUID, List<BalloonState>> balloonsByTarget = new HashMap<>();
 		Iterator<BalloonState> iterator = BALLOONS.values().iterator();
@@ -462,7 +530,12 @@ public final class StartupRaceAbilitySystem {
 			}
 			// Every physical balloon in the head slot contributes one Jump Boost level.
 			int amplifier = Math.min(127, balloons.size() - 1);
-			target.addEffect(new MobEffectInstance(MobEffects.JUMP_BOOST, 28, amplifier, false, false, true));
+			BALLOON_JUMP_BOOST.ensure(target, amplifier);
+		}
+		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			if (!balloonsByTarget.containsKey(player.getUUID())) {
+				BALLOON_JUMP_BOOST.clear(player);
+			}
 		}
 	}
 
@@ -1113,6 +1186,43 @@ public final class StartupRaceAbilitySystem {
 			this.hitRadius = hitRadius;
 			this.targetSpeed = Math.min(0.13D, velocity.length());
 			this.nextDirectionChangeTick = nextDirectionChangeTick;
+			this.expiresAtTick = expiresAtTick;
+		}
+	}
+
+	private static final class ConfettiState {
+		private final ResourceKey<Level> dimension;
+		private final UUID displayId;
+		private final float pitch;
+		private final float yaw;
+		private final float roll;
+		private final float scale;
+		private final long createdAtTick;
+		private final long expiresAtTick;
+		private Vec3 position;
+		private Vec3 velocity;
+
+		private ConfettiState(
+				ResourceKey<Level> dimension,
+				UUID displayId,
+				Vec3 position,
+				Vec3 velocity,
+				float pitch,
+				float yaw,
+				float roll,
+				float scale,
+				long createdAtTick,
+				long expiresAtTick
+		) {
+			this.dimension = dimension;
+			this.displayId = displayId;
+			this.position = position;
+			this.velocity = velocity;
+			this.pitch = pitch;
+			this.yaw = yaw;
+			this.roll = roll;
+			this.scale = scale;
+			this.createdAtTick = createdAtTick;
 			this.expiresAtTick = expiresAtTick;
 		}
 	}

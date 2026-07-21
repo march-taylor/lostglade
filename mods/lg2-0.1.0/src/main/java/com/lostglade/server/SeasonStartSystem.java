@@ -151,6 +151,12 @@ public final class SeasonStartSystem {
 	private static final int DISSOLVE_BATCH_BLOCKS = 96;
 	private static final long WAITING_START_INITIAL_PROMPT_TICKS = 20L * 3L;
 	private static final long WAITING_START_REPEAT_TICKS = 20L * 15L;
+	private static final ManagedInfiniteEffect INTRO_BLINDNESS = new ManagedInfiniteEffect(
+			MobEffects.BLINDNESS,
+			false,
+			false,
+			true
+	);
 	private static final long INTRO_IDLE_TRIGGER_TICKS = 20L * 9L;
 	private static final long INTRO_IDLE_REPEAT_TICKS = 20L * 10L;
 	private static final long INTRO_LEAVE_REPEAT_TICKS = 20L * 7L;
@@ -3122,7 +3128,7 @@ public final class SeasonStartSystem {
 		if (state.sharedVisionRestored || nowTick < state.restoreVisionTick) {
 			return;
 		}
-		player.removeEffect(MobEffects.BLINDNESS);
+		INTRO_BLINDNESS.clear(player);
 		state.sharedVisionRestored = true;
 		state.phase = PlayerPhase.SHARED;
 		state.restoreVisionTick = Long.MAX_VALUE;
@@ -6983,7 +6989,7 @@ public final class SeasonStartSystem {
 		}
 		player.setSilent(true);
 		setSeasonStartGameMode(player, GameType.SURVIVAL);
-		player.addEffect(new MobEffectInstance(MobEffects.BLINDNESS, get().introBlindnessTicks, 0, false, false, false));
+		INTRO_BLINDNESS.ensure(player, 0);
 		clearLegacyIntroInvisibility(player);
 		removeLegacyIntroTool(player);
 	}
@@ -7003,7 +7009,7 @@ public final class SeasonStartSystem {
 		}
 		player.setSilent(true);
 		setSeasonStartGameMode(player, GameType.SURVIVAL);
-		player.addEffect(new MobEffectInstance(MobEffects.BLINDNESS, get().introBlindnessTicks, 0, false, false, false));
+		INTRO_BLINDNESS.ensure(player, 0);
 		clearLegacyIntroInvisibility(player);
 		removeLegacyIntroTool(player);
 	}
@@ -7020,7 +7026,7 @@ public final class SeasonStartSystem {
 		}
 		player.setSilent(true);
 		setSeasonStartGameMode(player, GameType.ADVENTURE);
-		player.addEffect(new MobEffectInstance(MobEffects.BLINDNESS, get().introBlindnessTicks, 0, false, false, false));
+		INTRO_BLINDNESS.ensure(player, 0);
 		clearLegacyIntroInvisibility(player);
 		removeLegacyIntroTool(player);
 	}
@@ -7039,16 +7045,16 @@ public final class SeasonStartSystem {
 		setSeasonStartGameMode(player, GameType.SURVIVAL);
 		player.setSilent(true);
 		if (!state.sharedVisionRestored) {
-			player.addEffect(new MobEffectInstance(MobEffects.BLINDNESS, get().introBlindnessTicks, 0, false, false, false));
+			INTRO_BLINDNESS.ensure(player, 0);
 		} else {
-			player.removeEffect(MobEffects.BLINDNESS);
+			INTRO_BLINDNESS.clear(player);
 		}
 		clearLegacyIntroInvisibility(player);
 	}
 
 	private static void applySharedPlayerState(ServerPlayer player) {
 		clearLegacyIntroInvisibility(player);
-		player.removeEffect(MobEffects.BLINDNESS);
+		INTRO_BLINDNESS.clear(player);
 		player.setSilent(false);
 		setSeasonStartGameMode(player, GameType.SURVIVAL);
 	}
@@ -7062,7 +7068,7 @@ public final class SeasonStartSystem {
 			return;
 		}
 		clearLegacyIntroInvisibility(player);
-		player.removeEffect(MobEffects.BLINDNESS);
+		INTRO_BLINDNESS.clear(player);
 		if (clearDarkness) {
 			player.removeEffect(MobEffects.DARKNESS);
 		}
