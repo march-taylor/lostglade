@@ -193,6 +193,7 @@ final class MonitorScreenMediaActions {
 			return;
 		}
 		ensureGalleryStateHydrated(server, key, state);
+		boolean savedSupportAttachment = false;
 		MonitorMediaApp.LoadedMedia media;
 		BufferedImage directVideoPreview;
 		String url;
@@ -200,6 +201,30 @@ final class MonitorScreenMediaActions {
 		boolean directVideo;
 		boolean directAudio;
 		synchronized (state) {
+			GalleryItem currentItem = currentGalleryItemLocked(state);
+			if (isTransientSupportAttachmentItem(currentItem)
+					&& currentItem.localMediaKey() != null
+					&& !currentItem.localMediaKey().isBlank()) {
+				String savedUrl = "support-file:" + UUID.randomUUID();
+				state.galleryItems.set(state.galleryIndex, new GalleryItem(
+						currentItem.title(),
+						currentItem.subtitle(),
+						savedUrl,
+						currentItem.localMediaKey(),
+						currentItem.media(),
+						currentItem.preview(),
+						currentItem.kind()
+				));
+				state.statusText = "Файл сохранён";
+				state.version++;
+				savedSupportAttachment = true;
+				media = null;
+				directVideoPreview = null;
+				url = "";
+				title = "";
+				directVideo = false;
+				directAudio = false;
+			} else {
 			if ((state.loadedMedia == null && !isDirectVideoPlaybackLocked(state)) || state.sourceUrl == null || state.sourceUrl.isBlank()) {
 				return;
 			}
@@ -218,6 +243,12 @@ final class MonitorScreenMediaActions {
 			title = state.mediaTitle;
 			directVideo = isDirectVideoPlaybackLocked(state);
 			directAudio = directVideo && usesMusicPlayerLayoutLocked(state);
+			}
+		}
+		if (savedSupportAttachment) {
+			persistGalleryState(server, key, state);
+			requestRuntimeRender(server, key);
+			return;
 		}
 		requestRuntimeRender(server, key);
 		ensureExecutors();

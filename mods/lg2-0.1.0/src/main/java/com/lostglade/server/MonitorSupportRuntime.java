@@ -45,6 +45,7 @@ import java.awt.geom.RoundRectangle2D;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.Reader;
 import java.io.Writer;
 import java.net.URI;
@@ -55,6 +56,7 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
@@ -76,6 +78,8 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
+import javax.imageio.ImageIO;
+
 import static com.lostglade.server.MonitorScreenSystem.*;
 
 public final class MonitorSupportRuntime {
@@ -84,12 +88,17 @@ public final class MonitorSupportRuntime {
 	private static final String TOKEN_ENV_NAME = "LG2_SUPPORT_TELEGRAM_BOT_TOKEN";
 	private static final String TOKEN_PROPERTY_NAME = "lg2.supportTelegramBotToken";
 	private static final Path TOKEN_FILE = Path.of("server-secrets", "telegram", "support-bot-token.txt");
+	private static final Path TELEGRAM_OPERATORS_CONFIG_FILE = Path.of("config", "lg2-support.json");
 	private static final int MAX_STORED_MESSAGES = 200;
 	private static final int MAX_SNAPSHOT_MESSAGES = 120;
 	private static final int MAX_UI_MESSAGE_LENGTH = 700;
 	private static final int MAX_TELEGRAM_MESSAGE_LENGTH = 3900;
 	private static final int MAX_TELEGRAM_CAPTION_LENGTH = 1000;
 	private static final int MAX_PENDING_ATTACHMENTS = 5;
+	private static final long MAX_TELEGRAM_ATTACHMENT_BYTES = 50L * 1024L * 1024L;
+	private static final long SUPPORT_NOTIFICATION_SOUND_DURATION_MS = 2500L;
+	private static final String SUPPORT_NOTIFICATION_SOURCE_PREFIX = "support:notification:";
+	private static final Path SUPPORT_NOTIFICATION_SOUND_FILE = Path.of(System.getProperty("user.dir"), "cache", "lg2-monitor", "support-notification.ogg");
 	private static final long TELEGRAM_POLL_INTERVAL_MS = 1800L;
 	private static final long TELEGRAM_REQUEST_TIMEOUT_SECONDS = 12L;
 	private static final ZoneId MOSCOW_ZONE = ZoneId.of("Europe/Moscow");
@@ -166,8 +175,14 @@ public final class MonitorSupportRuntime {
 		int attachmentPickerScroll;
 		int totalMessageCount;
 		boolean attachmentPickerOpen;
+		boolean notificationsSeen = false;
 		synchronized (state) {
 			ensureGreetingLocked(state);
+			if (state.unreadReplyCount > 0) {
+				state.unreadReplyCount = 0;
+				state.version++;
+				notificationsSeen = true;
+			}
 			trimHistoryLocked(state);
 			totalMessageCount = state.messages.size();
 			state.scrollOffset = clampInt(state.scrollOffset, 0, Math.max(0, totalMessageCount - 1));
@@ -196,6 +211,9 @@ public final class MonitorSupportRuntime {
 			scrollOffset = state.scrollOffset;
 			attachmentPickerScroll = state.attachmentPickerScroll;
 			attachmentPickerOpen = state.attachmentPickerOpen;
+		}
+		if (notificationsSeen) {
+			save(server);
 		}
 		List<SupportGalleryFileSnapshot> galleryFiles = attachmentPickerOpen
 				? supportGalleryFilesSnapshot(server, component.runtimeKey(), pendingAttachmentModels)
@@ -297,6 +315,11 @@ public final class MonitorSupportRuntime {
 			if (supportAttachmentPickerRect(layout, inputExpanded).contains(touchPoint.x(), touchPoint.y())) {
 				return true;
 			}
+		}
+		SupportAttachmentSnapshot openedAttachment = supportAttachmentAtTouch(layout, component.runtimeKey(), captureSnapshot(server, component), touchPoint);
+		if (openedAttachment != null) {
+			openSupportAttachment(server, component, openedAttachment);
+			return true;
 		}
 		if (supportSendRect(layout, inputExpanded).contains(touchPoint.x(), touchPoint.y())) {
 			boolean hasAttachments;
@@ -481,6 +504,19 @@ public final class MonitorSupportRuntime {
 				ignored -> MediaRuntimeState.fresh(ScreenViewMode.GALLERY, "", () -> MonitorScreenMediaLoadResults.onMediaProgressChanged(server, key))
 		);
 		MonitorScreenMediaHydration.ensureGalleryStateHydrated(server, key, mediaState);
+		boolean removedLegacySupportFiles;
+		synchronized (mediaState) {
+			removedLegacySupportFiles = mediaState.galleryItems.removeIf(item -> item != null
+					&& item.url() != null
+					&& item.url().startsWith("support://"));
+			if (removedLegacySupportFiles) {
+				mediaState.galleryIndex = clampInt(mediaState.galleryIndex, 0, Math.max(0, mediaState.galleryItems.size() - 1));
+				mediaState.version++;
+			}
+		}
+		if (removedLegacySupportFiles) {
+			MonitorScreenGalleryRuntime.persistGalleryState(server, key, mediaState);
+		}
 		return mediaState;
 	}
 
@@ -721,10 +757,15 @@ public final class MonitorSupportRuntime {
 	}
 
 	private static void addSupportReply(MinecraftServer server, long ticketId, String author, String message) {
+		addSupportReply(server, ticketId, author, message, List.of());
+	}
+
+	private static void addSupportReply(MinecraftServer server, long ticketId, String author, String message, List<SupportAttachment> attachments) {
 		SupportTicket ticket = TICKETS.get(ticketId);
 		if (ticket == null) {
 			return;
 		}
+		List<SupportAttachment> safeAttachments = attachments == null ? List.of() : List.copyOf(attachments);
 		markTicketRead(server, ticketId);
 		SupportRuntimeState state = ensureState(ticket.key());
 		synchronized (state) {
@@ -735,22 +776,117 @@ public final class MonitorSupportRuntime {
 					truncateUiMessage(message),
 					System.currentTimeMillis(),
 					ticketId,
-					List.of(),
+			safeAttachments,
 					true,
 					true
 			));
 			state.scrollOffset = 0;
 			state.statusText = "Ответ поддержки";
+			state.unreadReplyCount++;
+			state.notificationSoundStartedAtMillis = System.currentTimeMillis();
+			state.notificationSoundToken++;
 			trimHistoryLocked(state);
 			state.version++;
 		}
 		if (server != null) {
-			ServerPlayer player = server.getPlayerList().getPlayer(ticket.playerUuid());
-			if (player != null) {
-				player.displayClientMessage(Component.literal("Поддержка ответила на обращение #" + ticketId + "."), true);
+			ScreenComponent component = resolveScreenComponent(server, ticket.key());
+			if (component != null) {
+				ServerLevel level = server.getLevel(component.runtimeKey().dimension());
+				if (level != null) {
+					SpeakerSystem.refreshConnectedSpeakersNow(server, level, component.runtimeKey().pos());
+				}
 			}
 			requestRuntimeRender(server, ticket.key());
 			save(server);
+		}
+	}
+
+	static int notificationCount(ScreenRuntimeKey key) {
+		SupportRuntimeState state = key == null ? null : STATES.get(key);
+		if (state == null) {
+			return 0;
+		}
+		synchronized (state) {
+			return Math.max(0, state.unreadReplyCount);
+		}
+	}
+
+	static void closeRuntime(MinecraftServer server, ScreenRuntimeKey key, boolean contentDestroyed) {
+		if (key == null) {
+			return;
+		}
+		PENDING_INPUTS.entrySet().removeIf(entry -> key.equals(entry.getValue()));
+		if (!contentDestroyed) {
+			return;
+		}
+		STATES.remove(key);
+		Set<Long> removedTicketIds = ConcurrentHashMap.newKeySet();
+		for (Map.Entry<Long, SupportTicket> entry : TICKETS.entrySet()) {
+			SupportTicket ticket = entry.getValue();
+			if (ticket != null && key.equals(ticket.key()) && TICKETS.remove(entry.getKey(), ticket)) {
+				removedTicketIds.add(entry.getKey());
+			}
+		}
+		if (!removedTicketIds.isEmpty()) {
+			TELEGRAM_MESSAGE_TICKETS.entrySet().removeIf(entry -> removedTicketIds.contains(entry.getValue()));
+			LAST_TELEGRAM_TICKETS.entrySet().removeIf(entry -> removedTicketIds.contains(entry.getValue()));
+		}
+		if (server != null) {
+			save(server);
+		}
+	}
+
+	static List<SpeakerAudioSource> findSpeakerAudioSources(MinecraftServer server, Iterable<ScreenComponent> components) {
+		if (server == null || components == null) {
+			return List.of();
+		}
+		String notificationSound = supportNotificationSoundPath();
+		if (notificationSound.isBlank()) {
+			return List.of();
+		}
+		long now = System.currentTimeMillis();
+		List<SpeakerAudioSource> sources = new ArrayList<>();
+		for (ScreenComponent component : components) {
+			if (component == null || !component.powered()) {
+				continue;
+			}
+			SupportRuntimeState state = STATES.get(component.runtimeKey());
+			if (state == null) {
+				continue;
+			}
+			long startedAt;
+			long token;
+			synchronized (state) {
+				startedAt = state.notificationSoundStartedAtMillis;
+				token = state.notificationSoundToken;
+			}
+			if (startedAt <= 0L || now - startedAt >= SUPPORT_NOTIFICATION_SOUND_DURATION_MS) {
+				continue;
+			}
+			String sourceKey = SUPPORT_NOTIFICATION_SOURCE_PREFIX + componentGroupId(component.runtimeKey()) + ":" + token;
+			sources.add(new SpeakerAudioSource(sourceKey, sourceKey, notificationSound, 0L, startedAt, false, false, false, false, false));
+		}
+		return sources.isEmpty() ? List.of() : List.copyOf(sources);
+	}
+
+	private static String supportNotificationSoundPath() {
+		try {
+			if (!Files.isRegularFile(SUPPORT_NOTIFICATION_SOUND_FILE)) {
+				Path parent = SUPPORT_NOTIFICATION_SOUND_FILE.getParent();
+				if (parent != null) {
+					Files.createDirectories(parent);
+				}
+				try (InputStream resource = MonitorSupportRuntime.class.getResourceAsStream("/assets/lg2/sounds/max_notification.ogg")) {
+					if (resource == null) {
+						return "";
+					}
+					Files.copy(resource, SUPPORT_NOTIFICATION_SOUND_FILE, StandardCopyOption.REPLACE_EXISTING);
+				}
+			}
+			return SUPPORT_NOTIFICATION_SOUND_FILE.toAbsolutePath().toString();
+		} catch (IOException exception) {
+			Lg2.LOGGER.warn("Failed to prepare support notification sound", exception);
+			return "";
 		}
 	}
 
@@ -826,14 +962,12 @@ public final class MonitorSupportRuntime {
 		if (chatId == Long.MIN_VALUE) {
 			return;
 		}
-		String text = readString(message, "text").trim();
-		if (text.isBlank()) {
-			return;
-		}
+		String text = telegramMessageText(message);
 		String lower = firstCommandToken(text).toLowerCase(Locale.ROOT);
 		if (lower.equals("/start") || isSupportOnCommand(text)) {
 			ensureLoaded(server);
 			TELEGRAM_CHAT_IDS.add(chatId);
+			saveTelegramOperatorConfig();
 			save(server);
 			return;
 		}
@@ -841,6 +975,7 @@ public final class MonitorSupportRuntime {
 			ensureLoaded(server);
 			TELEGRAM_CHAT_IDS.remove(chatId);
 			LAST_TELEGRAM_TICKETS.remove(chatId);
+			saveTelegramOperatorConfig();
 			save(server);
 			return;
 		}
@@ -860,6 +995,7 @@ public final class MonitorSupportRuntime {
 		}
 		String author = telegramAuthor(message);
 		int incomingMessageId = readInt(message, "message_id", -1);
+		SupportAttachment attachment = downloadTelegramAttachment(chatId, incomingMessageId, message);
 		MinecraftServer targetServer = activeServer != null ? activeServer : server;
 		if (targetServer == null) {
 			return;
@@ -869,7 +1005,7 @@ public final class MonitorSupportRuntime {
 			if (ticket == null) {
 				return;
 			}
-			addSupportReply(targetServer, reply.ticketId(), author, reply.message());
+			addSupportReply(targetServer, reply.ticketId(), author, reply.message(), attachment == null ? List.of() : List.of(attachment));
 			if (incomingMessageId > 0) {
 				setTelegramMessageReaction(chatId, incomingMessageId);
 			}
@@ -878,7 +1014,7 @@ public final class MonitorSupportRuntime {
 
 	private static TelegramReply parseTelegramReply(long chatId, JsonObject message, String text) {
 		String trimmed = text == null ? "" : text.trim();
-		if (trimmed.isBlank() || trimmed.startsWith("/")) {
+		if (trimmed.startsWith("/")) {
 			return null;
 		}
 		JsonObject replyTo = message.getAsJsonObject("reply_to_message");
@@ -900,6 +1036,259 @@ public final class MonitorSupportRuntime {
 			return null;
 		}
 		return new TelegramReply(ticketId, trimmed);
+	}
+
+	private static String telegramMessageText(JsonObject message) {
+		String text = readString(message, "text").trim();
+		return text.isBlank() ? readString(message, "caption").trim() : text;
+	}
+
+	private static SupportAttachment downloadTelegramAttachment(long chatId, int messageId, JsonObject message) {
+		TelegramIncomingAttachment incoming = telegramIncomingAttachment(message);
+		if (incoming == null || incoming.fileId().isBlank() || !telegramConfigured()) {
+			return null;
+		}
+		Path temporaryFile = null;
+		try {
+			JsonObject fileResult = postTelegramForm("getFile", Map.of("file_id", incoming.fileId()));
+			JsonObject file = fileResult == null ? null : fileResult.getAsJsonObject("result");
+			String filePath = readString(file, "file_path");
+			if (filePath.isBlank()) {
+				return null;
+			}
+			HttpRequest request = HttpRequest.newBuilder(telegramFileUri(filePath))
+					.timeout(Duration.ofSeconds(TELEGRAM_REQUEST_TIMEOUT_SECONDS))
+					.GET()
+					.build();
+			HttpResponse<byte[]> response = TELEGRAM_HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofByteArray());
+			if (response.statusCode() < 200 || response.statusCode() >= 300 || response.body() == null
+					|| response.body().length == 0 || response.body().length > MAX_TELEGRAM_ATTACHMENT_BYTES) {
+				return null;
+			}
+			String extension = telegramFileExtension(filePath, incoming.fileName());
+			temporaryFile = Files.createTempFile("lg2-support-telegram-", extension);
+			Files.write(temporaryFile, response.body());
+			if (incoming.sticker()) {
+				Path renderedSticker = incoming.animatedSticker()
+						? convertTelegramAnimatedStickerToGif(temporaryFile)
+						: convertTelegramStickerToImage(temporaryFile);
+				// A Telegram sticker must never fall back to its original TGS/WebM payload.
+				// The gallery can only display the converted raster image/GIF.
+				if (renderedSticker == null) {
+					return null;
+				}
+				Files.deleteIfExists(temporaryFile);
+				temporaryFile = renderedSticker;
+			}
+			String mediaKey = MonitorMediaApp.persistLocalGalleryFile(
+					"support-telegram-" + chatId + "-" + Math.max(0, messageId) + "-" + incoming.uniqueId(),
+					temporaryFile
+			);
+			BufferedImage preview;
+			try {
+				preview = validateTelegramAttachment(mediaKey, incoming);
+			} catch (IOException exception) {
+				MonitorMediaApp.deleteSavedGalleryMedia(mediaKey);
+				return null;
+			}
+			return new SupportAttachment(
+					"telegram:" + chatId + ":" + messageId + ":" + incoming.uniqueId(),
+					incoming.title(),
+					incoming.subtitle(),
+					"",
+					mediaKey,
+					incoming.kind(),
+					preview
+			);
+		} catch (IOException exception) {
+			Lg2.LOGGER.warn("Failed to download Telegram support attachment", exception);
+		} catch (InterruptedException exception) {
+			Thread.currentThread().interrupt();
+		} catch (RuntimeException exception) {
+			Lg2.LOGGER.warn("Failed to process Telegram support attachment", exception);
+		} finally {
+			if (temporaryFile != null) {
+				try {
+					Files.deleteIfExists(temporaryFile);
+				} catch (IOException ignored) {
+				}
+			}
+		}
+		return null;
+	}
+
+	private static TelegramIncomingAttachment telegramIncomingAttachment(JsonObject message) {
+		if (message == null) {
+			return null;
+		}
+		JsonObject file = null;
+		String type = "";
+		JsonArray photos = message.getAsJsonArray("photo");
+		if (photos != null && !photos.isEmpty()) {
+			JsonElement largest = photos.get(photos.size() - 1);
+			if (largest instanceof JsonObject photo) {
+				file = photo;
+				type = "photo";
+			}
+		}
+		for (String candidate : List.of("animation", "audio", "document", "sticker", "video", "voice", "video_note")) {
+			if (file == null && message.get(candidate) instanceof JsonObject value) {
+				file = value;
+				type = candidate;
+			}
+		}
+		if (file == null) {
+			return null;
+		}
+		boolean animatedSticker = type.equals("sticker") && (readBoolean(file, "is_animated", false) || readBoolean(file, "is_video", false));
+		if (type.equals("sticker") && !animatedSticker) {
+			JsonObject thumbnail = telegramStickerThumbnail(file);
+			if (thumbnail != null && !readString(thumbnail, "file_id").isBlank()) {
+				file = thumbnail;
+			}
+		}
+		String fileId = readString(file, "file_id");
+		String uniqueId = readString(file, "file_unique_id");
+		String title = readString(file, "file_name");
+		if (title.isBlank()) {
+			title = switch (type) {
+				case "audio" -> nonBlank(readString(file, "title"), "Аудио из поддержки");
+				case "sticker" -> "Стикер Telegram";
+				case "animation" -> "GIF из поддержки";
+				case "voice" -> "Голосовое сообщение";
+				case "photo" -> "Изображение из поддержки";
+				case "video", "video_note" -> "Видео из поддержки";
+				default -> "Файл из поддержки";
+			};
+		}
+		String subtitle = switch (type) {
+			case "audio" -> nonBlank(readString(file, "performer"), "Аудиофайл");
+			case "sticker" -> "Стикер Telegram";
+			case "voice" -> "Голосовое сообщение";
+			default -> nonBlank(readString(file, "mime_type"), "Файл Telegram");
+		};
+		GalleryItemKind kind = (type.equals("audio") || type.equals("voice")) ? GalleryItemKind.AUDIO
+				: (type.equals("video") || type.equals("video_note")) ? GalleryItemKind.VIDEO : GalleryItemKind.MEDIA;
+		return new TelegramIncomingAttachment(fileId, nonBlank(uniqueId, fileId), title, subtitle, kind, readString(file, "file_name"), type.equals("sticker"), animatedSticker);
+	}
+
+	private static JsonObject telegramStickerThumbnail(JsonObject sticker) {
+		if (sticker == null) {
+			return null;
+		}
+		JsonObject thumbnail = sticker.getAsJsonObject("thumbnail");
+		return thumbnail != null ? thumbnail : sticker.getAsJsonObject("thumb");
+	}
+
+	private static BufferedImage validateTelegramAttachment(String mediaKey, TelegramIncomingAttachment incoming) throws IOException {
+		if (mediaKey == null || mediaKey.isBlank() || incoming == null) {
+			throw new IOException("Telegram attachment is missing");
+		}
+		return switch (incoming.kind()) {
+			case AUDIO -> {
+				MonitorMediaApp.LoadedAudioTrack track = MonitorMediaApp.loadSavedGalleryAudio(mediaKey, null);
+				if (track == null || track.video() == null) {
+					throw new IOException("Unsupported audio attachment");
+				}
+				BufferedImage preview = MonitorMediaApp.loadSavedGalleryAudioPreview(mediaKey, incoming.title());
+				if (preview == null) {
+					throw new IOException("Audio preview is missing");
+				}
+				yield preview;
+			}
+			case VIDEO -> {
+				MonitorMediaApp.LoadedVideo video = MonitorMediaApp.loadSavedGalleryVideo(mediaKey, null);
+				if (video == null || video.preview() == null) {
+					throw new IOException("Unsupported video attachment");
+				}
+				yield video.preview();
+			}
+			case MEDIA -> {
+				MonitorMediaApp.LoadedMedia media = MonitorMediaApp.loadSavedGalleryMedia(mediaKey, null);
+				if (media == null || media.frameCount() <= 0 || media.frame(0) == null) {
+					throw new IOException("Unsupported image attachment");
+				}
+				yield media.frame(0);
+			}
+			default -> throw new IOException("Unsupported Telegram attachment kind");
+		};
+	}
+
+	private static Path convertTelegramStickerToImage(Path source) {
+		if (source == null || !Files.isRegularFile(source)) {
+			return null;
+		}
+		Path target = null;
+		try {
+			target = Files.createTempFile("lg2-support-sticker-", ".png");
+			Process process = new ProcessBuilder(
+					"ffmpeg", "-y", "-v", "error", "-i", source.toAbsolutePath().toString(), "-frames:v", "1", target.toAbsolutePath().toString()
+			)
+					.redirectError(ProcessBuilder.Redirect.DISCARD)
+					.redirectOutput(ProcessBuilder.Redirect.DISCARD)
+					.start();
+			if (process.waitFor(12L, TimeUnit.SECONDS) && process.exitValue() == 0 && Files.size(target) > 0L) {
+				return target;
+			}
+			process.destroyForcibly();
+		} catch (IOException exception) {
+			Lg2.LOGGER.debug("Failed to convert Telegram sticker to PNG", exception);
+		} catch (InterruptedException exception) {
+			Thread.currentThread().interrupt();
+		}
+		if (target != null) {
+			try {
+				Files.deleteIfExists(target);
+			} catch (IOException ignored) {
+			}
+		}
+		return null;
+	}
+
+	private static Path convertTelegramAnimatedStickerToGif(Path source) {
+		if (source == null || !Files.isRegularFile(source)) {
+			return null;
+		}
+		Path target = null;
+		try {
+			target = Files.createTempFile("lg2-support-sticker-", ".gif");
+			Process process = new ProcessBuilder(
+					"ffmpeg", "-y", "-v", "error", "-i", source.toAbsolutePath().toString(),
+					"-vf", "fps=12,scale=min(512\\,iw):-1:flags=lanczos", "-loop", "0", target.toAbsolutePath().toString()
+			)
+					.redirectError(ProcessBuilder.Redirect.DISCARD)
+					.redirectOutput(ProcessBuilder.Redirect.DISCARD)
+					.start();
+			if (process.waitFor(20L, TimeUnit.SECONDS) && process.exitValue() == 0 && Files.size(target) > 0L) {
+				return target;
+			}
+			process.destroyForcibly();
+		} catch (IOException exception) {
+			Lg2.LOGGER.debug("Failed to convert animated Telegram sticker to GIF", exception);
+		} catch (InterruptedException exception) {
+			Thread.currentThread().interrupt();
+		}
+		if (target != null) {
+			try {
+				Files.deleteIfExists(target);
+			} catch (IOException ignored) {
+			}
+		}
+		return null;
+	}
+
+	private static String telegramFileExtension(String filePath, String originalFileName) {
+		String candidate = !filePath.isBlank() ? filePath : originalFileName;
+		int dot = candidate.lastIndexOf('.');
+		if (dot < 0 || dot == candidate.length() - 1) {
+			return ".bin";
+		}
+		String extension = candidate.substring(dot);
+		return extension.length() <= 12 && extension.matches("\\.[A-Za-z0-9]+") ? extension : ".bin";
+	}
+
+	private static String nonBlank(String value, String fallback) {
+		return value == null || value.isBlank() ? fallback : value.trim();
 	}
 
 	private static void sendTelegramMessage(long chatId, String text) {
@@ -1114,6 +1503,14 @@ public final class MonitorSupportRuntime {
 
 	private static URI telegramApiUri(String method) {
 		return URI.create("https://api.telegram.org/bot" + telegramToken + "/" + method);
+	}
+
+	private static URI telegramFileUri(String filePath) {
+		String normalized = filePath == null ? "" : filePath.trim().replace("\\", "/");
+		if (normalized.isBlank() || normalized.startsWith("/") || normalized.contains("..")) {
+			throw new IllegalArgumentException("Invalid Telegram file path");
+		}
+		return URI.create("https://api.telegram.org/file/bot" + telegramToken + "/" + normalized);
 	}
 
 	private static String formBody(Map<String, String> values) {
@@ -1550,6 +1947,105 @@ public final class MonitorSupportRuntime {
 		}
 	}
 
+	private static SupportAttachmentSnapshot supportAttachmentAtTouch(
+			UiLayout layout,
+			ScreenRuntimeKey key,
+			SupportVisualSnapshot snapshot,
+			UiPoint touchPoint
+	) {
+		if (layout == null || snapshot == null || touchPoint == null) {
+			return null;
+		}
+		List<SupportMessageSnapshot> messages = snapshot.messages() == null ? List.of() : snapshot.messages();
+		if (messages.isEmpty()) {
+			return null;
+		}
+		BufferedImage measurementImage = new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
+		Graphics2D graphics = measurementImage.createGraphics();
+		try {
+			UiRect area = supportMessagesRect(layout, snapshot.pendingAttachments() != null && !snapshot.pendingAttachments().isEmpty());
+			int maxScroll = Math.max(0, messages.size() - 1);
+			int newestIndex = messages.size() - 1 - clampInt(snapshot.scrollOffset(), 0, maxScroll);
+			int y = area.bottom();
+			int gap = compactGap(layout);
+			for (int index = newestIndex; index >= 0; index--) {
+				SupportMessageSnapshot message = messages.get(index);
+				if (!messageVisible(message)) {
+					continue;
+				}
+				int height = messageBubbleHeight(graphics, layout, area, message);
+				y -= height;
+				if (y < area.y()) {
+					break;
+				}
+				SupportBubbleMetrics metrics = supportBubbleMetrics(graphics, layout, area, message);
+				if (metrics.attachmentHeight() > 0) {
+					int bubbleX = message.fromSupport()
+							? area.x() + metrics.avatarSize() + metrics.avatarGap()
+							: area.right() - metrics.bubbleWidth();
+					int x = bubbleX + metrics.padX();
+					int size = metrics.attachmentHeight();
+					int attachmentGap = Math.max(2, layout.unit() / 3);
+					for (SupportAttachmentSnapshot attachment : message.attachments()) {
+						if (attachment == null || x + size > bubbleX + metrics.bubbleWidth() - metrics.padX()) {
+							break;
+						}
+						if (new UiRect(x, y + metrics.padY(), size, size).contains(touchPoint.x(), touchPoint.y())) {
+							return attachment;
+						}
+						x += size + attachmentGap;
+					}
+				}
+				y -= gap;
+			}
+		} finally {
+			graphics.dispose();
+		}
+		return null;
+	}
+
+	private static void openSupportAttachment(MinecraftServer server, ScreenComponent component, SupportAttachmentSnapshot attachment) {
+		if (server == null || component == null || attachment == null || attachment.localMediaKey() == null || attachment.localMediaKey().isBlank()) {
+			return;
+		}
+		ScreenRuntimeKey key = component.runtimeKey();
+		MediaRuntimeState mediaState = ensureSupportGalleryState(server, key);
+		if (mediaState == null) {
+			return;
+		}
+		String id = attachment.id() == null || attachment.id().isBlank() ? UUID.randomUUID().toString() : attachment.id();
+		String url = "support-preview:" + id;
+		int index;
+		synchronized (mediaState) {
+			for (int itemIndex = mediaState.galleryItems.size() - 1; itemIndex >= 0; itemIndex--) {
+				GalleryItem item = mediaState.galleryItems.get(itemIndex);
+				if (item != null && url.equals(item.url())) {
+					mediaState.galleryItems.remove(itemIndex);
+				}
+			}
+			mediaState.galleryItems.add(new GalleryItem(
+					attachment.title(),
+					attachment.subtitle(),
+					url,
+					attachment.localMediaKey(),
+					null,
+					attachment.preview(),
+					attachment.kind()
+			));
+			index = mediaState.galleryItems.size() - 1;
+			mediaState.mode = ScreenViewMode.GALLERY;
+			mediaState.gallerySurfaceMode = GallerySurfaceMode.BROWSER;
+			mediaState.supportAttachmentReturnToSupport = true;
+			mediaState.version++;
+		}
+		ServerLevel level = server.getLevel(key.dimension());
+		if (level != null) {
+			applyTransientComponentViewState(server, level, component, ScreenViewMode.GALLERY, component.launcherPage());
+		}
+		MonitorScreenGalleryRuntime.scheduleGalleryItemLoad(server, key, attachment.title(), url, attachment.localMediaKey(), attachment.kind(), true, index);
+		requestRuntimeRender(server, key);
+	}
+
 	private static void drawMessageMeta(Graphics2D graphics, UiLayout layout, SupportMessageSnapshot message, int right, int baselineY) {
 		int size = messageMetaFontSize(layout);
 		graphics.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, size));
@@ -1936,6 +2432,7 @@ public final class MonitorSupportRuntime {
 	}
 
 	private static SupportAttachmentSnapshot attachmentSnapshot(SupportAttachment attachment) {
+		BufferedImage preview = attachmentPreview(attachment);
 		return new SupportAttachmentSnapshot(
 				attachment == null || attachment.id() == null ? "" : attachment.id(),
 				attachment == null || attachment.title() == null ? "" : attachment.title(),
@@ -1943,8 +2440,35 @@ public final class MonitorSupportRuntime {
 				attachment == null || attachment.url() == null ? "" : attachment.url(),
 				attachment == null || attachment.localMediaKey() == null ? "" : attachment.localMediaKey(),
 				attachment == null || attachment.kind() == null ? GalleryItemKind.MEDIA : attachment.kind(),
-				attachment == null ? null : attachment.preview()
+				preview
 		);
+	}
+
+	private static BufferedImage attachmentPreview(SupportAttachment attachment) {
+		if (attachment == null) {
+			return null;
+		}
+		if (attachment.preview() != null) {
+			return attachment.preview();
+		}
+		if (attachment.kind() == GalleryItemKind.AUDIO
+				&& attachment.localMediaKey() != null
+				&& !attachment.localMediaKey().isBlank()) {
+			try {
+				return MonitorMediaApp.loadSavedGalleryAudioPreview(attachment.localMediaKey(), attachment.title());
+			} catch (IOException | RuntimeException ignored) {
+			}
+		}
+		if (attachment.kind() == GalleryItemKind.MEDIA
+				&& attachment.localMediaKey() != null
+				&& !attachment.localMediaKey().isBlank()) {
+			try {
+				Path file = MonitorMediaApp.savedGalleryMediaFile(attachment.localMediaKey());
+				return file == null ? null : ImageIO.read(file.toFile());
+			} catch (IOException | RuntimeException ignored) {
+			}
+		}
+		return null;
 	}
 
 	private static String safeAttachmentTitle(String title, int index) {
@@ -2079,11 +2603,13 @@ public final class MonitorSupportRuntime {
 			}
 			Path path = statePath(server);
 			if (!Files.exists(path)) {
+				loadTelegramOperatorConfigOrMigrate();
 				return;
 			}
 			try (Reader reader = Files.newBufferedReader(path, StandardCharsets.UTF_8)) {
 				JsonElement parsed = JsonParser.parseReader(reader);
 				if (!(parsed instanceof JsonObject root)) {
+					loadTelegramOperatorConfigOrMigrate();
 					return;
 				}
 				JsonArray minecraftOperators = root.getAsJsonArray("minecraft_operators");
@@ -2149,6 +2675,51 @@ public final class MonitorSupportRuntime {
 			} catch (IOException exception) {
 				Lg2.LOGGER.warn("Failed to load support settings", exception);
 			}
+			loadTelegramOperatorConfigOrMigrate();
+		}
+	}
+
+	private static void loadTelegramOperatorConfigOrMigrate() {
+		if (!Files.isRegularFile(TELEGRAM_OPERATORS_CONFIG_FILE)) {
+			saveTelegramOperatorConfig();
+			return;
+		}
+		try (Reader reader = Files.newBufferedReader(TELEGRAM_OPERATORS_CONFIG_FILE, StandardCharsets.UTF_8)) {
+			JsonElement parsed = JsonParser.parseReader(reader);
+			if (!(parsed instanceof JsonObject root)) {
+				return;
+			}
+			JsonArray operators = root.getAsJsonArray("telegram_chat_ids");
+			if (operators == null) {
+				return;
+			}
+			TELEGRAM_CHAT_IDS.clear();
+			for (JsonElement element : operators) {
+				try {
+					TELEGRAM_CHAT_IDS.add(element.getAsLong());
+				} catch (RuntimeException ignored) {
+				}
+			}
+		} catch (IOException | RuntimeException exception) {
+			Lg2.LOGGER.warn("Failed to load Telegram support operators config", exception);
+		}
+	}
+
+	private static void saveTelegramOperatorConfig() {
+		try {
+			Path parent = TELEGRAM_OPERATORS_CONFIG_FILE.getParent();
+			if (parent != null) {
+				Files.createDirectories(parent);
+			}
+			JsonObject root = new JsonObject();
+			JsonArray operators = new JsonArray();
+			TELEGRAM_CHAT_IDS.stream().sorted().forEach(operators::add);
+			root.add("telegram_chat_ids", operators);
+			try (Writer writer = Files.newBufferedWriter(TELEGRAM_OPERATORS_CONFIG_FILE, StandardCharsets.UTF_8)) {
+				GSON.toJson(root, writer);
+			}
+		} catch (IOException exception) {
+			Lg2.LOGGER.warn("Failed to save Telegram support operators config", exception);
 		}
 	}
 
@@ -2224,12 +2795,16 @@ public final class MonitorSupportRuntime {
 		SupportRuntimeState state = new SupportRuntimeState();
 		state.greetingAdded = readBoolean(object, "greeting_added", false);
 		state.scrollOffset = readInt(object, "scroll_offset", 0);
+		state.unreadReplyCount = Math.max(0, readInt(object, "unread_reply_count", 0));
 		state.statusText = readString(object, "status_text");
 		JsonArray pending = object.getAsJsonArray("pending_attachments");
 		if (pending != null) {
 			for (JsonElement element : pending) {
 				if (element instanceof JsonObject attachmentObject) {
-					state.pendingAttachments.add(readAttachment(attachmentObject));
+					SupportAttachment attachment = readAttachment(attachmentObject);
+					if (attachment != null) {
+						state.pendingAttachments.add(attachment);
+					}
 				}
 			}
 		}
@@ -2251,6 +2826,7 @@ public final class MonitorSupportRuntime {
 		synchronized (state) {
 			object.addProperty("greeting_added", state.greetingAdded);
 			object.addProperty("scroll_offset", state.scrollOffset);
+			object.addProperty("unread_reply_count", state.unreadReplyCount);
 			object.addProperty("status_text", state.statusText == null ? "" : state.statusText);
 			JsonArray pending = new JsonArray();
 			for (SupportAttachment attachment : state.pendingAttachments) {
@@ -2294,7 +2870,10 @@ public final class MonitorSupportRuntime {
 		if (attachmentArray != null) {
 			for (JsonElement element : attachmentArray) {
 				if (element instanceof JsonObject attachmentObject) {
-					attachments.add(readAttachment(attachmentObject));
+					SupportAttachment attachment = readAttachment(attachmentObject);
+					if (attachment != null) {
+						attachments.add(attachment);
+					}
 				}
 			}
 		}
@@ -2330,6 +2909,12 @@ public final class MonitorSupportRuntime {
 	private static SupportAttachment readAttachment(JsonObject object) {
 		String url = readString(object, "url");
 		String localMediaKey = readString(object, "local_media");
+		// Older builds accidentally persisted undecoded TGS sources. They are not
+		// displayable media and must not resurrect in either support or Gallery.
+		if (localMediaKey.toLowerCase(Locale.ROOT).endsWith(".tgs")) {
+			MonitorMediaApp.deleteSavedGalleryMedia(localMediaKey);
+			return null;
+		}
 		GalleryItemKind kind = GalleryItemKind.fromPersisted(readString(object, "kind"), url);
 		return new SupportAttachment(
 				readString(object, "id"),
@@ -2659,6 +3244,9 @@ public final class MonitorSupportRuntime {
 		private int scrollOffset;
 		private int attachmentPickerScroll;
 		private boolean attachmentPickerOpen;
+		private int unreadReplyCount;
+		private long notificationSoundStartedAtMillis;
+		private long notificationSoundToken;
 		private String statusText = "";
 	}
 
@@ -2711,6 +3299,18 @@ public final class MonitorSupportRuntime {
 	}
 
 	private record TelegramReply(long ticketId, String message) {
+	}
+
+	private record TelegramIncomingAttachment(
+			String fileId,
+			String uniqueId,
+			String title,
+			String subtitle,
+			GalleryItemKind kind,
+			String fileName,
+			boolean sticker,
+			boolean animatedSticker
+	) {
 	}
 
 	private record ObservedSupportUiTarget(ScreenComponent component, UiLayout layout, UiPoint touchPoint) {

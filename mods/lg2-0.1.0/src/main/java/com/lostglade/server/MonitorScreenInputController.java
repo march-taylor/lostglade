@@ -607,6 +607,7 @@ final class MonitorScreenInputController {
 				rerenderCurrent = true;
 			} else if (mediaCloseRect(layout).contains(touchPoint.x(), touchPoint.y())) {
 				if (isLibraryAppMode(mediaState.mode) && !galleryBrowser) {
+					boolean returnToSupport = false;
 					synchronized (mediaState) {
 						if (mediaState.relaySessionId != null && !mediaState.relaySessionId.isBlank()) {
 							releasedRelaySessionId = mediaState.relaySessionId;
@@ -620,11 +621,22 @@ final class MonitorScreenInputController {
 							clearGalleryBulkSelectionLocked(mediaState);
 						}
 						mediaState.gallerySurfaceMode = GallerySurfaceMode.BROWSER;
+						returnToSupport = mediaState.supportAttachmentReturnToSupport;
+						mediaState.supportAttachmentReturnToSupport = false;
+						if (returnToSupport) {
+							mediaState.galleryItems.removeIf(MonitorScreenSystem::isTransientSupportAttachmentItem);
+							mediaState.galleryIndex = clampInt(mediaState.galleryIndex, 0, Math.max(0, mediaState.galleryItems.size() - 1));
+						}
 						mediaState.overlayMode = MediaOverlayMode.CONTROLS;
 						mediaState.statusText = "";
 						mediaState.version++;
 					}
-					rerenderCurrent = true;
+					if (returnToSupport) {
+						nextMode = ScreenViewMode.SUPPORT;
+						rerenderCurrent = false;
+					} else {
+						rerenderCurrent = true;
+					}
 				} else {
 					boolean returnToGallery = false;
 					synchronized (mediaState) {
@@ -967,6 +979,9 @@ final class MonitorScreenInputController {
 
 		if ((nextMode != null && nextMode != component.viewMode())
 				|| (nextLauncherPage != null && nextLauncherPage != component.launcherPage())) {
+			if (nextMode == ScreenViewMode.GALLERY && component.viewMode() != ScreenViewMode.GALLERY) {
+				discardTransientSupportAttachmentPreview(component.runtimeKey());
+			}
 			if (isPlayerMode(component.viewMode()) && nextMode != component.viewMode()) {
 				MediaRuntimeState currentState = MEDIA_STATES.get(component.runtimeKey());
 				boolean preserveRuntimeTransition = false;
@@ -1157,5 +1172,24 @@ final class MonitorScreenInputController {
 				);
 			}
 		return InteractionResult.SUCCESS;
+	}
+
+	private static void discardTransientSupportAttachmentPreview(ScreenRuntimeKey key) {
+		MediaRuntimeState state = key == null ? null : MEDIA_STATES.get(key);
+		if (state == null) {
+			return;
+		}
+		synchronized (state) {
+			boolean removed = state.galleryItems.removeIf(MonitorScreenSystem::isTransientSupportAttachmentItem);
+			if (!removed) {
+				return;
+			}
+			state.supportAttachmentReturnToSupport = false;
+			state.galleryIndex = clampInt(state.galleryIndex, 0, Math.max(0, state.galleryItems.size() - 1));
+			if (state.sourceUrl != null && state.sourceUrl.startsWith("support-preview:")) {
+				clearGallerySelectionLocked(state);
+			}
+			state.version++;
+		}
 	}
 }

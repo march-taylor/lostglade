@@ -699,6 +699,7 @@ public final class MonitorScreenSystem {
 			return null;
 		}
 		MonitorMaxRuntime.closeRuntime(server, runtimeKey, contentDestroyed);
+		MonitorSupportRuntime.closeRuntime(server, runtimeKey, contentDestroyed);
 		state.connectedCameraPositions().remove(runtimeKey);
 		for (ItemFrame frame : removed.frameCoords().keySet()) {
 			ScreenKey frameKey = new ScreenKey(frame.blockPosition(), frame.getDirection());
@@ -1107,6 +1108,7 @@ public final class MonitorScreenSystem {
 			}
 		}
 		sources.addAll(MonitorMaxRuntime.findSpeakerAudioSources(level.getServer(), connectedComponents.values()));
+		sources.addAll(MonitorSupportRuntime.findSpeakerAudioSources(level.getServer(), connectedComponents.values()));
 		return sources;
 	}
 
@@ -3418,7 +3420,9 @@ public final class MonitorScreenSystem {
 						continue;
 					}
 					MonitorApp app = apps.get(index);
-					int badgeCount = app != null && "max".equals(app.id()) && maxSnapshot != null ? maxSnapshot.notificationCount() : 0;
+					int badgeCount = app != null && "max".equals(app.id()) && maxSnapshot != null
+							? maxSnapshot.notificationCount()
+							: app != null && "support".equals(app.id()) ? MonitorSupportRuntime.notificationCount(runtimeKey) : 0;
 					UiRect baseRect = homeAppCardRect(layout, 0, visibleRow * columns + column);
 					drawHomeAppCard(graphics, layout, offsetRect(baseRect, 0, rowOffset), app, badgeCount);
 				}
@@ -10883,7 +10887,13 @@ public final class MonitorScreenSystem {
 
 	static boolean currentGalleryItemSavedLocked(MediaRuntimeState state) {
 		GalleryItem item = currentGalleryItemLocked(state);
-		return item != null && effectiveGalleryItemKind(item) != GalleryItemKind.LIVE_CAMERA;
+		return item != null
+				&& !isTransientSupportAttachmentItem(item)
+				&& effectiveGalleryItemKind(item) != GalleryItemKind.LIVE_CAMERA;
+	}
+
+	static boolean isTransientSupportAttachmentItem(GalleryItem item) {
+		return item != null && item.url() != null && item.url().startsWith("support-preview:");
 	}
 
 	static boolean currentGalleryItemCanDecorateBackgroundLocked(MediaRuntimeState state) {

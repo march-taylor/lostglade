@@ -842,6 +842,7 @@ final class MediaRuntimeState {
 	ScreenViewMode playerBackgroundGalleryPickerReturnMode;
 	GallerySurfaceMode playerBackgroundGalleryPickerReturnSurfaceMode;
 	boolean preserveRuntimeOnNextViewModeTransition;
+	boolean supportAttachmentReturnToSupport;
 	boolean downloadInProgress;
 	String downloadTargetUrl;
 	UUID downloadRequesterUuid;
