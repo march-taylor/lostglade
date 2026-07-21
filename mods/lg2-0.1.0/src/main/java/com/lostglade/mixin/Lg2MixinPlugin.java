@@ -12,6 +12,7 @@ public final class Lg2MixinPlugin implements IMixinConfigPlugin {
 	private static final String WEBCAM_MIXIN = "com.lostglade.mixin.WebcamServerCartelDisguiseMixin";
 	private static final String WEBCAM_NEARBY_PLAYERS_MIXIN = "com.lostglade.mixin.WebcamNearbyPlayersRendererBotMixin";
 	private static final String CLIENT_WEBCAM_RENDER_LAYER_MIXIN = "com.lostglade.mixin.client.WebcamRenderLayerOffscreenMixin";
+	private static final String VOICECHAT_PLAYER_STATE_MIXIN = "com.lostglade.mixin.VoicechatPlayerStateRendererBotMixin";
 
 	@Override
 	public void onLoad(String mixinPackage) {
@@ -28,6 +29,9 @@ public final class Lg2MixinPlugin implements IMixinConfigPlugin {
 				|| WEBCAM_NEARBY_PLAYERS_MIXIN.equals(mixinClassName)
 				|| CLIENT_WEBCAM_RENDER_LAYER_MIXIN.equals(mixinClassName)) {
 			return FabricLoader.getInstance().isModLoaded("webcam");
+		}
+		if (VOICECHAT_PLAYER_STATE_MIXIN.equals(mixinClassName)) {
+			return FabricLoader.getInstance().isModLoaded("voicechat");
 		}
 		return true;
 	}

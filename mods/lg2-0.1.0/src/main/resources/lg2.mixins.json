@@ -133,6 +133,7 @@
 		"TargetingConditionsAbsoluteInvisibilityMixin",
 		"WebcamNearbyPlayersRendererBotMixin",
 		"WebcamServerCartelDisguiseMixin",
+		"VoicechatPlayerStateRendererBotMixin",
 		"WoodlandMansionIllusionerSpawnMixin",
 		"ZombieNaturalSpawnMarkerMixin"
 	],
