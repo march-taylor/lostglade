@@ -22,6 +22,9 @@ final class ServerTabPlaceholders {
 	private static final int INFO_LINE_CENTER_SHIFT = 44;
 	private static final int PING_ICON_ADVANCE = 9;
 	private static final int TPS_ICON_ADVANCE = 9;
+	private static final int TAB_LOGO_GLYPHS_BASE = 0xF100;
+	private static final int TAB_LOGO_FRAME_COUNT = 48;
+	private static final int TAB_LOGO_FRAME_TICKS = 2;
 	private static final String INFO_LINE_SHIFT = buildAdvanceString(INFO_LINE_CENTER_SHIFT);
 	private static final String VALUE_COLOR = "#b8e7c1";
 	private static final String PING_LABEL = "Пинг: ";
@@ -34,7 +37,7 @@ final class ServerTabPlaceholders {
 	static void register() {
 		ServerLifecycleEvents.SERVER_STARTED.register(ServerTabPlaceholders::refreshAllHeaders);
 		ServerTickEvents.END_SERVER_TICK.register(server -> {
-			if ((server.getTickCount() % 20) == 0) {
+			if ((server.getTickCount() % TAB_LOGO_FRAME_TICKS) == 0) {
 				refreshAllHeaders(server);
 			}
 		});
@@ -70,10 +73,16 @@ final class ServerTabPlaceholders {
 		String pingValue = Math.max(0, player.connection.latency()) + " мс";
 		String tpsValue = formatTps(server);
 		return "\n"
-				+ "§f\uED80\uE946\uED85\n"
+				+ "§f" + tabLogoGlyph(server) + "\n"
 				+ "§7" + dateTime + "\n\n"
 				+ buildInfoLine('\uED81', PING_LABEL, pingValue, PING_ICON_ADVANCE) + "\n"
 				+ buildInfoLine('\uED82', TPS_LABEL, tpsValue, TPS_ICON_ADVANCE);
+	}
+
+	private static String tabLogoGlyph(MinecraftServer server) {
+		long tick = server == null ? 0L : server.getTickCount();
+		int frame = (int) Math.floorMod(tick / TAB_LOGO_FRAME_TICKS, TAB_LOGO_FRAME_COUNT);
+		return String.valueOf((char) (TAB_LOGO_GLYPHS_BASE + frame));
 	}
 
 	private static String buildInfoLine(char icon, String label, String value, int iconAdvance) {
