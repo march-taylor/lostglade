@@ -7274,7 +7274,7 @@ public final class DroneSystem {
 			display.setYRot(yRot);
 			display.setXRot(visualPitch);
 			applyDynamicDroneDisplayLayer(display, paintColor, cameraPitch, propellersActive, kamikazePower, autoAimAnimation);
-			display.setTransformation(buildDroneDisplayTransformation(root, forwardDrive, strafeDrive));
+			display.setTransformation(buildDroneDisplayTransformation(root, forwardDrive, strafeDrive, propellersShouldSpin));
 			display.setPos(root.getX(), root.getY() + displayYOffset, root.getZ());
 			collapseDroneDisplayHitbox(display);
 		}
@@ -7284,12 +7284,20 @@ public final class DroneSystem {
 		ItemDisplayHitboxHelper.clear(display);
 	}
 
-	private static Transformation buildDroneDisplayTransformation(Entity root, double forwardDrive, double strafeDrive) {
+	private static Transformation buildDroneDisplayTransformation(
+			Entity root,
+			double forwardDrive,
+			double strafeDrive,
+			boolean activeFlight
+	) {
 		double forwardNorm = forwardDrive / DroneFlightPhysics.MAX_FORWARD_DRIVE;
 		double strafeNorm = strafeDrive / DroneFlightPhysics.MAX_STRAFE_DRIVE;
 		forwardNorm = net.minecraft.util.Mth.clamp(forwardNorm, -1.0D, 1.0D);
 		strafeNorm = net.minecraft.util.Mth.clamp(strafeNorm, -1.0D, 1.0D);
-		if (root != null && root.onGround()) {
+		// A controlled drone is moved through its virtual flight path, where the
+		// root entity can retain a stale on-ground flag.  Do not flatten its model
+		// while the propellers are actively carrying it through a strafe.
+		if (root != null && root.onGround() && !activeFlight) {
 			forwardNorm = 0.0D;
 			strafeNorm = 0.0D;
 		}
