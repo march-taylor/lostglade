@@ -2737,7 +2737,7 @@
         },
         "redstone": {
           "enabled": true,
-          "slot": 36,
+          "slot": 38,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -2813,7 +2813,7 @@
         },
         "brewing": {
           "enabled": true,
-          "slot": 38,
+          "slot": 36,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",

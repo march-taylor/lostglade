@@ -101,6 +101,8 @@ public final class ServerUpgradeUiSystem {
 	private static final int TOOLTIP_REQUIREMENTS_WRAP_CJK = 24;
 	private static final int ERAS_PROGRESS_GLYPHS_BASE = 0xE991;
 	private static final int ERAS_AVAILABLE_GLYPHS_BASE = 0xE9C0;
+	private static final int IT_PROGRESS_GLYPHS_BASE = 0xF020;
+	private static final int IT_AVAILABLE_GLYPHS_BASE = 0xF000;
 	private static final int MAIN_SCREEN_LOGO_GLYPHS_BASE = 0xE9D0;
 	private static final int MAIN_SCREEN_DVD_GLYPHS_BASE = 0xEA20;
 	private static final int MAIN_SCREEN_ARCHIVE_GLYPHS_BASE = 0xEB00;
@@ -109,6 +111,10 @@ public final class ServerUpgradeUiSystem {
 	private static final int ERAS_PURCHASE_STAGE_COUNT = 5;
 	private static final int ERAS_PROGRESS_FRAMES_PER_STAGE = ERAS_PROGRESS_FRAME_COUNT / ERAS_PURCHASE_STAGE_COUNT;
 	private static final int ERAS_PROGRESS_FRAME_TICKS = 2;
+	private static final int IT_PROGRESS_FRAME_COUNT = 112;
+	private static final int IT_PROGRESS_STATE_COUNT = 8;
+	private static final int IT_PROGRESS_FRAMES_PER_TRANSITION = 14;
+	private static final int IT_PROGRESS_FRAME_TICKS = 2;
 	private static final int MAIN_SCREEN_LOGO_FRAME_COUNT = 16;
 	private static final int MAIN_SCREEN_DVD_FRAME_COUNT = 130;
 	private static final int MAIN_SCREEN_ARCHIVE_FRAME_COUNT = 24;
@@ -120,6 +126,7 @@ public final class ServerUpgradeUiSystem {
 	private static final int BITCOIN_CONTAINER_SCAN_MAX_DEPTH = 8;
 	private static final int MAIN_SCREEN_OVERLAY_GLYPH_ADVANCE = 119;
 	private static final int ERAS_OVERLAY_GLYPH_ADVANCE = 150;
+	private static final int IT_OVERLAY_GLYPH_ADVANCE = 135;
 	private static final int MENU_LOCK_CURSOR_FLASH_TICKS = 4;
 	private static final double MAIN_SCREEN_ARCHIVE_VARIANT_CHANCE = 0.0001D;
 	private static final int MAIN_SCREEN_VARIANT_GLITCH = 0;
@@ -138,6 +145,11 @@ public final class ServerUpgradeUiSystem {
 	private static final String RACE_ABILITY_BUTTON_ID = "ability";
 	private static final String RACE_SHNYAGA_BUTTON_ID = "shnyaga";
 	private static final String IT_DRONE_SCOUT_UPGRADE_ID = "it_drone_scout";
+	private static final String IT_CAMERA_UPGRADE_ID = "it_camera";
+	private static final String IT_MICROPHONE_UPGRADE_ID = "it_microphone";
+	private static final String IT_SPEAKER_UPGRADE_ID = "it_speaker";
+	private static final String IT_SCREEN_UPGRADE_ID = "it_screen";
+	private static final String IT_BLUETOOTH_ADAPTER_UPGRADE_ID = "it_bluetooth_adapter";
 	private static final int RACE_ATTACK_SLOT = 37;
 	private static final int RACE_DEFENSE_SLOT = 39;
 	private static final int RACE_ABILITY_SLOT = 41;
@@ -153,6 +165,14 @@ public final class ServerUpgradeUiSystem {
 	private static final String[] ERAS_AVAILABLE_GLYPHS = createGlyphSequence(
 			ERAS_AVAILABLE_GLYPHS_BASE,
 			ERAS_PURCHASE_STAGE_COUNT + 1
+	);
+	private static final String[] IT_PROGRESS_GLYPHS = createGlyphSequence(
+			IT_PROGRESS_GLYPHS_BASE,
+			IT_PROGRESS_FRAME_COUNT
+	);
+	private static final String[] IT_AVAILABLE_GLYPHS = createGlyphSequence(
+			IT_AVAILABLE_GLYPHS_BASE,
+			IT_PROGRESS_STATE_COUNT
 	);
 	private static final String[] MAIN_SCREEN_LOGO_GLYPHS = createGlyphSequence(
 			MAIN_SCREEN_LOGO_GLYPHS_BASE,
@@ -176,7 +196,9 @@ public final class ServerUpgradeUiSystem {
 	private static final Map<String, Map<String, Integer>> PLAYER_UPGRADE_LEVELS = new HashMap<>();
 	private static final Map<String, Integer> LEGACY_GLOBAL_UPGRADE_LEVELS = new HashMap<>();
 	private static final Map<UUID, EraProgressAnimation> ERAS_PROGRESS_ANIMATIONS = new HashMap<>();
+	private static final Map<UUID, ItProgressAnimation> IT_PROGRESS_ANIMATIONS = new HashMap<>();
 	private static final Map<UUID, String> ERAS_TITLE_SIGNATURES = new HashMap<>();
+	private static final Map<UUID, String> IT_TITLE_SIGNATURES = new HashMap<>();
 	private static final Map<UUID, String> MAIN_TITLE_SIGNATURES = new HashMap<>();
 	private static final Map<UUID, Integer> MAIN_SCREEN_LOGO_VARIANTS = new HashMap<>();
 	private static final Map<UUID, Integer> PENDING_MENU_VISUAL_RESYNCS = new HashMap<>();
@@ -290,14 +312,25 @@ public final class ServerUpgradeUiSystem {
 		PENDING_MENU_VISUAL_RESYNCS.put(player.getUUID(), MENU_VISUAL_RESYNC_TICKS);
 		if ("eras".equals(screenId)) {
 			ERAS_TITLE_SIGNATURES.put(player.getUUID(), erasTitleSignature(player, currentGameTime(player)));
+			IT_TITLE_SIGNATURES.remove(player.getUUID());
+			IT_PROGRESS_ANIMATIONS.remove(player.getUUID());
+			MAIN_TITLE_SIGNATURES.remove(player.getUUID());
+		} else if ("it_hub".equals(screenId)) {
+			IT_TITLE_SIGNATURES.put(player.getUUID(), itTitleSignature(player, currentGameTime(player)));
+			ERAS_TITLE_SIGNATURES.remove(player.getUUID());
+			ERAS_PROGRESS_ANIMATIONS.remove(player.getUUID());
 			MAIN_TITLE_SIGNATURES.remove(player.getUUID());
 		} else if ("main".equals(screenId)) {
 			MAIN_TITLE_SIGNATURES.put(player.getUUID(), mainTitleSignature(player, currentGameTime(player)));
 			ERAS_TITLE_SIGNATURES.remove(player.getUUID());
 			ERAS_PROGRESS_ANIMATIONS.remove(player.getUUID());
+			IT_TITLE_SIGNATURES.remove(player.getUUID());
+			IT_PROGRESS_ANIMATIONS.remove(player.getUUID());
 		} else {
 			ERAS_TITLE_SIGNATURES.remove(player.getUUID());
 			ERAS_PROGRESS_ANIMATIONS.remove(player.getUUID());
+			IT_TITLE_SIGNATURES.remove(player.getUUID());
+			IT_PROGRESS_ANIMATIONS.remove(player.getUUID());
 			MAIN_TITLE_SIGNATURES.remove(player.getUUID());
 		}
 		SeasonStartSystem.onServerUpgradeScreenOpened(player, screenId);
@@ -1366,6 +1399,7 @@ public final class ServerUpgradeUiSystem {
 		setUpgradeLevel(player.level().getServer(), player, button.upgradeId, currentLevel + 1);
 		SeasonStartSystem.onServerUpgradePurchased(player, button.upgradeId);
 		startEraProgressAnimation(player, button.upgradeId);
+		startItProgressAnimation(player, button.upgradeId);
 		playPurchaseSound(player);
 		sendPlayerMessage(player, localizeSystem(player, "Upgrade purchased.", "Улучшение куплено."));
 
@@ -1802,6 +1836,9 @@ public final class ServerUpgradeUiSystem {
 		if ("eras".equals(screenId)) {
 			title.append(packStyledLiteral(buildOverlayGlyph(erasBarGlyph(player, currentGameTime(player)), ERAS_OVERLAY_GLYPH_ADVANCE)));
 		}
+		if ("it_hub".equals(screenId)) {
+			title.append(packStyledLiteral(buildOverlayGlyph(itBarGlyph(player, currentGameTime(player)), IT_OVERLAY_GLYPH_ADVANCE)));
+		}
 		if (usesMainStyleBalance(screenId)) {
 			title.append(packStyledLiteral(TITLE_OVERLAY_RESET));
 			title.append(packStyledLiteral(buildHorizontalAdvance(balanceStartX(screenId, countBitcoins(player)))));
@@ -1934,6 +1971,53 @@ public final class ServerUpgradeUiSystem {
 		return ERAS_AVAILABLE_GLYPHS[Math.max(0, Math.min(ERAS_AVAILABLE_GLYPHS.length - 1, stage))];
 	}
 
+	private static String itBarGlyph(ServerPlayer player, long gameTime) {
+		if (player != null) {
+			ItProgressAnimation animation = IT_PROGRESS_ANIMATIONS.get(player.getUUID());
+			if (animation != null) {
+				if (gameTime > animation.endTick()) {
+					IT_PROGRESS_ANIMATIONS.remove(player.getUUID());
+				} else {
+					int step = (int) Math.min(
+							animation.totalSteps(),
+							Math.max(0L, (gameTime - animation.startTick()) / IT_PROGRESS_FRAME_TICKS)
+					);
+					int frameIndex = animation.startFrameIndex() + step;
+					return IT_PROGRESS_GLYPHS[Math.max(0, Math.min(IT_PROGRESS_GLYPHS.length - 1, frameIndex))];
+				}
+			}
+		}
+		int state = itProgressState(player);
+		return IT_AVAILABLE_GLYPHS[Math.max(0, Math.min(IT_AVAILABLE_GLYPHS.length - 1, state))];
+	}
+
+	private static int itProgressState(ServerPlayer player) {
+		if (player == null || !hasUpgrade(player, IT_CAMERA_UPGRADE_ID)) {
+			return 0;
+		}
+		boolean microphone = hasUpgrade(player, IT_MICROPHONE_UPGRADE_ID);
+		boolean speaker = hasUpgrade(player, IT_SPEAKER_UPGRADE_ID);
+		if (!microphone && !speaker) {
+			return 1;
+		}
+		if (microphone && !speaker) {
+			return 2;
+		}
+		if (!microphone) {
+			return 3;
+		}
+		if (!hasUpgrade(player, IT_SCREEN_UPGRADE_ID)) {
+			return 4;
+		}
+		if (!hasUpgrade(player, IT_DRONE_SCOUT_UPGRADE_ID)) {
+			return 5;
+		}
+		if (!hasUpgrade(player, IT_BLUETOOTH_ADAPTER_UPGRADE_ID)) {
+			return 6;
+		}
+		return 7;
+	}
+
 	private static int erasProgressStage(ServerPlayer player) {
 		return erasProgressStageForPurchasedCount(purchasedEraCount(player));
 	}
@@ -2005,6 +2089,10 @@ public final class ServerUpgradeUiSystem {
 		return erasBarGlyph(player, gameTime) + "|" + countBitcoins(player);
 	}
 
+	private static String itTitleSignature(ServerPlayer player, long gameTime) {
+		return itBarGlyph(player, gameTime) + "|" + countBitcoins(player);
+	}
+
 	private static String mainTitleSignature(ServerPlayer player, long gameTime) {
 		return mainScreenVariant(player) + "|" + mainScreenLogoGlyph(player, gameTime) + "|" + countBitcoins(player);
 	}
@@ -2041,6 +2129,33 @@ public final class ServerUpgradeUiSystem {
 		};
 	}
 
+	private static void startItProgressAnimation(ServerPlayer player, String upgradeId) {
+		if (player == null) {
+			return;
+		}
+
+		int transition = switch (safeString(upgradeId)) {
+			case IT_CAMERA_UPGRADE_ID -> 0;
+			case IT_MICROPHONE_UPGRADE_ID -> hasUpgrade(player, IT_SPEAKER_UPGRADE_ID) ? 4 : 1;
+			case IT_SPEAKER_UPGRADE_ID -> hasUpgrade(player, IT_MICROPHONE_UPGRADE_ID) ? 3 : 2;
+			case IT_SCREEN_UPGRADE_ID -> 5;
+			case IT_DRONE_SCOUT_UPGRADE_ID -> 6;
+			case IT_BLUETOOTH_ADAPTER_UPGRADE_ID -> 7;
+			default -> -1;
+		};
+		if (transition < 0) {
+			return;
+		}
+
+		int startFrame = transition * IT_PROGRESS_FRAMES_PER_TRANSITION;
+		int endFrame = Math.min(IT_PROGRESS_FRAME_COUNT - 1, startFrame + IT_PROGRESS_FRAMES_PER_TRANSITION - 1);
+		IT_PROGRESS_ANIMATIONS.put(
+				player.getUUID(),
+				new ItProgressAnimation(startFrame, endFrame, currentGameTime(player))
+		);
+		IT_TITLE_SIGNATURES.remove(player.getUUID());
+	}
+
 	private static void maybeFlashDimensionPurchaseLockCursor(
 			ServerPlayer player,
 			String screenId,
@@ -2073,6 +2188,8 @@ public final class ServerUpgradeUiSystem {
 				PENDING_MENU_VISUAL_RESYNCS.remove(playerId);
 				ERAS_TITLE_SIGNATURES.remove(player.getUUID());
 				ERAS_PROGRESS_ANIMATIONS.remove(player.getUUID());
+				IT_TITLE_SIGNATURES.remove(playerId);
+				IT_PROGRESS_ANIMATIONS.remove(playerId);
 				MAIN_TITLE_SIGNATURES.remove(playerId);
 				MAIN_SCREEN_LOGO_VARIANTS.remove(playerId);
 				continue;
@@ -2091,6 +2208,8 @@ public final class ServerUpgradeUiSystem {
 			if ("main".equals(menu.screenId)) {
 				ERAS_TITLE_SIGNATURES.remove(playerId);
 				ERAS_PROGRESS_ANIMATIONS.remove(playerId);
+				IT_TITLE_SIGNATURES.remove(playerId);
+				IT_PROGRESS_ANIMATIONS.remove(playerId);
 				if (!PolymerResourcePackUtils.hasMainPack(player)) {
 					MAIN_TITLE_SIGNATURES.remove(playerId);
 					continue;
@@ -2116,6 +2235,35 @@ public final class ServerUpgradeUiSystem {
 
 			MAIN_TITLE_SIGNATURES.remove(playerId);
 			MAIN_SCREEN_LOGO_VARIANTS.remove(playerId);
+			if ("it_hub".equals(menu.screenId)) {
+				ERAS_TITLE_SIGNATURES.remove(playerId);
+				ERAS_PROGRESS_ANIMATIONS.remove(playerId);
+				if (!menu.hasPack || !PolymerResourcePackUtils.hasMainPack(player)) {
+					IT_TITLE_SIGNATURES.remove(playerId);
+					IT_PROGRESS_ANIMATIONS.remove(playerId);
+					continue;
+				}
+
+				UpgradeUiConfig.ScreenConfig screen = config.screens.get(menu.screenId);
+				if (screen == null || !screen.enabled) {
+					continue;
+				}
+
+				long gameTime = currentGameTime(player);
+				String signature = itTitleSignature(player, gameTime);
+				if (signature.equals(IT_TITLE_SIGNATURES.get(playerId))) {
+					continue;
+				}
+
+				Component title = buildTitle(player, menu.screenId, true, screen, resolveTheme(config, screen));
+				player.connection.send(new ClientboundOpenScreenPacket(menu.containerId, menu.getType(), title));
+				resyncMenuAfterTitleRefresh(player, menu);
+				IT_TITLE_SIGNATURES.put(playerId, signature);
+				continue;
+			}
+
+			IT_TITLE_SIGNATURES.remove(playerId);
+			IT_PROGRESS_ANIMATIONS.remove(playerId);
 			if (!"eras".equals(menu.screenId)) {
 				ERAS_TITLE_SIGNATURES.remove(playerId);
 				ERAS_PROGRESS_ANIMATIONS.remove(playerId);
@@ -2195,6 +2343,16 @@ public final class ServerUpgradeUiSystem {
 
 		private long endTick() {
 			return this.startTick + ((long) totalSteps() * ERAS_PROGRESS_FRAME_TICKS);
+		}
+	}
+
+	private record ItProgressAnimation(int startFrameIndex, int endFrameIndex, long startTick) {
+		private int totalSteps() {
+			return Math.max(0, this.endFrameIndex - this.startFrameIndex);
+		}
+
+		private long endTick() {
+			return this.startTick + ((long) totalSteps() * IT_PROGRESS_FRAME_TICKS);
 		}
 	}
 

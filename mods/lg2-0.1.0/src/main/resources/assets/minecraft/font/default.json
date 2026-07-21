@@ -558,6 +558,37 @@
     },
     {
       "type": "bitmap",
+      "file": "lg2:font/it_available.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\uf000\uf001\uf002\uf003\uf004\uf005\uf006\uf007"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "lg2:font/it_progress.png",
+      "ascent": 14,
+      "height": 204,
+      "chars": [
+        "\uf020\uf021\uf022\uf023\uf024\uf025\uf026\uf027",
+        "\uf028\uf029\uf02a\uf02b\uf02c\uf02d\uf02e\uf02f",
+        "\uf030\uf031\uf032\uf033\uf034\uf035\uf036\uf037",
+        "\uf038\uf039\uf03a\uf03b\uf03c\uf03d\uf03e\uf03f",
+        "\uf040\uf041\uf042\uf043\uf044\uf045\uf046\uf047",
+        "\uf048\uf049\uf04a\uf04b\uf04c\uf04d\uf04e\uf04f",
+        "\uf050\uf051\uf052\uf053\uf054\uf055\uf056\uf057",
+        "\uf058\uf059\uf05a\uf05b\uf05c\uf05d\uf05e\uf05f",
+        "\uf060\uf061\uf062\uf063\uf064\uf065\uf066\uf067",
+        "\uf068\uf069\uf06a\uf06b\uf06c\uf06d\uf06e\uf06f",
+        "\uf070\uf071\uf072\uf073\uf074\uf075\uf076\uf077",
+        "\uf078\uf079\uf07a\uf07b\uf07c\uf07d\uf07e\uf07f",
+        "\uf080\uf081\uf082\uf083\uf084\uf085\uf086\uf087",
+        "\uf088\uf089\uf08a\uf08b\uf08c\uf08d\uf08e\uf08f"
+      ]
+    },
+    {
+      "type": "bitmap",
       "file": "lg2:font/vanilla_generic_3row.png",
       "ascent": 13,
       "height": 168,
