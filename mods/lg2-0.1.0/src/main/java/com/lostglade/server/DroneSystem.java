@@ -3547,6 +3547,7 @@ public final class DroneSystem {
 		}
 		MinecraftServer server = root.level().getServer();
 		return resolveDroneAutoAimTargetPoint(
+				root,
 				server,
 				state.dimension() != null ? state.dimension() : root.level().dimension(),
 				state.autoAimTarget()
@@ -4868,10 +4869,14 @@ public final class DroneSystem {
 			return false;
 		}
 		MinecraftServer server = player.level() == null ? null : player.level().getServer();
-		Vec3 targetPoint = resolveControlledAutoAimTargetPoint(server, session, target);
+		Vec3 targetPoint = resolveControlledAutoAimTargetPoint(root, server, session, target);
 		if (targetPoint == null) {
 			if (isDroneAutoAimTargetDefinitelyMissing(server, session.droneDimension(), target)) {
 				clearControlledAutoAimTarget(player, session);
+			} else {
+				// Retain the selected target so aiming resumes immediately when it
+				// becomes visible again, without keeping an indicator through walls.
+				clearControlledAutoAimHighlight(player);
 			}
 			return false;
 		}
@@ -5173,14 +5178,15 @@ public final class DroneSystem {
 		return List.of();
 	}
 
-	private static Vec3 resolveControlledAutoAimTargetPoint(MinecraftServer server, DroneControlSession session, DroneAutoAimTarget target) {
+	private static Vec3 resolveControlledAutoAimTargetPoint(Entity root, MinecraftServer server, DroneControlSession session, DroneAutoAimTarget target) {
 		if (session == null) {
 			return null;
 		}
-		return resolveDroneAutoAimTargetPoint(server, session.droneDimension(), target);
+		return resolveDroneAutoAimTargetPoint(root, server, session.droneDimension(), target);
 	}
 
 	private static Vec3 resolveDroneAutoAimTargetPoint(
+			Entity root,
 			MinecraftServer server,
 			net.minecraft.resources.ResourceKey<Level> droneDimension,
 			DroneAutoAimTarget target
@@ -5190,7 +5196,11 @@ public final class DroneSystem {
 		}
 		if (target instanceof DroneAutoAimEntityTarget entityTarget) {
 			Entity entity = findEntity(server, droneDimension, entityTarget.entityUuid());
-			return entity != null && entity.isAlive() && !isDroneInternalEntity(entity) ? entity.getEyePosition() : null;
+			if (entity == null || !entity.isAlive() || isDroneInternalEntity(entity)
+					|| !isDroneAutoAimEntityVisible(root, entity)) {
+				return null;
+			}
+			return entity.getEyePosition();
 		}
 		if (target instanceof DroneAutoAimBlockTarget blockTarget) {
 			ServerLevel level = server.getLevel(droneDimension);
@@ -5201,6 +5211,86 @@ public final class DroneSystem {
 			return resolveAutoAimBlockTargetPoint(level, blockTarget.blockPos(), state);
 		}
 		return null;
+	}
+
+	/**
+	 * A target is visible when the camera can reach at least one meaningful part
+	 * of its body without crossing an opaque block. This lets a target peek
+	 * around a corner but stops the module from steering through a solid wall.
+	 */
+	private static boolean isDroneAutoAimEntityVisible(Entity root, Entity target) {
+		if (root == null
+				|| target == null
+				|| !root.isAlive()
+				|| !target.isAlive()
+				|| !(root.level() instanceof ServerLevel level)
+				|| target.level() != level) {
+			return false;
+		}
+		Vec3 origin = resolveSafeDroneCameraOrigin(root, droneCameraOrigin(root));
+		for (Vec3 targetPoint : droneAutoAimVisibilityPoints(target)) {
+			if (!isDroneAutoAimLineBlockedByOpaqueBlock(level, origin, targetPoint, root)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static List<Vec3> droneAutoAimVisibilityPoints(Entity target) {
+		if (target == null) {
+			return List.of();
+		}
+		AABB bounds = target.getBoundingBox();
+		double centerX = (bounds.minX + bounds.maxX) * 0.5D;
+		double centerZ = (bounds.minZ + bounds.maxZ) * 0.5D;
+		double middleY = bounds.minY + (bounds.maxY - bounds.minY) * 0.55D;
+		double lowerY = bounds.minY + (bounds.maxY - bounds.minY) * 0.25D;
+		double xOffset = Math.min(0.25D, Math.max(0.0D, (bounds.maxX - bounds.minX) * 0.25D));
+		double zOffset = Math.min(0.25D, Math.max(0.0D, (bounds.maxZ - bounds.minZ) * 0.25D));
+		return List.of(
+				target.getEyePosition(),
+				new Vec3(centerX, middleY, centerZ),
+				new Vec3(centerX, lowerY, centerZ),
+				new Vec3(centerX - xOffset, middleY, centerZ - zOffset),
+				new Vec3(centerX + xOffset, middleY, centerZ + zOffset)
+		);
+	}
+
+	private static boolean isDroneAutoAimLineBlockedByOpaqueBlock(ServerLevel level, Vec3 origin, Vec3 end, Entity clipContextEntity) {
+		if (level == null || origin == null || end == null) {
+			return true;
+		}
+		Vec3 travel = end.subtract(origin);
+		double totalDistanceSqr = travel.lengthSqr();
+		if (totalDistanceSqr <= 1.0E-9D) {
+			return false;
+		}
+		Vec3 currentStart = origin;
+		Vec3 step = travel.normalize().scale(0.002D);
+		int maxSkips = Math.max(1, net.minecraft.util.Mth.ceil(Math.sqrt(totalDistanceSqr)) + 4);
+		for (int i = 0; i < maxSkips; i++) {
+			BlockHitResult hit = level.clip(new ClipContext(currentStart, end, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, clipContextEntity));
+			if (hit.getType() == HitResult.Type.MISS) {
+				return false;
+			}
+			BlockPos pos = hit.getBlockPos();
+			if (level.hasChunkAt(pos) && isDroneAutoAimOpaqueOccluder(level, pos, level.getBlockState(pos))) {
+				return true;
+			}
+			currentStart = hit.getLocation().add(step);
+			if (currentStart.distanceToSqr(origin) >= totalDistanceSqr) {
+				return false;
+			}
+		}
+		return false;
+	}
+
+	private static boolean isDroneAutoAimOpaqueOccluder(ServerLevel level, BlockPos pos, BlockState state) {
+		return level != null
+				&& pos != null
+				&& state != null
+				&& state.isSolidRender()
+				&& state.getLightBlock() >= 15;
 	}
 
 	private static boolean isDroneAutoAimTargetDefinitelyMissing(
