@@ -1,4 +1,4 @@
-﻿{
+{
     "format_version":  "1.21.11",
     "credit":  "Blocking shield model for Blockbench editing, based on vanilla_shield_blockbench_model.json UV/texture setup",
     "texture_size":  [
@@ -229,12 +229,12 @@
                                },
                     "gui":  {
                                 "rotation":  [
-                                                 -15,
-                                                 -155,
+                                                 15,
+                                                 155,
                                                  5
                                              ],
                                 "translation":  [
-                                                    -2,
+                                                    -1,
                                                     0,
                                                     0
                                                 ],
@@ -263,5 +263,6 @@
                                                    1.5
                                                ]
                                  }
-                }
+                },
+    "gui_light":  "front"
 }

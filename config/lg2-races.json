@@ -262,7 +262,7 @@
         "description": "Вы предлагаете игроку стать вашим парнем. Согласившийся передает вам 3 сердца максимального здоровья. Рядом с вами он получает силу, скорость, регенерацию и спешку. Если он убьёт вас — сердца возвращаются. При отказе вы получаете урон, голод и замедление.",
         "priceBitcoins": 1500,
         "cooldownSeconds": 3600.0,
-        "womanShnyagaTransferHearts": 2.0,
+        "womanShnyagaTransferHearts": 3.0,
         "womanShnyagaBuffRangeBlocks": 16.0,
         "womanShnyagaRejectDamageHearts": 5.0,
         "womanShnyagaRejectDebuffSeconds": 900.0
@@ -346,7 +346,7 @@
       "enabled": true,
       "id": "mark_potroshitel",
       "displayName": "Марк Потрошитель",
-      "ownerNickname": "",
+      "ownerNickname": "Rajas_YT",
       "description": "У всех нас есть сила в руках для того, чтобы убить, но большинство боится ее использовать.",
       "attack": {
         "enabled": true,
@@ -375,7 +375,7 @@
         "enabled": true,
         "abilityId": "mark_potroshitel_unique",
         "name": "Шкала гнева",
-        "description": "Заполняйте шкалу убийствами. При полной шкале вы входите в состояние ярости: получаете силу, скорость и сопротивление, а ваши удары вызывают сильное кровотечение.",
+        "description": "Включить и выключить шкалу можно с помощью /ragebar. Заполняйте шкалу убийствами. При активации вы входите в состояние ярости: получаете силу, скорость и сопротивление, а ваши удары вызывают сильное кровотечение.",
         "priceBitcoins": 1000,
         "markRageMaxPoints": 100.0,
         "markRagePassiveKillPoints": 1.0,
@@ -531,7 +531,7 @@
       "enabled": true,
       "id": "kilka",
       "displayName": "Килька",
-      "ownerNickname": "Rajas_YT",
+      "ownerNickname": "",
       "description": "",
       "attack": {
         "enabled": true,
@@ -567,7 +567,7 @@
         "description": "",
         "priceBitcoins": 1000,
         "cooldownSeconds": 5.0,
-        "kilkaSalmonSprintSwimMultiplier": 1.2
+        "kilkaSalmonSprintSwimMultiplier": 2.0
       },
       "shnyaga": {
         "enabled": true,
@@ -576,7 +576,7 @@
         "description": "",
         "priceBitcoins": 1500,
         "kilkaSeaBeaconLinkRangeBlocks": 100.0,
-        "kilkaSeaBorderVisibilityBlocks": 2.0
+        "kilkaSeaBorderVisibilityBlocks": 1.8
       },
       "stock": {
         "enabled": true,
