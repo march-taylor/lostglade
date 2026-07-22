@@ -71,7 +71,9 @@ public final class MonitorYandexMapsRuntime {
 	private static final Identifier DEFAULT_MARKER_ICON_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "map/decorations/red_banner");
 	private static final BufferedImage EMPTY_MARKER_ICON = new BufferedImage(MAP_MARKER_ICON_SIZE, MAP_MARKER_ICON_SIZE, BufferedImage.TYPE_INT_ARGB);
 	private static volatile BufferedImage defaultMarkerIcon;
-	private static volatile boolean gpsEnabled = true;
+	// GPS is intentionally gated by the rocket event. The event state is
+	// persisted by RocketLaunchEventSystem and restores this flag on boot.
+	private static volatile boolean gpsEnabled = false;
 
 	private MonitorYandexMapsRuntime() {
 	}
@@ -81,8 +83,6 @@ public final class MonitorYandexMapsRuntime {
 				Commands.literal("yandexmaps")
 						.requires(source -> source.permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER))
 						.then(Commands.literal("gps")
-								.then(Commands.literal("on").executes(context -> setGpsEnabled(context.getSource(), true)))
-								.then(Commands.literal("off").executes(context -> setGpsEnabled(context.getSource(), false)))
 								.then(Commands.literal("status").executes(context -> sendGpsStatus(context.getSource())))
 						)
 		));
@@ -92,8 +92,11 @@ public final class MonitorYandexMapsRuntime {
 		return gpsEnabled;
 	}
 
-	private static int setGpsEnabled(CommandSourceStack source, boolean enabled) {
+	static void setGpsEnabled(MinecraftServer server, boolean enabled) {
 		gpsEnabled = enabled;
+		if (server == null) {
+			return;
+		}
 		for (Map.Entry<ScreenRuntimeKey, YandexMapState> entry : STATES.entrySet()) {
 			YandexMapState state = entry.getValue();
 			if (state != null) {
@@ -101,10 +104,8 @@ public final class MonitorYandexMapsRuntime {
 					state.version++;
 				}
 			}
-			requestRuntimeRender(source.getServer(), entry.getKey());
+			requestRuntimeRender(server, entry.getKey());
 		}
-		source.sendSuccess(() -> Component.literal("GPS Яндекс-карт " + (enabled ? "включён" : "выключен")), true);
-		return Command.SINGLE_SUCCESS;
 	}
 
 	private static int sendGpsStatus(CommandSourceStack source) {

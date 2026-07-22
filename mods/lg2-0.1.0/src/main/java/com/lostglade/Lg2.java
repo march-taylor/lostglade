@@ -34,6 +34,7 @@ import com.lostglade.server.DroneSystem;
 import com.lostglade.server.MonitorSupportRuntime;
 import com.lostglade.server.MonitorYandexMapsRuntime;
 import com.lostglade.server.MonitorScreenSystem;
+import com.lostglade.server.RocketLaunchEventSystem;
 import com.lostglade.server.MicrophoneSystem;
 import com.lostglade.server.PlacedDeviceNameStore;
 import com.lostglade.server.PhotoFramePlacementSystem;
@@ -107,6 +108,7 @@ public class Lg2 implements ModInitializer {
 		BluetoothLinkSystem.register();
 		MonitorScreenSystem.register();
 		MonitorYandexMapsRuntime.register();
+		RocketLaunchEventSystem.register();
 		MonitorSupportRuntime.register();
 		PhotoFramePlacementSystem.register();
 		ServerStabilitySystem.register();

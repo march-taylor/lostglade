@@ -1,4 +1,14 @@
 {
+    "rocket_launch":  {
+                           "sounds":  [
+                                          {
+                                              "name":  "lg2:rocket_launch",
+                                              "preload":  true,
+                                              "stream":  true,
+                                              "attenuation_distance":  50
+                                          }
+                                      ]
+                       },
     "camera_shutter":  {
                            "sounds":  [
                                           {
