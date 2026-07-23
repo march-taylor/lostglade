@@ -84,6 +84,7 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ChunkTrackingView;
 import net.minecraft.server.level.ServerEntity;
+import net.minecraft.server.level.ServerBossEvent;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.level.TicketType;
@@ -95,6 +96,7 @@ import net.minecraft.tags.TagKey;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
+import net.minecraft.world.BossEvent;
 import net.minecraft.world.Container;
 import net.minecraft.world.SimpleContainer;
 import net.minecraft.world.SimpleMenuProvider;
@@ -347,7 +349,19 @@ public final class DroneSystem {
 	private static final int DRONE_HUD_GRID_SIZE = 11;
 	private static final int DRONE_HUD_GLYPH_BASE = 0xE700;
 	private static final int DRONE_HUD_SPEED_BAR_GLYPH_BASE = 0xE780;
+	private static final int DRONE_HUD_HEADING_GLYPH_BASE = 0xE7A0;
+	private static final int DRONE_HUD_HEADING_FRAME_COUNT = 10;
+	private static final int DRONE_HUD_HEADING_DIGIT_GLYPH_BASE = 0xE8D0;
+	private static final int DRONE_HUD_ATTITUDE_GLYPH_BASE = 0xE7F0;
+	private static final int DRONE_HUD_ATTITUDE_FRAME_COUNT = 5;
+	private static final int DRONE_HUD_ATTITUDE_LABEL_GLYPH_BASE = 0xEAB0;
+	private static final int DRONE_HUD_ATTITUDE_LABEL_FRAME_COUNT = 39;
+	private static final int DRONE_HUD_BANK_GLYPH_BASE = 0xE800;
+	private static final int DRONE_HUD_BANK_FRAME_COUNT = 13;
 	private static final String DRONE_HUD_BAR_OVERLAP_GLYPH = "\uE944";
+	private static final String DRONE_HUD_CENTER_GLYPH_REWIND = "\uE940\uE94B\uE946";
+	private static final String DRONE_HUD_HEADING_DIGIT_REWIND = "\uE940\uE94C\uE947";
+	private static final String DRONE_HUD_HEADING_DIGIT_RESTORE = "\uE94B\uE948\uE947";
 	private static final int DRONE_HUD_LABEL_COLOR = 0x6BD7FF;
 	private static final int DRONE_HUD_VALUE_COLOR = 0xF4FFF6;
 	private static final int DRONE_HUD_DIM_COLOR = 0x5A7080;
@@ -412,6 +426,8 @@ public final class DroneSystem {
 			-0.40D
 	};
 	private static final Map<UUID, DroneControlSession> ACTIVE_SESSIONS = new HashMap<>();
+	private static final Map<UUID, ServerBossEvent> PLAYER_DRONE_HUDS = new HashMap<>();
+	private static final Map<UUID, Component> PLAYER_DRONE_HUD_TITLES = new HashMap<>();
 	private static final Map<UUID, DroneInputState> INPUTS = new HashMap<>();
 	private static final Map<UUID, UUID> CONTROLLERS_BY_DRONE = new HashMap<>();
 	private static final Map<UUID, UUID> DISPLAYS_BY_DRONE = new HashMap<>();
@@ -562,6 +578,8 @@ public final class DroneSystem {
 			}
 			releaseAllDroneChunkTickets(server);
 			ACTIVE_SESSIONS.clear();
+			PLAYER_DRONE_HUDS.clear();
+			PLAYER_DRONE_HUD_TITLES.clear();
 			INPUTS.clear();
 			CONTROLLERS_BY_DRONE.clear();
 			DISPLAYS_BY_DRONE.clear();
@@ -5587,8 +5605,10 @@ public final class DroneSystem {
 				player.connection.send(new ClientboundSetTitleTextPacket(Component.empty()));
 				player.connection.send(new ClientboundSetSubtitleTextPacket(Component.empty()));
 			}
+			showDroneHudOverlay(player, session);
 			player.connection.send(new ClientboundSetActionBarTextPacket(buildDroneHudWidget(session, controlSpeedSlot)));
 		} else {
+			hideDroneHudOverlay(player);
 			if (force) {
 				player.connection.send(new ClientboundSetTitleTextPacket(Component.empty()));
 				player.connection.send(new ClientboundSetActionBarTextPacket(Component.empty()));
@@ -5612,6 +5632,7 @@ public final class DroneSystem {
 		player.connection.send(new ClientboundSetTitleTextPacket(Component.empty()));
 		player.connection.send(new ClientboundSetSubtitleTextPacket(Component.empty()));
 		player.connection.send(new ClientboundSetActionBarTextPacket(Component.empty()));
+		hideDroneHudOverlay(player);
 		session.setHudVisible(false);
 		session.setLastHudSnapshot("");
 		session.setLastHudTick(Long.MIN_VALUE);
@@ -5628,6 +5649,11 @@ public final class DroneSystem {
 				1.0D
 		) * 100.0D);
 		int controlPct = (int) Math.round(((controlSpeedSlot + 1) / 9.0D) * 100.0D);
+		int heading = compassHeadingDegrees(session.proxyYaw());
+		int pitch = pitchDegrees(session.proxyPitch());
+		int bank = bankDegrees(session);
+		double altitude = session.proxyPos().y;
+		double verticalSpeed = velocity == null ? 0.0D : velocity.y;
 
 		MutableComponent line = Component.empty();
 		line.append(hudLabel("FWD ")).append(hudValue(percentText(forwardPct)));
@@ -5641,6 +5667,16 @@ public final class DroneSystem {
 		line.append(hudLabel("CTRL ")).append(hudValue(percentText(controlPct)));
 		line.append(hudSeparator("   "));
 		line.append(hudLabel("SPD ")).append(hudValue(percentText(speedPct)));
+		line.append(hudSeparator("   "));
+		line.append(hudLabel("ALT ")).append(hudValue("%.0f".formatted(altitude)));
+		line.append(hudSeparator("   "));
+		line.append(hudLabel("V/S ")).append(hudValue("%+.2f".formatted(verticalSpeed)));
+		line.append(hudSeparator("   "));
+		line.append(hudLabel("HDG ")).append(hudValue("%03d".formatted(heading)));
+		line.append(hudSeparator("   "));
+		line.append(hudLabel("PIT ")).append(hudValue("%+03d".formatted(pitch)));
+		line.append(hudSeparator("   "));
+		line.append(hudLabel("ROL ")).append(hudValue("%+03d".formatted(bank)));
 		return line;
 	}
 
@@ -5649,12 +5685,153 @@ public final class DroneSystem {
 		int yIndex = quantizeDrive(-session.forwardDrive(), DroneFlightPhysics.MAX_FORWARD_DRIVE);
 		int stickGlyph = DRONE_HUD_GLYPH_BASE + yIndex * DRONE_HUD_GRID_SIZE + xIndex;
 		int speedGlyph = DRONE_HUD_SPEED_BAR_GLYPH_BASE + net.minecraft.util.Mth.clamp(controlSpeedSlot, 0, 8);
-		String glyphText = new String(new char[]{(char) stickGlyph}) + DRONE_HUD_BAR_OVERLAP_GLYPH + (char) speedGlyph;
+		String glyphText = new String(new char[]{(char) stickGlyph})
+				+ DRONE_HUD_BAR_OVERLAP_GLYPH
+				+ (char) speedGlyph;
 		return Component.literal(glyphText)
 				.withStyle(style -> style
 						.withColor(DRONE_HUD_VALUE_COLOR)
 						.withItalic(false)
 						.withShadowColor(0x00000000));
+	}
+
+	private static void showDroneHudOverlay(ServerPlayer player, DroneControlSession session) {
+		Component title = buildDroneHudOverlayTitle(session);
+		PLAYER_DRONE_HUD_TITLES.put(player.getUUID(), title);
+		if (ServerBossBarVisibilitySystem.refreshDroneHudOverlay(player)) {
+			ServerStabilitySystem.clearSpacerHudOverlayTitle(player);
+			hideDroneHudOverlayEvent(player);
+			return;
+		}
+
+		if (ServerStabilitySystem.setSpacerHudOverlayTitle(player, title)) {
+			ServerBossBarVisibilitySystem.clearDroneHudOverlay(player);
+			hideDroneHudOverlayEvent(player);
+			return;
+		}
+
+		ServerBossEvent hud = PLAYER_DRONE_HUDS.computeIfAbsent(player.getUUID(), id -> createDroneHudOverlay());
+		hud.setName(title);
+		hud.setProgress(0.0F);
+		hud.setVisible(true);
+
+		if (!hud.getPlayers().contains(player)) {
+			hud.addPlayer(player);
+			// The drone overlay must remain the first bossbar so its fixed title origin
+			// stays at the intended crosshair height.
+			ServerStabilitySystem.reorderHudBelowExternalBossBar(player);
+			ServerBossBarVisibilitySystem.reorderTrackedBossBarsBelowReservedHud(player);
+		}
+	}
+
+	private static ServerBossEvent createDroneHudOverlay() {
+		ServerBossEvent event = new ServerBossEvent(
+				Component.empty(),
+				// GREEN is the project's existing fully transparent bossbar slot.
+				BossEvent.BossBarColor.GREEN,
+				BossEvent.BossBarOverlay.PROGRESS
+		);
+		event.setDarkenScreen(false);
+		event.setPlayBossMusic(false);
+		event.setCreateWorldFog(false);
+		event.setProgress(0.0F);
+		return event;
+	}
+
+	private static void hideDroneHudOverlay(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		PLAYER_DRONE_HUD_TITLES.remove(player.getUUID());
+		ServerStabilitySystem.clearSpacerHudOverlayTitle(player);
+		ServerBossBarVisibilitySystem.clearDroneHudOverlay(player);
+		hideDroneHudOverlayEvent(player);
+	}
+
+	private static void hideDroneHudOverlayEvent(ServerPlayer player) {
+		ServerBossEvent hud = PLAYER_DRONE_HUDS.get(player.getUUID());
+		if (hud == null) {
+			return;
+		}
+		hud.removePlayer(player);
+		if (hud.getPlayers().isEmpty()) {
+			PLAYER_DRONE_HUDS.remove(player.getUUID());
+		}
+	}
+
+	/** Called by the bossbar packet bridge before a real bossbar is shown. */
+	public static void suspendHudOverlayForExternalBossBar(ServerPlayer player) {
+		hideDroneHudOverlayEvent(player);
+	}
+
+	/** Restores the standalone title after the last real bossbar has disappeared. */
+	public static void restoreHudOverlayWithoutExternalBossBar(ServerPlayer player) {
+		Component title = getHudOverlayTitle(player);
+		if (player == null || title == null) {
+			return;
+		}
+		if (ServerStabilitySystem.setSpacerHudOverlayTitle(player, title)) {
+			return;
+		}
+		ServerBossEvent hud = PLAYER_DRONE_HUDS.computeIfAbsent(player.getUUID(), id -> createDroneHudOverlay());
+		hud.setName(title);
+		hud.setProgress(0.0F);
+		hud.setVisible(true);
+		if (!hud.getPlayers().contains(player)) {
+			hud.addPlayer(player);
+			ServerStabilitySystem.reorderHudBelowExternalBossBar(player);
+		}
+	}
+
+	private static Component buildDroneHudOverlayTitle(DroneControlSession session) {
+		return Component.literal(buildDroneHudCenterGlyphText(session))
+				.withStyle(style -> style
+						.withColor(DRONE_HUD_VALUE_COLOR)
+						.withItalic(false)
+						.withShadowColor(0x00000000));
+	}
+
+	public static Component getHudOverlayTitle(ServerPlayer player) {
+		if (player == null) {
+			return null;
+		}
+		Component title = PLAYER_DRONE_HUD_TITLES.get(player.getUUID());
+		return title == null ? null : title.copy();
+	}
+
+	private static String buildDroneHudCenterGlyphText(DroneControlSession session) {
+		int attitudeGlyph = DRONE_HUD_ATTITUDE_GLYPH_BASE + quantizeAttitudeMotion(session.proxyPitch());
+		int attitudeLabelGlyph = DRONE_HUD_ATTITUDE_LABEL_GLYPH_BASE + quantizePitchLabel(session.proxyPitch());
+		int bankGlyph = DRONE_HUD_BANK_GLYPH_BASE + quantizeBank(session);
+		String glyphText = buildDroneHudHeadingGlyphText(session)
+				+ DRONE_HUD_CENTER_GLYPH_REWIND
+				+ (char) attitudeGlyph;
+		return glyphText
+				+ DRONE_HUD_CENTER_GLYPH_REWIND
+				+ (char) attitudeLabelGlyph
+				+ DRONE_HUD_CENTER_GLYPH_REWIND
+				+ (char) bankGlyph;
+	}
+
+	private static String buildDroneHudHeadingGlyphText(DroneControlSession session) {
+		int headingGlyph = DRONE_HUD_HEADING_GLYPH_BASE + quantizeHeading(session.proxyYaw());
+		int headingDegrees = compassHeadingDegrees(session.proxyYaw());
+		String digits = "%03d".formatted(headingDegrees);
+		StringBuilder glyphs = new StringBuilder()
+				.append((char) headingGlyph)
+				.append(DRONE_HUD_HEADING_DIGIT_REWIND);
+		for (int index = 0; index < digits.length(); index++) {
+			glyphs.append((char) (DRONE_HUD_HEADING_DIGIT_GLYPH_BASE + (digits.charAt(index) - '0')));
+		}
+		return glyphs.append(DRONE_HUD_HEADING_DIGIT_RESTORE).toString();
+	}
+
+	public static boolean isHudBossBar(ServerPlayer player, UUID bossBarId) {
+		if (player == null || bossBarId == null) {
+			return false;
+		}
+		ServerBossEvent hud = PLAYER_DRONE_HUDS.get(player.getUUID());
+		return hud != null && hud.getId().equals(bossBarId);
 	}
 
 	private static String buildDroneHudSnapshot(DroneControlSession session, Vec3 velocity, int controlSpeedSlot) {
@@ -5667,7 +5844,11 @@ public final class DroneSystem {
 				0.0D,
 				1.0D
 		) * 100.0D);
-		return forwardPct + "|" + reversePct + "|" + leftPct + "|" + rightPct + "|" + speedPct + "|" + controlSpeedSlot;
+		return forwardPct + "|" + reversePct + "|" + leftPct + "|" + rightPct + "|" + speedPct + "|" + controlSpeedSlot
+				+ "|" + quantizeHeading(session.proxyYaw())
+				+ "|" + quantizeAttitudeMotion(session.proxyPitch())
+				+ "|" + quantizePitchLabel(session.proxyPitch())
+				+ "|" + quantizeBank(session);
 	}
 
 	private static int getControlSpeedSlot(ServerPlayer player) {
@@ -5698,6 +5879,67 @@ public final class DroneSystem {
 				0,
 				DRONE_HUD_GRID_SIZE - 1
 		);
+	}
+
+	private static int quantizeHeading(float minecraftYaw) {
+		float phaseWithinTenDegrees = net.minecraft.util.Mth.positiveModulo(compassHeadingDegreesFloat(minecraftYaw), 10.0F);
+		return net.minecraft.util.Mth.clamp(
+				(int) Math.floor(phaseWithinTenDegrees * DRONE_HUD_HEADING_FRAME_COUNT / 10.0F),
+				0,
+				DRONE_HUD_HEADING_FRAME_COUNT - 1
+		);
+	}
+
+	private static int quantizeAttitudeMotion(float pitch) {
+		float phaseWithinTwentyDegrees = net.minecraft.util.Mth.positiveModulo(pitchDegrees(pitch) + 90.0F, 20.0F);
+		int motionFrame = net.minecraft.util.Mth.clamp(
+				Math.round(phaseWithinTwentyDegrees / 20.0F * (DRONE_HUD_ATTITUDE_FRAME_COUNT - 1)),
+				0,
+				DRONE_HUD_ATTITUDE_FRAME_COUNT - 1
+		);
+		return DRONE_HUD_ATTITUDE_FRAME_COUNT - 1 - motionFrame;
+	}
+
+	private static int quantizePitchLabel(float pitch) {
+		float clampedPitch = pitchDegrees(pitch);
+		return net.minecraft.util.Mth.clamp(
+				Math.round((clampedPitch + 90.0F) / 180.0F * (DRONE_HUD_ATTITUDE_LABEL_FRAME_COUNT - 1)),
+				0,
+				DRONE_HUD_ATTITUDE_LABEL_FRAME_COUNT - 1
+		);
+	}
+
+	private static int quantizeBank(DroneControlSession session) {
+		int bank = bankDegrees(session);
+		return net.minecraft.util.Mth.clamp(
+				Math.round((bank + DRONE_MAX_TILT_DEGREES) / (DRONE_MAX_TILT_DEGREES * 2.0F) * (DRONE_HUD_BANK_FRAME_COUNT - 1)),
+				0,
+				DRONE_HUD_BANK_FRAME_COUNT - 1
+		);
+	}
+
+	private static int compassHeadingDegrees(float minecraftYaw) {
+		return Math.floorMod(Math.round(compassHeadingDegreesFloat(minecraftYaw)), 360);
+	}
+
+	private static float compassHeadingDegreesFloat(float minecraftYaw) {
+		return net.minecraft.util.Mth.positiveModulo(180.0F - minecraftYaw, 360.0F);
+	}
+
+	private static int pitchDegrees(float pitch) {
+		return Math.round(net.minecraft.util.Mth.clamp(pitch, -90.0F, 90.0F));
+	}
+
+	private static int bankDegrees(DroneControlSession session) {
+		if (session == null || DroneFlightPhysics.MAX_STRAFE_DRIVE <= 1.0E-6D) {
+			return 0;
+		}
+		double normalizedStrafe = net.minecraft.util.Mth.clamp(
+				session.displayStrafeDrive() / DroneFlightPhysics.MAX_STRAFE_DRIVE,
+				-1.0D,
+				1.0D
+		);
+		return Math.round((float) (normalizedStrafe * DRONE_MAX_TILT_DEGREES));
 	}
 
 	private static String percentText(int value) {

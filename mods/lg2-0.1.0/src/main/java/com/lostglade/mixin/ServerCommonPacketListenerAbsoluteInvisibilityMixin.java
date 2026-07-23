@@ -173,10 +173,22 @@ public abstract class ServerCommonPacketListenerAbsoluteInvisibilityMixin {
 				}
 		}
 
-		if (packet instanceof ClientboundBossEventPacket bossEventPacket
-				&& ServerBossBarVisibilitySystem.handleOutgoingBossEventPacket(receiver, bossEventPacket)) {
-			ci.cancel();
-			return;
+		if (packet instanceof ClientboundBossEventPacket bossEventPacket) {
+			ClientboundBossEventPacket replacement = ServerBossBarVisibilitySystem.rewriteOutgoingBossEventPacket(receiver, bossEventPacket);
+			if (replacement != bossEventPacket) {
+				ci.cancel();
+				LG2_ABSOLUTE_INVISIBILITY_BYPASS.set(true);
+				try {
+					if (listener == null) {
+						gameListener.send(replacement);
+					} else {
+						gameListener.send(replacement, listener);
+					}
+				} finally {
+					LG2_ABSOLUTE_INVISIBILITY_BYPASS.remove();
+				}
+				return;
+			}
 		}
 
 		if (packet instanceof ClientboundTrackedWaypointPacket waypointPacket

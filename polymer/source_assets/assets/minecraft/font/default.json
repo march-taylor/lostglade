@@ -846,6 +846,80 @@
       ]
     },
     {
+      "type": "bitmap",
+      "file": "lg2:font/drone_hud_heading.png",
+      "ascent": 0,
+      "height": 144,
+      "chars": [
+        "\ue7a0\ue7a1\ue7a2\ue7a3\ue7a4",
+        "\ue7a5\ue7a6\ue7a7\ue7a8\ue7a9"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "lg2:font/drone_hud_heading_digits.png",
+      "ascent": 0,
+      "height": 144,
+      "chars": [
+        "\ue8d0\ue8d1\ue8d2\ue8d3\ue8d4\ue8d5\ue8d6\ue8d7\ue8d8\ue8d9"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "lg2:font/drone_hud_attitude.png",
+      "ascent": 0,
+      "height": 176,
+      "chars": [
+        "\ue7f0",
+        "\ue7f1",
+        "\ue7f2",
+        "\ue7f3",
+        "\ue7f4"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "lg2:font/drone_hud_attitude_labels.png",
+      "ascent": 0,
+      "height": 176,
+      "chars": [
+        "\ueab0\ueab1\ueab2",
+        "\ueab3\ueab4\ueab5",
+        "\ueab6\ueab7\ueab8",
+        "\ueab9\ueaba\ueabb",
+        "\ueabc\ueabd\ueabe",
+        "\ueabf\ueac0\ueac1",
+        "\ueac2\ueac3\ueac4",
+        "\ueac5\ueac6\ueac7",
+        "\ueac8\ueac9\ueaca",
+        "\ueacb\ueacc\ueacd",
+        "\ueace\ueacf\uead0",
+        "\uead1\uead2\uead3",
+        "\uead4\uead5\uead6"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "lg2:font/drone_hud_bank.png",
+      "ascent": 0,
+      "height": 144,
+      "chars": [
+        "\ue800",
+        "\ue801",
+        "\ue802",
+        "\ue803",
+        "\ue804",
+        "\ue805",
+        "\ue806",
+        "\ue807",
+        "\ue808",
+        "\ue809",
+        "\ue80a",
+        "\ue80b",
+        "\ue80c"
+      ]
+    },
+    {
       "type": "reference",
       "id": "minecraft:include/space"
     },

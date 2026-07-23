@@ -114,7 +114,6 @@ public final class RocketLaunchEventSystem {
 	private static final double ROCKET_THRUST_PER_TICK = 0.00335D;
 	private static final double ROCKET_ANGULAR_DAMPING = 0.982D;
 	private static final double ROCKET_TORQUE_RESPONSE = 0.42D;
-	private static final double ROCKET_ATTITUDE_STABILIZATION = 0.00115D;
 	private static final double ROCKET_IDLE_SPIN_PER_TICK = 0.0042D;
 	private static final double LAUNCH_PAD_CLEARANCE = 2.25D;
 	private static final int MAX_CRASH_DEBRIS = 96;
@@ -1518,28 +1517,24 @@ public final class RocketLaunchEventSystem {
 		Vec3 localLever = engineCentre.subtract(pivot);
 		Vec3 lateralLever = new Vec3(localLever.x, 0.0D, localLever.z);
 		double lateralDistance = lateralLever.length();
-		double balanceTolerance = rocketBalanceTolerance();
 		Vec3 localTorque = Vec3.ZERO;
-		if (lateralDistance > balanceTolerance) {
-			// Small centre-of-mass shifts from rooms, ladders and other interior
-			// decoration are absorbed by normal engine-gimbal authority. A genuinely
-			// misplaced engine cluster still produces a gradually growing torque.
-			Vec3 effectiveLever = lateralLever.scale((lateralDistance - balanceTolerance) / lateralDistance);
+		if (lateralDistance > 0.0001D) {
+			// The same offset is far less meaningful on a 50-block rocket than on a
+			// 3-block craft.  This keeps a small room/decor imbalance visible but
+			// gentle, while a grossly misplaced engine remains dangerous.
+			double relativeOffset = lateralDistance / rocketOverallSize();
+			double torqueScale = Mth.clamp(relativeOffset * 6.0D, 0.10D, 1.0D);
 			Vec3 totalLocalThrust = new Vec3(0.0D, engineForce * rocket.engines.size(), 0.0D);
-			localTorque = cross(effectiveLever, totalLocalThrust);
+			localTorque = cross(lateralLever, totalLocalThrust).scale(torqueScale);
 		}
 		Vec3 torque = rotate(orientation, localTorque);
 
 		// A deliberate off-centre engine produces enough angular acceleration to
 		// be visible during the long launch, while a balanced cluster stays calm.
 		double angularMultiplier = ROCKET_TORQUE_RESPONSE / Math.max(1.0D, rocket.inertia);
-		Vec3 uprightCorrection = cross(rotate(orientation, new Vec3(0.0D, 1.0D, 0.0D)), new Vec3(0.0D, 1.0D, 0.0D));
-		rocket.angularVelocityX = (rocket.angularVelocityX + torque.x * angularMultiplier
-				+ uprightCorrection.x * ROCKET_ATTITUDE_STABILIZATION) * ROCKET_ANGULAR_DAMPING;
-		rocket.angularVelocityY = (rocket.angularVelocityY + torque.y * angularMultiplier
-				+ uprightCorrection.y * ROCKET_ATTITUDE_STABILIZATION) * ROCKET_ANGULAR_DAMPING;
-		rocket.angularVelocityZ = (rocket.angularVelocityZ + torque.z * angularMultiplier
-				+ uprightCorrection.z * ROCKET_ATTITUDE_STABILIZATION) * ROCKET_ANGULAR_DAMPING;
+		rocket.angularVelocityX = (rocket.angularVelocityX + torque.x * angularMultiplier) * ROCKET_ANGULAR_DAMPING;
+		rocket.angularVelocityY = (rocket.angularVelocityY + torque.y * angularMultiplier) * ROCKET_ANGULAR_DAMPING;
+		rocket.angularVelocityZ = (rocket.angularVelocityZ + torque.z * angularMultiplier) * ROCKET_ANGULAR_DAMPING;
 		Quaternionf delta = new Quaternionf().rotateXYZ(
 				(float) rocket.angularVelocityX,
 				(float) rocket.angularVelocityY,
@@ -1592,12 +1587,14 @@ public final class RocketLaunchEventSystem {
 		return Math.max(LAUNCH_PAD_CLEARANCE, rocket.maxY - rocket.minY + 2.0D);
 	}
 
-	private static double rocketBalanceTolerance() {
+	private static double rocketOverallSize() {
 		if (rocket == null) {
-			return 0.35D;
+			return 1.0D;
 		}
-		double footprint = Math.max(rocket.maxX - rocket.minX + 1, rocket.maxZ - rocket.minZ + 1);
-		return Mth.clamp(footprint * 0.10D, 0.35D, 1.50D);
+		double width = rocket.maxX - rocket.minX + 1.0D;
+		double height = rocket.maxY - rocket.minY + 1.0D;
+		double depth = rocket.maxZ - rocket.minZ + 1.0D;
+		return Math.max(1.0D, Math.sqrt(width * width + height * height + depth * depth));
 	}
 
 	private static BlockPos findRocketImpactAlongPath(

@@ -72,6 +72,7 @@ public final class ServerStabilitySystem {
 
 	private static final Map<UUID, ServerBossEvent> PLAYER_HUDS = new HashMap<>();
 	private static final Map<UUID, ServerBossEvent> PLAYER_SPACER_HUDS = new HashMap<>();
+	private static final Map<UUID, Component> PLAYER_SPACER_OVERLAY_TITLES = new HashMap<>();
 	private static final Map<String, Set<String>> TRACKED_SERVER_ANCHORS = new HashMap<>();
 	private static final Set<ItemEntity> TRACKED_BITCOIN_ITEMS = ConcurrentHashMap.newKeySet();
 	private static final Map<FeedSoundSourceKey, ActiveFeedSoundSource> ACTIVE_FEED_SOUND_SOURCES = new HashMap<>();
@@ -262,6 +263,7 @@ public final class ServerStabilitySystem {
 				entry.getValue().removeAllPlayers();
 				return true;
 			});
+			PLAYER_SPACER_OVERLAY_TITLES.keySet().removeIf(playerId -> !online.contains(playerId));
 		});
 	}
 
@@ -307,6 +309,7 @@ public final class ServerStabilitySystem {
 				PLAYER_SPACER_HUDS.remove(player.getUUID());
 			}
 		}
+		PLAYER_SPACER_OVERLAY_TITLES.remove(player.getUUID());
 	}
 
 	private static ServerBossEvent createHudEvent() {
@@ -336,7 +339,7 @@ public final class ServerStabilitySystem {
 
 	private static boolean showSpacerHud(ServerPlayer player) {
 		ServerBossEvent spacer = PLAYER_SPACER_HUDS.computeIfAbsent(player.getUUID(), id -> createSpacerHudEvent());
-		spacer.setName(Component.empty());
+		spacer.setName(PLAYER_SPACER_OVERLAY_TITLES.getOrDefault(player.getUUID(), Component.empty()));
 		spacer.setColor(BossEvent.BossBarColor.GREEN);
 		spacer.setProgress(0.0F);
 		spacer.setVisible(true);
@@ -359,6 +362,7 @@ public final class ServerStabilitySystem {
 		if (spacer.getPlayers().isEmpty()) {
 			PLAYER_SPACER_HUDS.remove(player.getUUID());
 		}
+		PLAYER_SPACER_OVERLAY_TITLES.remove(player.getUUID());
 	}
 
 	private static Component getHudTitle(ServerPlayer player, boolean hasPack) {
@@ -1113,6 +1117,35 @@ public final class ServerStabilitySystem {
 
 		ServerBossEvent spacer = PLAYER_SPACER_HUDS.get(player.getUUID());
 		return spacer != null && spacer.getId().equals(bossBarId);
+	}
+
+	/**
+	 * Uses the pre-existing empty bossbar immediately above the server HUD as a
+	 * title-only overlay. Returning false means that the server HUD is not open.
+	 */
+	public static boolean setSpacerHudOverlayTitle(ServerPlayer player, Component title) {
+		if (player == null) {
+			return false;
+		}
+		ServerBossEvent spacer = PLAYER_SPACER_HUDS.get(player.getUUID());
+		if (spacer == null || !spacer.getPlayers().contains(player)) {
+			return false;
+		}
+		Component safeTitle = title == null ? Component.empty() : title.copy();
+		PLAYER_SPACER_OVERLAY_TITLES.put(player.getUUID(), safeTitle);
+		spacer.setName(safeTitle);
+		return true;
+	}
+
+	public static void clearSpacerHudOverlayTitle(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		PLAYER_SPACER_OVERLAY_TITLES.remove(player.getUUID());
+		ServerBossEvent spacer = PLAYER_SPACER_HUDS.get(player.getUUID());
+		if (spacer != null && spacer.getPlayers().contains(player)) {
+			spacer.setName(Component.empty());
+		}
 	}
 
 	public static void reorderHudBelowExternalBossBar(ServerPlayer player) {

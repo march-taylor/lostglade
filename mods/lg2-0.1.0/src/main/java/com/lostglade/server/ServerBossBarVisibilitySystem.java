@@ -70,28 +70,86 @@ public final class ServerBossBarVisibilitySystem {
 		state.needsReorder = false;
 	}
 
-	public static boolean handleOutgoingBossEventPacket(ServerPlayer receiver, ClientboundBossEventPacket packet) {
+	public static ClientboundBossEventPacket rewriteOutgoingBossEventPacket(ServerPlayer receiver, ClientboundBossEventPacket packet) {
 		BossBarPacketUpdate update = BossBarPacketUpdate.from(packet);
 		if (update == null) {
-			return false;
+			return packet;
 		}
 
 		boolean reservedHud = ServerStabilitySystem.isHudBossBar(receiver, update.id)
-				|| ServerRaceSystem.isMarkRageBossBar(receiver, update.id);
+				|| ServerRaceSystem.isMarkRageBossBar(receiver, update.id)
+				|| DroneSystem.isHudBossBar(receiver, update.id);
 		PlayerBossBarState state = PLAYER_STATES.computeIfAbsent(receiver.getUUID(), id -> new PlayerBossBarState());
 
-		if (!reservedHud) {
-			applyPacketUpdate(state, update);
+		if (reservedHud) {
+			return packet;
 		}
 
-		if (!state.serverHudFocused) {
-			if (state.activeBossBars.isEmpty()) {
-				PLAYER_STATES.remove(receiver.getUUID());
+		applyPacketUpdate(state, update);
+		Component overlayTitle = DroneSystem.getHudOverlayTitle(receiver);
+		if (overlayTitle == null) {
+			return packet;
+		}
+
+		DroneSystem.suspendHudOverlayForExternalBossBar(receiver);
+		if (update.type == BossBarPacketType.REMOVE && state.activeBossBars.isEmpty()) {
+			// Re-add on the following server tick, after the client has processed the
+			// real bar's removal. This avoids a one-line vertical jump.
+			state.restoreDroneOverlayNextTick = true;
+			return packet;
+		}
+
+		if (update.type == BossBarPacketType.ADD || update.type == BossBarPacketType.UPDATE_NAME) {
+			TrackedBossBar bossBar = state.activeBossBars.get(update.id);
+			if (bossBar != null) {
+				BossEvent rewrittenBossBar = bossBar.toBossEvent(withDroneOverlayTitle(bossBar.name, overlayTitle));
+				return update.type == BossBarPacketType.ADD
+						? ClientboundBossEventPacket.createAddPacket(rewrittenBossBar)
+						: ClientboundBossEventPacket.createUpdateNamePacket(rewrittenBossBar);
 			}
+		}
+
+		return packet;
+	}
+
+	/**
+	 * Installs the current drone title into every real bossbar already visible
+	 * to this player. The real bar remains on its original line; only its name
+	 * packet is replaced, so no empty bossbar row or vertical spacing appears.
+	 */
+	public static boolean refreshDroneHudOverlay(ServerPlayer player) {
+		if (player == null) {
+			return false;
+		}
+		PlayerBossBarState state = PLAYER_STATES.get(player.getUUID());
+		Component overlayTitle = DroneSystem.getHudOverlayTitle(player);
+		if (state == null || state.activeBossBars.isEmpty() || overlayTitle == null) {
 			return false;
 		}
 
-		return false;
+		DroneSystem.suspendHudOverlayForExternalBossBar(player);
+		state.restoreDroneOverlayNextTick = false;
+		for (TrackedBossBar bossBar : state.activeBossBars.values()) {
+			sendSyntheticPacket(player, ClientboundBossEventPacket.createUpdateNamePacket(
+					bossBar.toBossEvent(withDroneOverlayTitle(bossBar.name, overlayTitle))
+			));
+		}
+		return true;
+	}
+
+	/** Restores unmodified titles when the drone HUD is closed. */
+	public static void clearDroneHudOverlay(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		PlayerBossBarState state = PLAYER_STATES.get(player.getUUID());
+		if (state == null) {
+			return;
+		}
+		state.restoreDroneOverlayNextTick = false;
+		for (TrackedBossBar bossBar : state.activeBossBars.values()) {
+			sendSyntheticPacket(player, ClientboundBossEventPacket.createUpdateNamePacket(bossBar.toBossEvent()));
+		}
 	}
 
 	private static void applyPacketUpdate(PlayerBossBarState state, BossBarPacketUpdate update) {
@@ -180,6 +238,10 @@ public final class ServerBossBarVisibilitySystem {
 			}
 
 			PlayerBossBarState state = entry.getValue();
+			if (state.restoreDroneOverlayNextTick && state.activeBossBars.isEmpty()) {
+				state.restoreDroneOverlayNextTick = false;
+				DroneSystem.restoreHudOverlayWithoutExternalBossBar(player);
+			}
 			if (!state.serverHudFocused && state.activeBossBars.isEmpty()) {
 				iterator.remove();
 			}
@@ -188,6 +250,62 @@ public final class ServerBossBarVisibilitySystem {
 
 	private static Component copyComponent(Component component) {
 		return component == null ? Component.empty() : component.copy();
+	}
+
+	private static Component withDroneOverlayTitle(Component realTitle, Component overlayTitle) {
+		Component safeRealTitle = copyComponent(realTitle);
+		Component safeOverlayTitle = copyComponent(overlayTitle);
+		int overlayOffset = (estimatedVanillaTextWidth(safeRealTitle) + 1) / 2 + 24;
+		String shiftLeft = buildSpaceAdvance(-overlayOffset);
+		String shiftRight = buildSpaceAdvance(overlayOffset);
+		return Component.empty()
+				.append(safeRealTitle)
+				.append(Component.literal(shiftLeft))
+				.append(safeOverlayTitle)
+				.append(Component.literal("\uE940\uE94B\uE946" + shiftRight));
+	}
+
+	private static int estimatedVanillaTextWidth(Component component) {
+		if (component == null) {
+			return 0;
+		}
+		String text = component.getString();
+		int width = 0;
+		for (int index = 0; index < text.length(); ) {
+			int codePoint = text.codePointAt(index);
+			width += estimatedVanillaGlyphWidth(codePoint);
+			index += Character.charCount(codePoint);
+		}
+		return width;
+	}
+
+	private static int estimatedVanillaGlyphWidth(int codePoint) {
+		if (codePoint == ' ') {
+			return 4;
+		}
+		return switch (codePoint) {
+			case '!', '\'', '.', ',', ':', ';', '|', 'i', 'l', 'I' -> 2;
+			case '"', '(', ')', '[', ']', '{', '}', '*', 't', 'f', 'k' -> 4;
+			case 'M', 'W', 'm', 'w', '@', '%', '&' -> 7;
+			default -> codePoint > 0x7F ? 6 : 6;
+		};
+	}
+
+	private static String buildSpaceAdvance(int amount) {
+		if (amount == 0) {
+			return "";
+		}
+		int[] values = {64, 32, 16, 8, 4, 2, 1};
+		int codePointBase = amount < 0 ? 0xE940 : 0xE947;
+		int remaining = Math.abs(amount);
+		StringBuilder builder = new StringBuilder();
+		for (int index = 0; index < values.length; index++) {
+			while (remaining >= values[index]) {
+				builder.appendCodePoint(codePointBase + index);
+				remaining -= values[index];
+			}
+		}
+		return builder.toString();
 	}
 
 	private enum BossBarPacketType {
@@ -202,6 +320,7 @@ public final class ServerBossBarVisibilitySystem {
 	private static final class PlayerBossBarState {
 		private boolean serverHudFocused;
 		private boolean needsReorder;
+		private boolean restoreDroneOverlayNextTick;
 		private final Map<UUID, TrackedBossBar> activeBossBars = new LinkedHashMap<>();
 	}
 
@@ -236,7 +355,11 @@ public final class ServerBossBarVisibilitySystem {
 		}
 
 		private BossEvent toBossEvent() {
-			BossEvent bossEvent = new BossEvent(this.id, copyComponent(this.name), this.color, this.overlay) {
+			return toBossEvent(this.name);
+		}
+
+		private BossEvent toBossEvent(Component name) {
+			BossEvent bossEvent = new BossEvent(this.id, copyComponent(name), this.color, this.overlay) {
 			};
 			bossEvent.setProgress(this.progress);
 			bossEvent.setDarkenScreen(this.darkenScreen);
