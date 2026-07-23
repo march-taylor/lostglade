@@ -219,6 +219,9 @@ public final class ServerBossBarVisibilitySystem {
 
 	private static void sendSyntheticPacket(ServerPlayer player, ClientboundBossEventPacket packet) {
 		// Synthetic packets must bypass the filter so hidden bars stay tracked server-side.
+		if (player == null || packet == null) {
+			return;
+		}
 		BYPASS_PACKET_FILTER.set(true);
 		try {
 			player.connection.send(packet);

@@ -49,6 +49,7 @@ import net.minecraft.core.SectionPos;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.FontDescription;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.chat.RemoteChatSession;
 import net.minecraft.network.protocol.Packet;
@@ -358,6 +359,16 @@ public final class DroneSystem {
 	private static final int DRONE_HUD_ATTITUDE_LABEL_FRAME_COUNT = 39;
 	private static final int DRONE_HUD_BANK_GLYPH_BASE = 0xE800;
 	private static final int DRONE_HUD_BANK_FRAME_COUNT = 13;
+	private static final int DRONE_HUD_GLITCH_IDLE_GLYPH_BASE = 0xE600;
+	private static final int DRONE_HUD_GLITCH_IDLE_FRAME_COUNT = 32;
+	private static final int DRONE_HUD_GLITCH_BURST_GLYPH_BASE = 0xE860;
+	private static final int DRONE_HUD_GLITCH_BURST_FRAME_COUNT = 6;
+	private static final long DRONE_HUD_GLITCH_IDLE_FRAME_TICKS = 1L;
+	private static final int DRONE_HUD_GLITCH_TILES_PER_FRAME = 8;
+	private static final String DRONE_HUD_GLITCH_ROW_REWIND_GLYPH = "\uE890";
+	private static final FontDescription DRONE_HUD_GLITCH_FONT = new FontDescription.Resource(
+			Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "drone_glitch")
+	);
 	private static final String DRONE_HUD_BAR_OVERLAP_GLYPH = "\uE944";
 	private static final String DRONE_HUD_CENTER_GLYPH_REWIND = "\uE940\uE94B\uE946";
 	private static final String DRONE_HUD_HEADING_DIGIT_REWIND = "\uE940\uE94C\uE947";
@@ -379,6 +390,7 @@ public final class DroneSystem {
 	private static final double CONTROLLED_DRONE_MAX_REPORTED_MOVE_BLOCKS = 4.0D;
 	private static final long POST_CONTROL_MOVE_PACKET_SUPPRESSION_TICKS = 20L;
 	private static final long POST_CONTROL_CLIENT_RESYNC_TICKS = 8L;
+	private static final long POST_CONTROL_VIEW_TELEPORT_ACK_GRACE_TICKS = 40L;
 	private static final double POST_CONTROL_MOVE_ACCEPT_DISTANCE_SQR = 2.0D * 2.0D;
 	private static final int DRONE_MANAGED_NIGHT_VISION_AMPLIFIER = 1;
 	private static final double CONTROLLED_OPERATOR_DISABLED_INTERACTION_RANGE_BLOCKS = 0.01D;
@@ -428,6 +440,9 @@ public final class DroneSystem {
 	private static final Map<UUID, DroneControlSession> ACTIVE_SESSIONS = new HashMap<>();
 	private static final Map<UUID, ServerBossEvent> PLAYER_DRONE_HUDS = new HashMap<>();
 	private static final Map<UUID, Component> PLAYER_DRONE_HUD_TITLES = new HashMap<>();
+	private static final Map<UUID, ServerBossEvent> PLAYER_DRONE_GLITCH_OVERLAYS = new HashMap<>();
+	private static final Map<UUID, ServerBossEvent> PLAYER_DRONE_GLITCH_BURSTS = new HashMap<>();
+	private static final Map<UUID, Long> PLAYER_DRONE_GLITCH_BURST_START_TICKS = new HashMap<>();
 	private static final Map<UUID, DroneInputState> INPUTS = new HashMap<>();
 	private static final Map<UUID, UUID> CONTROLLERS_BY_DRONE = new HashMap<>();
 	private static final Map<UUID, UUID> DISPLAYS_BY_DRONE = new HashMap<>();
@@ -464,6 +479,7 @@ public final class DroneSystem {
 	private static final Map<UUID, Double> DRONE_ENVIRONMENT_DAMAGE = new HashMap<>();
 	private static final Map<UUID, Long> POST_CONTROL_MOVE_SUPPRESSED_UNTIL_TICK = new HashMap<>();
 	private static final Map<UUID, Long> POST_CONTROL_CLIENT_RESYNC_UNTIL_TICK = new HashMap<>();
+	private static final Map<UUID, Long> POST_CONTROL_VIEW_TELEPORT_ACK_UNTIL_TICK = new HashMap<>();
 	private static final Map<UUID, ControlledOperatorAudioRuntime> CONTROLLED_OPERATOR_AUDIO = new HashMap<>();
 	private static final Map<UUID, Long> DRONE_MICROPHONE_RELAY_SEQUENCES = new HashMap<>();
 	private static final Set<UUID> VISUALLY_CONTROLLED_PLAYERS = new HashSet<>();
@@ -580,6 +596,9 @@ public final class DroneSystem {
 			ACTIVE_SESSIONS.clear();
 			PLAYER_DRONE_HUDS.clear();
 			PLAYER_DRONE_HUD_TITLES.clear();
+			PLAYER_DRONE_GLITCH_OVERLAYS.clear();
+			PLAYER_DRONE_GLITCH_BURSTS.clear();
+			PLAYER_DRONE_GLITCH_BURST_START_TICKS.clear();
 			INPUTS.clear();
 			CONTROLLERS_BY_DRONE.clear();
 			DISPLAYS_BY_DRONE.clear();
@@ -598,6 +617,7 @@ public final class DroneSystem {
 			NEXT_DRONE_ARM_ALLOWED_TICK.clear();
 			POST_CONTROL_MOVE_SUPPRESSED_UNTIL_TICK.clear();
 			POST_CONTROL_CLIENT_RESYNC_UNTIL_TICK.clear();
+			POST_CONTROL_VIEW_TELEPORT_ACK_UNTIL_TICK.clear();
 			VISUALLY_CONTROLLED_PLAYERS.clear();
 			DISPLAY_WOBBLE_BY_DRONE.clear();
 			AUTO_AIM_DISPLAY_ANIMATIONS.clear();
@@ -1099,20 +1119,33 @@ public final class DroneSystem {
 		}
 	}
 
-	public static boolean handleControlledAcceptTeleportPacket(ServerPlayer player, int teleportId) {
+	/**
+	 * Consumes acknowledgements for synthetic drone-camera teleports. A final
+	 * acknowledgement can arrive after the drone was destroyed and its session
+	 * removed, so it must not reach vanilla's normal teleport state machine.
+	 */
+	public static boolean shouldConsumeDroneProxyTeleportAck(ServerPlayer player, int teleportId) {
 		if (player == null) {
-			return false;
-		}
-		DroneControlSession session = ACTIVE_SESSIONS.get(player.getUUID());
-		if (session == null) {
 			return false;
 		}
 		if (teleportId < CONTROLLED_VIEW_TELEPORT_ID_BASE) {
 			return false;
 		}
+		DroneControlSession session = ACTIVE_SESSIONS.get(player.getUUID());
 		long gameTime = player.level() == null ? Long.MIN_VALUE : player.level().getGameTime();
-		session.acknowledgeStartupViewSync(gameTime);
-		return true;
+		if (session != null) {
+			session.acknowledgeStartupViewSync(gameTime);
+			return true;
+		}
+		Long untilTick = POST_CONTROL_VIEW_TELEPORT_ACK_UNTIL_TICK.get(player.getUUID());
+		if (untilTick == null) {
+			return false;
+		}
+		if (gameTime <= untilTick) {
+			return true;
+		}
+		POST_CONTROL_VIEW_TELEPORT_ACK_UNTIL_TICK.remove(player.getUUID(), untilTick);
+		return false;
 	}
 
 	public static ChunkTrackingView createVirtualChunkTrackingView(ServerPlayer player) {
@@ -1630,6 +1663,8 @@ public final class DroneSystem {
 		recoverOrphanedControlledOperators(server);
 		recoverPlayersWithStaleDronePassenger(server);
 		processPendingPostControlClientResync(server);
+		tickDroneHudGlitchOverlays(server);
+		tickDroneHudGlitchBursts(server);
 	}
 
 	private static void updateDroneChunkTickets(MinecraftServer server) {
@@ -1916,7 +1951,7 @@ public final class DroneSystem {
 	}
 
 	private static void cleanupExpiredPostControlMoveSuppression(MinecraftServer server) {
-		if (server == null || POST_CONTROL_MOVE_SUPPRESSED_UNTIL_TICK.isEmpty()) {
+		if (server == null) {
 			return;
 		}
 		ServerLevel overworld = server.overworld();
@@ -1925,6 +1960,12 @@ public final class DroneSystem {
 			Long untilTick = entry.getValue();
 			if (untilTick == null || now > untilTick) {
 				POST_CONTROL_MOVE_SUPPRESSED_UNTIL_TICK.remove(entry.getKey(), untilTick);
+			}
+		}
+		for (Map.Entry<UUID, Long> entry : new ArrayList<>(POST_CONTROL_VIEW_TELEPORT_ACK_UNTIL_TICK.entrySet())) {
+			Long untilTick = entry.getValue();
+			if (untilTick == null || now > untilTick) {
+				POST_CONTROL_VIEW_TELEPORT_ACK_UNTIL_TICK.remove(entry.getKey(), untilTick);
 			}
 		}
 	}
@@ -1994,6 +2035,16 @@ public final class DroneSystem {
 		POST_CONTROL_MOVE_SUPPRESSED_UNTIL_TICK.put(
 				player.getUUID(),
 				player.level().getGameTime() + POST_CONTROL_MOVE_PACKET_SUPPRESSION_TICKS
+		);
+	}
+
+	private static void markPostControlDroneTeleportAcks(ServerPlayer player) {
+		if (player == null || player.level() == null) {
+			return;
+		}
+		POST_CONTROL_VIEW_TELEPORT_ACK_UNTIL_TICK.put(
+				player.getUUID(),
+				player.level().getGameTime() + POST_CONTROL_VIEW_TELEPORT_ACK_GRACE_TICKS
 		);
 	}
 
@@ -5701,12 +5752,14 @@ public final class DroneSystem {
 		if (ServerBossBarVisibilitySystem.refreshDroneHudOverlay(player)) {
 			ServerStabilitySystem.clearSpacerHudOverlayTitle(player);
 			hideDroneHudOverlayEvent(player);
+			showDroneHudGlitchOverlay(player);
 			return;
 		}
 
 		if (ServerStabilitySystem.setSpacerHudOverlayTitle(player, title)) {
 			ServerBossBarVisibilitySystem.clearDroneHudOverlay(player);
 			hideDroneHudOverlayEvent(player);
+			showDroneHudGlitchOverlay(player);
 			return;
 		}
 
@@ -5722,6 +5775,7 @@ public final class DroneSystem {
 			ServerStabilitySystem.reorderHudBelowExternalBossBar(player);
 			ServerBossBarVisibilitySystem.reorderTrackedBossBarsBelowReservedHud(player);
 		}
+		showDroneHudGlitchOverlay(player);
 	}
 
 	private static ServerBossEvent createDroneHudOverlay() {
@@ -5743,6 +5797,7 @@ public final class DroneSystem {
 			return;
 		}
 		PLAYER_DRONE_HUD_TITLES.remove(player.getUUID());
+		hideDroneHudGlitchOverlay(player);
 		ServerStabilitySystem.clearSpacerHudOverlayTitle(player);
 		ServerBossBarVisibilitySystem.clearDroneHudOverlay(player);
 		hideDroneHudOverlayEvent(player);
@@ -5784,11 +5839,141 @@ public final class DroneSystem {
 	}
 
 	private static Component buildDroneHudOverlayTitle(DroneControlSession session) {
-		return Component.literal(buildDroneHudCenterGlyphText(session))
-				.withStyle(style -> style
-						.withColor(DRONE_HUD_VALUE_COLOR)
-						.withItalic(false)
-						.withShadowColor(0x00000000));
+		return styleDroneHudOverlay(Component.literal(buildDroneHudCenterGlyphText(session)));
+	}
+
+	private static Component buildDroneHudGlitchBurstTitle(int frame) {
+		int boundedFrame = net.minecraft.util.Mth.clamp(frame, 0, DRONE_HUD_GLITCH_BURST_FRAME_COUNT - 1);
+		return buildDroneHudGlitchTitle(DRONE_HUD_GLITCH_BURST_GLYPH_BASE + boundedFrame * DRONE_HUD_GLITCH_TILES_PER_FRAME);
+	}
+
+	private static Component buildDroneHudGlitchIdleTitle(ServerPlayer player) {
+		long gameTime = player == null || player.level() == null ? 0L : player.level().getGameTime();
+		int frame = (int) Math.floorMod(
+				gameTime / DRONE_HUD_GLITCH_IDLE_FRAME_TICKS,
+				DRONE_HUD_GLITCH_IDLE_FRAME_COUNT
+		);
+		return buildDroneHudGlitchTitle(DRONE_HUD_GLITCH_IDLE_GLYPH_BASE + frame * DRONE_HUD_GLITCH_TILES_PER_FRAME);
+	}
+
+	private static Component buildDroneHudGlitchTitle(int firstTileGlyph) {
+		StringBuilder glyphs = new StringBuilder(DRONE_HUD_GLITCH_TILES_PER_FRAME + 1);
+		for (int tile = 0; tile < DRONE_HUD_GLITCH_TILES_PER_FRAME / 2; tile++) {
+			glyphs.append((char) (firstTileGlyph + tile));
+		}
+		glyphs.append(DRONE_HUD_GLITCH_ROW_REWIND_GLYPH);
+		for (int tile = DRONE_HUD_GLITCH_TILES_PER_FRAME / 2; tile < DRONE_HUD_GLITCH_TILES_PER_FRAME; tile++) {
+			glyphs.append((char) (firstTileGlyph + tile));
+		}
+		return styleDroneHudGlitch(Component.literal(glyphs.toString()));
+	}
+
+	private static Component styleDroneHudOverlay(Component component) {
+		return component.copy().withStyle(style -> style
+				.withColor(DRONE_HUD_VALUE_COLOR)
+				.withItalic(false)
+				.withShadowColor(0x00000000));
+	}
+
+	private static Component styleDroneHudGlitch(Component component) {
+		return component.copy().withStyle(style -> style
+				.withColor(DRONE_HUD_VALUE_COLOR)
+				.withItalic(false)
+				.withFont(DRONE_HUD_GLITCH_FONT)
+				.withShadowColor(0x00000000));
+	}
+
+	private static void showDroneHudGlitchOverlay(ServerPlayer player) {
+		if (player == null || player.connection == null) {
+			return;
+		}
+		ServerBossEvent overlay = PLAYER_DRONE_GLITCH_OVERLAYS.computeIfAbsent(player.getUUID(), id -> createDroneHudOverlay());
+		overlay.setName(buildDroneHudGlitchIdleTitle(player));
+		overlay.setProgress(0.0F);
+		overlay.setVisible(true);
+		if (!overlay.getPlayers().contains(player)) {
+			overlay.addPlayer(player);
+			ServerStabilitySystem.reorderHudBelowExternalBossBar(player);
+			ServerBossBarVisibilitySystem.reorderTrackedBossBarsBelowReservedHud(player);
+		}
+	}
+
+	private static void hideDroneHudGlitchOverlay(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		UUID playerId = player.getUUID();
+		ServerBossEvent overlay = PLAYER_DRONE_GLITCH_OVERLAYS.get(playerId);
+		if (overlay != null) {
+			overlay.removePlayer(player);
+		}
+		PLAYER_DRONE_GLITCH_OVERLAYS.remove(playerId, overlay);
+	}
+
+	private static void tickDroneHudGlitchOverlays(MinecraftServer server) {
+		if (server == null || PLAYER_DRONE_GLITCH_OVERLAYS.isEmpty()) {
+			return;
+		}
+		for (Map.Entry<UUID, ServerBossEvent> entry : new ArrayList<>(PLAYER_DRONE_GLITCH_OVERLAYS.entrySet())) {
+			ServerPlayer player = server.getPlayerList().getPlayer(entry.getKey());
+			ServerBossEvent overlay = entry.getValue();
+			if (player == null || overlay == null || !overlay.getPlayers().contains(player)) {
+				PLAYER_DRONE_GLITCH_OVERLAYS.remove(entry.getKey(), overlay);
+				continue;
+			}
+			overlay.setName(buildDroneHudGlitchIdleTitle(player));
+		}
+	}
+
+	private static void startDroneHudGlitchBurst(ServerPlayer player) {
+		if (player == null || player.connection == null || player.level() == null) {
+			return;
+		}
+		stopDroneHudGlitchBurst(player);
+		ServerBossEvent burst = createDroneHudOverlay();
+		// Register the bar before sending its ADD packet.  The bossbar bridge must
+		// recognise it as HUD rather than briefly treating it as a real bossbar.
+		PLAYER_DRONE_GLITCH_BURSTS.put(player.getUUID(), burst);
+		burst.setName(buildDroneHudGlitchBurstTitle(0));
+		burst.setVisible(true);
+		burst.addPlayer(player);
+		PLAYER_DRONE_GLITCH_BURST_START_TICKS.put(player.getUUID(), player.level().getGameTime());
+		ServerStabilitySystem.reorderHudBelowExternalBossBar(player);
+		ServerBossBarVisibilitySystem.reorderTrackedBossBarsBelowReservedHud(player);
+	}
+
+	private static void stopDroneHudGlitchBurst(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		UUID playerId = player.getUUID();
+		PLAYER_DRONE_GLITCH_BURST_START_TICKS.remove(playerId);
+		ServerBossEvent burst = PLAYER_DRONE_GLITCH_BURSTS.get(playerId);
+		if (burst != null) {
+			burst.removePlayer(player);
+		}
+		PLAYER_DRONE_GLITCH_BURSTS.remove(playerId, burst);
+	}
+
+	private static void tickDroneHudGlitchBursts(MinecraftServer server) {
+		if (server == null || PLAYER_DRONE_GLITCH_BURST_START_TICKS.isEmpty()) {
+			return;
+		}
+		for (Map.Entry<UUID, Long> entry : new ArrayList<>(PLAYER_DRONE_GLITCH_BURST_START_TICKS.entrySet())) {
+			ServerPlayer player = server.getPlayerList().getPlayer(entry.getKey());
+			ServerBossEvent burst = PLAYER_DRONE_GLITCH_BURSTS.get(entry.getKey());
+			if (player == null || burst == null || player.level() == null) {
+				PLAYER_DRONE_GLITCH_BURST_START_TICKS.remove(entry.getKey());
+				PLAYER_DRONE_GLITCH_BURSTS.remove(entry.getKey());
+				continue;
+			}
+			long elapsed = player.level().getGameTime() - entry.getValue();
+			if (elapsed >= DRONE_HUD_GLITCH_BURST_FRAME_COUNT) {
+				stopDroneHudGlitchBurst(player);
+				continue;
+			}
+			burst.setName(buildDroneHudGlitchBurstTitle((int) elapsed));
+		}
 	}
 
 	public static Component getHudOverlayTitle(ServerPlayer player) {
@@ -5831,7 +6016,15 @@ public final class DroneSystem {
 			return false;
 		}
 		ServerBossEvent hud = PLAYER_DRONE_HUDS.get(player.getUUID());
-		return hud != null && hud.getId().equals(bossBarId);
+		if (hud != null && hud.getId().equals(bossBarId)) {
+			return true;
+		}
+		ServerBossEvent overlay = PLAYER_DRONE_GLITCH_OVERLAYS.get(player.getUUID());
+		if (overlay != null && overlay.getId().equals(bossBarId)) {
+			return true;
+		}
+		ServerBossEvent burst = PLAYER_DRONE_GLITCH_BURSTS.get(player.getUUID());
+		return burst != null && burst.getId().equals(bossBarId);
 	}
 
 	private static String buildDroneHudSnapshot(DroneControlSession session, Vec3 velocity, int controlSpeedSlot) {
@@ -5974,6 +6167,7 @@ public final class DroneSystem {
 			return false;
 		}
 
+		stopDroneHudGlitchBurst(player);
 		stopControlling(player, false);
 		POST_CONTROL_MOVE_SUPPRESSED_UNTIL_TICK.remove(player.getUUID());
 		CameraVideoRecordingSystem.stopForDroneControl(player);
@@ -6056,6 +6250,9 @@ public final class DroneSystem {
 			return;
 		}
 		DroneControlSession session = ACTIVE_SESSIONS.remove(player.getUUID());
+		if (session != null) {
+			markPostControlDroneTeleportAcks(player);
+		}
 		INPUTS.remove(player.getUUID());
 		stopControlledOperatorAudio(player.getUUID());
 		if (session == null) {
@@ -6128,6 +6325,9 @@ public final class DroneSystem {
 			NEXT_DRONE_SOUND_TICK.remove(session.droneUuid());
 		}
 		clearDroneHud(player, session, true);
+		if (notify) {
+			startDroneHudGlitchBurst(player);
+		}
 		restoreControlledOperatorClientState(player);
 		rebuildReleasedDroneVisualEntitiesForOperator(player, root);
 		schedulePostControlClientResync(player);

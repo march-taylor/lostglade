@@ -108,10 +108,10 @@ public abstract class ServerGamePacketListenerDroneControlMixin {
 
 	@Inject(method = "handleAcceptTeleportPacket", at = @At("HEAD"), cancellable = true)
 	private void lg2$consumeDroneProxyTeleportAck(ServerboundAcceptTeleportationPacket packet, CallbackInfo ci) {
-		if (packet == null || !DroneSystem.isControllingDrone(this.player)) {
+		if (packet == null) {
 			return;
 		}
-		if (DroneSystem.handleControlledAcceptTeleportPacket(this.player, packet.getId())) {
+		if (DroneSystem.shouldConsumeDroneProxyTeleportAck(this.player, packet.getId())) {
 			ci.cancel();
 		}
 	}
