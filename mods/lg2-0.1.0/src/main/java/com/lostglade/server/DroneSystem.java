@@ -6271,11 +6271,18 @@ public final class DroneSystem {
 		CONTROLLERS_BY_DRONE.remove(session.droneUuid(), player.getUUID());
 		MinecraftServer server = player.level().getServer();
 		Entity root = server == null ? null : findDroneRoot(server, session.droneDimension(), session.droneUuid());
+		// A destroyed drone is discarded immediately after this method returns.  Do not
+		// send its layer/passenger packets (or respawn its visual entities) to the
+		// operator in that short interval: the subsequent entity-removal packets can
+		// otherwise race them on the client and leave its entity tracker inconsistent.
+		boolean droneRemainsAfterControlStop = releaseDrone && root != null && root.isAlive();
 		DroneAutoAimTarget releasedAutoAimTarget = session.autoAimTarget();
 
 		clearControlledOperatorTransientState(player, session);
 		clearControlledOperatorPassengerAttachment(player);
-		clearControlledOperatorDroneLayerAttachment(player, root);
+		if (droneRemainsAfterControlStop) {
+			clearControlledOperatorDroneLayerAttachment(player, root);
+		}
 		removeControlledOperatorBodyMirror(player);
 		clearControlledOperatorMovementState(player);
 		markPostControlMoveSuppressedForPlayer(player);
@@ -6329,7 +6336,9 @@ public final class DroneSystem {
 			startDroneHudGlitchBurst(player);
 		}
 		restoreControlledOperatorClientState(player);
-		rebuildReleasedDroneVisualEntitiesForOperator(player, root);
+		if (droneRemainsAfterControlStop) {
+			rebuildReleasedDroneVisualEntitiesForOperator(player, root);
+		}
 		schedulePostControlClientResync(player);
 		VISUALLY_CONTROLLED_PLAYERS.remove(player.getUUID());
 

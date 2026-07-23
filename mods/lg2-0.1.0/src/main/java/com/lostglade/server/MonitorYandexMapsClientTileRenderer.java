@@ -540,6 +540,10 @@ final class MonitorYandexMapsClientTileRenderer {
 		private final Map<TileKey, Long> retryAfter = new ConcurrentHashMap<>();
 		private final Map<TileKey, Integer> failedAttempts = new ConcurrentHashMap<>();
 		private final LinkedHashMap<TileKey, DirtyTileState> pendingBaseTiles = new LinkedHashMap<>();
+		// Keys whose already-rendered cache entries may be dropped first. Keeping
+		// this separately makes backlog trimming O(1), rather than repeatedly
+		// scanning every pending tile on the main server thread.
+		private final LinkedHashMap<TileKey, Boolean> evictablePendingBaseTiles = new LinkedHashMap<>();
 		private final Set<ChunkPos> deferredChunkDiscoveries = ConcurrentHashMap.newKeySet();
 		private final Map<ScreenRuntimeKey, Runnable> activeViewCallbacks = new ConcurrentHashMap<>();
 		// The screen compositor may render several monitors concurrently.  Keep
@@ -1003,6 +1007,7 @@ final class MonitorYandexMapsClientTileRenderer {
 					DirtyTileState pending = this.pendingBaseTiles.get(key);
 					if (pending != null && pending.lastMarkedAt() <= freshnessCutoffMillis) {
 						this.pendingBaseTiles.remove(key);
+						this.evictablePendingBaseTiles.remove(key);
 					}
 				}
 				trimToBudget();
@@ -1509,6 +1514,7 @@ final class MonitorYandexMapsClientTileRenderer {
 					);
 				}
 				if (renderedBefore) {
+					this.evictablePendingBaseTiles.put(key, Boolean.TRUE);
 					trimPendingBaseTilesLocked();
 				}
 			}
@@ -1526,19 +1532,17 @@ final class MonitorYandexMapsClientTileRenderer {
 		}
 
 		private void trimPendingBaseTilesLocked() {
-			while (this.pendingBaseTiles.size() > MAX_DIRTY_BASE_TILES_PER_DIMENSION) {
-				TileKey renderedKey = null;
-				for (Map.Entry<TileKey, DirtyTileState> entry : this.pendingBaseTiles.entrySet()) {
-					DirtyTileState state = entry.getValue();
-					if (state != null && state.renderedBefore()) {
-						renderedKey = entry.getKey();
-						break;
-					}
-				}
-				if (renderedKey != null) {
+			while (this.pendingBaseTiles.size() > MAX_DIRTY_BASE_TILES_PER_DIMENSION
+					&& !this.evictablePendingBaseTiles.isEmpty()) {
+				Iterator<TileKey> iterator = this.evictablePendingBaseTiles.keySet().iterator();
+				TileKey renderedKey = iterator.next();
+				iterator.remove();
+				DirtyTileState state = this.pendingBaseTiles.get(renderedKey);
+				if (state != null && state.renderedBefore()) {
 					this.pendingBaseTiles.remove(renderedKey);
-					continue;
 				}
+			}
+			if (this.pendingBaseTiles.size() > MAX_DIRTY_BASE_TILES_PER_DIMENSION) {
 				// New world tiles are never discarded. They are the source of truth
 				// for a full map; losing one here used to leave a permanent hole.
 				return;
@@ -1597,6 +1601,7 @@ final class MonitorYandexMapsClientTileRenderer {
 					return null;
 				}
 				this.pendingBaseTiles.remove(selectedKey);
+				this.evictablePendingBaseTiles.remove(selectedKey);
 				return new PendingBaseTile(
 						selectedKey,
 						selectedState.discoveryOnly(),
@@ -1855,6 +1860,7 @@ final class MonitorYandexMapsClientTileRenderer {
 				DirtyTileState pending = this.pendingBaseTiles.get(key);
 				if (pending != null && pending.lastMarkedAt() <= freshnessCutoffMillis) {
 					this.pendingBaseTiles.remove(key);
+					this.evictablePendingBaseTiles.remove(key);
 				}
 			}
 		}

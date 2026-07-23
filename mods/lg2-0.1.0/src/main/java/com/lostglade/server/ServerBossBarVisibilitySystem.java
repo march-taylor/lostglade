@@ -1,6 +1,7 @@
 package com.lostglade.server;
 
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.game.ClientboundBossEventPacket;
@@ -24,6 +25,14 @@ public final class ServerBossBarVisibilitySystem {
 	public static void register() {
 		ServerTickEvents.END_SERVER_TICK.register(ServerBossBarVisibilitySystem::tick);
 		ServerLifecycleEvents.SERVER_STOPPING.register(server -> PLAYER_STATES.clear());
+		// Bossbar ids belong to a single client connection. Keeping the previous
+		// connection's tracked bars after a reconnect lets a later synthetic
+		// UPDATE_NAME target an id the new client has never received an ADD for;
+		// vanilla then throws an NPE while handling the packet.
+		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) ->
+				PLAYER_STATES.remove(handler.player.getUUID()));
+		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) ->
+				PLAYER_STATES.remove(handler.player.getUUID()));
 	}
 
 	public static boolean shouldBypassPacketFilter() {
@@ -101,7 +110,7 @@ public final class ServerBossBarVisibilitySystem {
 
 		if (update.type == BossBarPacketType.ADD || update.type == BossBarPacketType.UPDATE_NAME) {
 			TrackedBossBar bossBar = state.activeBossBars.get(update.id);
-			if (bossBar != null) {
+			if (bossBar != null && state.clientVisibleBossBars.contains(update.id)) {
 				BossEvent rewrittenBossBar = bossBar.toBossEvent(withDroneOverlayTitle(bossBar.name, overlayTitle));
 				return update.type == BossBarPacketType.ADD
 						? ClientboundBossEventPacket.createAddPacket(rewrittenBossBar)
@@ -130,6 +139,9 @@ public final class ServerBossBarVisibilitySystem {
 		DroneSystem.suspendHudOverlayForExternalBossBar(player);
 		state.restoreDroneOverlayNextTick = false;
 		for (TrackedBossBar bossBar : state.activeBossBars.values()) {
+			if (!state.clientVisibleBossBars.contains(bossBar.id)) {
+				continue;
+			}
 			sendSyntheticPacket(player, ClientboundBossEventPacket.createUpdateNamePacket(
 					bossBar.toBossEvent(withDroneOverlayTitle(bossBar.name, overlayTitle))
 			));
@@ -148,15 +160,19 @@ public final class ServerBossBarVisibilitySystem {
 		}
 		state.restoreDroneOverlayNextTick = false;
 		for (TrackedBossBar bossBar : state.activeBossBars.values()) {
+			if (!state.clientVisibleBossBars.contains(bossBar.id)) {
+				continue;
+			}
 			sendSyntheticPacket(player, ClientboundBossEventPacket.createUpdateNamePacket(bossBar.toBossEvent()));
 		}
 	}
 
 	private static void applyPacketUpdate(PlayerBossBarState state, BossBarPacketUpdate update) {
 		switch (update.type) {
-			case ADD -> state.activeBossBars.put(
-					update.id,
-					new TrackedBossBar(
+			case ADD -> {
+				state.activeBossBars.put(
+						update.id,
+						new TrackedBossBar(
 							update.id,
 							copyComponent(update.name),
 							update.progress == null ? 0.0F : update.progress,
@@ -165,9 +181,14 @@ public final class ServerBossBarVisibilitySystem {
 							Boolean.TRUE.equals(update.darkenScreen),
 							Boolean.TRUE.equals(update.playBossMusic),
 							Boolean.TRUE.equals(update.createWorldFog)
-					)
-			);
-			case REMOVE -> state.activeBossBars.remove(update.id);
+						)
+				);
+				state.clientVisibleBossBars.add(update.id);
+			}
+			case REMOVE -> {
+				state.activeBossBars.remove(update.id);
+				state.clientVisibleBossBars.remove(update.id);
+			}
 			case UPDATE_PROGRESS -> {
 				TrackedBossBar bossBar = state.activeBossBars.get(update.id);
 				if (bossBar != null && update.progress != null) {
@@ -325,6 +346,7 @@ public final class ServerBossBarVisibilitySystem {
 		private boolean needsReorder;
 		private boolean restoreDroneOverlayNextTick;
 		private final Map<UUID, TrackedBossBar> activeBossBars = new LinkedHashMap<>();
+		private final java.util.Set<UUID> clientVisibleBossBars = new java.util.HashSet<>();
 	}
 
 	private static final class TrackedBossBar {

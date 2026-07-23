@@ -115,6 +115,10 @@ public final class RendererBotCameraSystem {
 	private static final int SHADOW_REAR_VIEW_CHUNKS = 2;
 	private static final float MAP_TILE_TOP_DOWN_YAW = 180.0F;
 	private static final float MAP_TILE_TOP_DOWN_PITCH = 90.0F;
+	// Top-down map tiles are cached world snapshots, not live camera frames.
+	// Keeping their sky at noon makes a cached tile deterministic and avoids a
+	// shadow-level state packet every server tick just because the sun moved.
+	private static final long MAP_TILE_RENDER_DAY_TIME = 6_000L;
 	private static final long LIVE_STREAM_STALE_MS = 1_500L;
 	private static final long MAP_TILE_CAPTURE_TIMEOUT_MS = 60_000L;
 	// Only one map job can own the shared shadow world, so a valid queued job may
@@ -2773,20 +2777,14 @@ public final class RendererBotCameraSystem {
 			if (!isPendingMapTileCapture(capture) || !capture.shouldResyncShadow(now)) {
 				continue;
 			}
-			ShadowDimensionSyncState state = ACTIVE_SHADOW_SYNC_STATES.get(
-					new ShadowSyncKey(capture.botUuid(), capture.renderSessionId())
-			);
-			ServerLevel level = server.getLevel(capture.dimension());
-			if (state == null || level == null) {
-				continue;
-			}
-			LongIterator chunks = state.trackedChunks().iterator();
-			while (chunks.hasNext()) {
-				DIRTY_SHADOW_CHUNKS.add(new ChunkTicketKey(level.dimension(), chunks.nextLong()));
-			}
-			state.forceViewResend();
-			capture.markShadowResynced(now);
-			Lg2.LOGGER.debug("Resending shadow chunks for stalled Yandex map tile {}", capture.requestId());
+			// Re-sending every shadow chunk kept a stuck client-side tile alive, but
+			// also re-queued the whole view every five seconds forever. One failed
+			// tile could therefore consume the server tick long after a rocket launch
+			// had completed. Fail it instead: the map cache already applies bounded
+			// exponential retry backoff, so a transient renderer hiccup still recovers
+			// without an unbounded chunk/network flood.
+			failMapTileCapture(capture.requestId(), capture,
+					"Клиент камеры не подтвердил тайл карты после синхронизации теневого мира");
 		}
 	}
 
@@ -3183,13 +3181,20 @@ public final class RendererBotCameraSystem {
 		);
 		syncShadowLevelInit(bot, desiredState, activeState);
 		syncShadowView(bot, desiredState, activeState);
-		syncShadowLevelState(bot, desiredState.level(), activeState);
+		syncShadowLevelState(bot, desiredState, activeState);
 		syncShadowChunks(bot, desiredState, activeState, consumedDirtyChunks);
 		syncShadowEntities(bot, desiredState, activeState);
 	}
 
 	private static void syncShadowLevelInit(ServerPlayer bot, ShadowDesiredState desiredState, ShadowDimensionSyncState activeState) {
 		ServerLevel level = desiredState.level();
+		boolean fixedMapLighting = desiredState.readOnlyMapOnly();
+		long gameTime = fixedMapLighting ? MAP_TILE_RENDER_DAY_TIME : level.getGameTime();
+		long dayTime = fixedMapLighting ? MAP_TILE_RENDER_DAY_TIME : level.getDayTime();
+		boolean tickDayTime = !fixedMapLighting && level.getGameRules().get(GameRules.ADVANCE_TIME);
+		boolean raining = !fixedMapLighting && level.isRaining();
+		float rainLevel = fixedMapLighting ? 0.0F : level.getRainLevel(1.0F);
+		float thunderLevel = fixedMapLighting ? 0.0F : level.getThunderLevel(1.0F);
 		String dimensionTypeId = level.dimensionTypeRegistration()
 				.unwrapKey()
 				.orElseThrow()
@@ -3226,12 +3231,12 @@ public final class RendererBotCameraSystem {
 						level.isFlat(),
 						level.getServer().getWorldData().isHardcore(),
 						level.getDifficulty().ordinal(),
-						level.getGameTime(),
-						level.getDayTime(),
-						level.getGameRules().get(GameRules.ADVANCE_TIME),
-						level.isRaining(),
-						level.getRainLevel(1.0F),
-						level.getThunderLevel(1.0F),
+						gameTime,
+						dayTime,
+						tickDayTime,
+						raining,
+						rainLevel,
+						thunderLevel,
 						level.getSeaLevel(),
 						desiredState.viewDistance(),
 						Math.max(2, level.getServer().getPlayerList().getSimulationDistance())
@@ -3264,13 +3269,18 @@ public final class RendererBotCameraSystem {
 		);
 	}
 
-	private static void syncShadowLevelState(ServerPlayer bot, ServerLevel level, ShadowDimensionSyncState activeState) {
-		long gameTime = level.getGameTime();
-		long dayTime = level.getDayTime();
-		boolean tickDayTime = level.getGameRules().get(GameRules.ADVANCE_TIME);
-		boolean raining = level.isRaining();
-		float rainLevel = level.getRainLevel(1.0F);
-		float thunderLevel = level.getThunderLevel(1.0F);
+	private static void syncShadowLevelState(ServerPlayer bot, ShadowDesiredState desiredState, ShadowDimensionSyncState activeState) {
+		if (desiredState == null || desiredState.level() == null) {
+			return;
+		}
+		ServerLevel level = desiredState.level();
+		boolean fixedMapLighting = desiredState.readOnlyMapOnly();
+		long gameTime = fixedMapLighting ? MAP_TILE_RENDER_DAY_TIME : level.getGameTime();
+		long dayTime = fixedMapLighting ? MAP_TILE_RENDER_DAY_TIME : level.getDayTime();
+		boolean tickDayTime = !fixedMapLighting && level.getGameRules().get(GameRules.ADVANCE_TIME);
+		boolean raining = !fixedMapLighting && level.isRaining();
+		float rainLevel = fixedMapLighting ? 0.0F : level.getRainLevel(1.0F);
+		float thunderLevel = fixedMapLighting ? 0.0F : level.getThunderLevel(1.0F);
 		if (activeState.lastGameTime() == gameTime
 				&& activeState.lastDayTime() == dayTime
 				&& activeState.lastTickDayTime() == tickDayTime

@@ -53,7 +53,6 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
-import net.minecraft.world.level.block.FallingBlock;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.Property;
@@ -99,6 +98,7 @@ public final class RocketLaunchEventSystem {
 	private static final int MAX_AUTO_SELECTION_FOOTPRINT = 4_096;
 	private static final int MAX_ROCKET_BLOCKS = 1_200;
 	private static final long PREHEAT_TICKS = 20L * 12L;
+	private static final int ARMED_POWER_CHECKS_PER_TICK = 16;
 	private static final double SPACE_ALTITUDE = 1_000.0D;
 	/* Client-only rocket copies sit just inside normal entity visibility.  Their
 	 * apparent scale is the same as if the real rocket kept flying farther away. */
@@ -116,6 +116,7 @@ public final class RocketLaunchEventSystem {
 	private static final double ROCKET_TORQUE_RESPONSE = 0.42D;
 	private static final double ROCKET_IDLE_SPIN_PER_TICK = 0.0042D;
 	private static final double LAUNCH_PAD_CLEARANCE = 2.25D;
+	private static final long ENGINE_IGNITION_BURST_TICKS = 12L;
 	private static final int MAX_CRASH_DEBRIS = 96;
 	private static final int MAX_LARGE_WRECK_BLOCKS = 640;
 	// The blast diameter is ten times the largest rocket dimension.  The cap
@@ -137,6 +138,9 @@ public final class RocketLaunchEventSystem {
 
 	private static final Map<UUID, AdminSelection> ADMIN_SELECTIONS = new HashMap<>();
 	private static final Map<UUID, RocketProjectionView> ROCKET_PROJECTIONS = new HashMap<>();
+	private static final Set<BlockPos> ACTIVE_ARMED_POWER_POINTS = new HashSet<>();
+	private static int armedPowerScanCursor;
+	private static boolean armedPowerStatePrimed;
 	private static final Set<Relative> ABSOLUTE_ENTITY_TELEPORT = EnumSet.noneOf(Relative.class);
 	private static final ServerEntity.Synchronizer ROCKET_PROJECTION_SYNCHRONIZER = new ServerEntity.Synchronizer() {
 		@Override
@@ -564,7 +568,7 @@ public final class RocketLaunchEventSystem {
 		next.maxX = bounds.maxX;
 		next.maxY = bounds.maxY;
 		next.maxZ = bounds.maxZ;
-		next.lastTriggerPowered = isRocketPowered(level, blocks);
+		next.lastTriggerPowered = false;
 		next.blocks = blocks;
 		next.engines = captureEnginePoints(selection, blocks, source);
 		if (next.engines == null || next.engines.isEmpty()) {
@@ -573,6 +577,7 @@ public final class RocketLaunchEventSystem {
 		next.initializePhysicsFromBlocks();
 
 		rocket = next;
+		resetArmedPowerScan();
 		stateLoaded = true;
 		stateDirty = true;
 		MonitorYandexMapsRuntime.setGpsEnabled(source.getServer(), false);
@@ -598,15 +603,6 @@ public final class RocketLaunchEventSystem {
 			BlockState state = level.getBlockState(pos);
 			if (state.isAir()) {
 				continue;
-			}
-			if (level.getBlockEntity(pos) != null) {
-				source.sendFailure(Component.literal("Ракета не может содержать block entity: " + formatPos(pos)
-						+ ". Убери сундук, табличку, баннер и т.п."));
-				return null;
-			}
-			if (state.getBlock() instanceof FallingBlock) {
-				source.sendFailure(Component.literal("Ракета не может содержать падающий блок: " + formatPos(pos) + "."));
-				return null;
 			}
 			if (blocks.size() >= MAX_ROCKET_BLOCKS) {
 				source.sendFailure(Component.literal("Лимит ракеты — " + MAX_ROCKET_BLOCKS + " блоков."));
@@ -660,6 +656,7 @@ public final class RocketLaunchEventSystem {
 		}
 		discardLegacyRocketExhaustDisplays(level);
 		clearAllRocketProjections(source.getServer());
+		resetArmedPowerScan();
 		rocket = null;
 		stateDirty = true;
 		MonitorYandexMapsRuntime.setGpsEnabled(source.getServer(), false);
@@ -681,6 +678,7 @@ public final class RocketLaunchEventSystem {
 			discardCrashDebris(level);
 		}
 		clearAllRocketProjections(server);
+		resetArmedPowerScan();
 		rocket = null;
 		stateDirty = true;
 		MonitorYandexMapsRuntime.setGpsEnabled(server, false);
@@ -698,12 +696,7 @@ public final class RocketLaunchEventSystem {
 		discardLegacyRocketExhaustDisplays(level);
 		LaunchStage stage = LaunchStage.from(rocket.stage);
 		if (stage == LaunchStage.ARMED) {
-			boolean powered = isRocketPowered(level, rocket.blocks);
-			if (powered && !rocket.lastTriggerPowered) {
-				startLaunch(server, level);
-				return;
-			}
-			rocket.lastTriggerPowered = powered;
+			tickArmedPowerScan(level, server);
 			return;
 		}
 		if (stage == LaunchStage.CRASHED) {
@@ -750,8 +743,10 @@ public final class RocketLaunchEventSystem {
 	}
 
 	private static void startLaunch(MinecraftServer server, ServerLevel level) {
-		if (!materializeRocketForLaunch(level)) {
+		boolean materialized = materializeRocketForLaunch(level);
+		if (!materialized) {
 			Lg2.LOGGER.warn("Rocket launch at {} could not capture every current rocket block; launch cancelled.", rocket.origin());
+			resetArmedPowerScan();
 			return;
 		}
 		if (rocket.engines == null || rocket.engines.isEmpty()) {
@@ -762,6 +757,7 @@ public final class RocketLaunchEventSystem {
 			rocket.initializePhysicsFromBlocks();
 		}
 		discardServerRocketDisplays(level);
+		resetArmedPowerScan();
 		rocket.clientOnlyVisuals = true;
 		clearAllRocketProjections(server);
 		rocket.stage = LaunchStage.LAUNCHING.name();
@@ -1730,10 +1726,11 @@ public final class RocketLaunchEventSystem {
 		List<EngineCluster> clusters = clusterEnginePoints(rocket.engines);
 		for (int clusterIndex = 0; clusterIndex < clusters.size(); clusterIndex++) {
 			EngineCluster cluster = clusters.get(clusterIndex);
-			// A connected footprint is a single large engine. Its flames still cover
-			// every marked block, preserving the exact total particle count.
-			for (PersistedEnginePoint enginePoint : cluster.points) {
-				Vec3 engine = engineVisualPosition(enginePoint, rocketScale);
+			// Add midpoint emitters between adjacent engine blocks. The visible plume
+			// therefore remains continuous even when a large engine is built from a
+			// connected footprint rather than one block.
+			List<Vec3> exhaustSources = buildConnectedEngineExhaustSources(cluster, rocketScale);
+			for (Vec3 engine : exhaustSources) {
 				Vec3 nozzle = engine.add(exhaustDirection.scale(0.30D * rocketScale));
 				level.sendParticles(SPACE_RACE_FLAME_WIDE, nozzle.x + exhaustDirection.x * 1.20D * rocketScale,
 						nozzle.y + exhaustDirection.y * 1.20D * rocketScale, nozzle.z + exhaustDirection.z * 1.20D * rocketScale,
@@ -1745,20 +1742,38 @@ public final class RocketLaunchEventSystem {
 						nozzle.y + exhaustDirection.y * 0.20D * rocketScale, nozzle.z + exhaustDirection.z * 0.20D * rocketScale,
 						1, 0.0D, 0.0D, 0.0D, 0.0D);
 			}
-			if (elapsed % 2L != 0L) {
+			boolean ignitionBurst = preheating && elapsed <= ENGINE_IGNITION_BURST_TICKS;
+			if (!ignitionBurst && elapsed % 2L != 0L) {
 				continue;
 			}
 			int puffsPerEngine = warmup > 0.55D ? 21 : Math.max(2, (int) Math.round(16.0D * warmup));
+			if (ignitionBurst) {
+				puffsPerEngine = Math.max(puffsPerEngine, 6);
+			}
 			int smokePuffs = puffsPerEngine * cluster.points.size();
 			for (int puff = 0; puff < smokePuffs; puff++) {
-				PersistedEnginePoint enginePoint = cluster.points.get(puff % cluster.points.size());
-				Vec3 engine = engineVisualPosition(enginePoint, rocketScale);
-				double phase = puff * 2.39996322973D + elapsed * 0.071D + clusterIndex * 1.617D;
-				double pulse = 0.84D + 0.16D * Math.sin(phase * 1.91D);
+				Vec3 engine = exhaustSources.get(puff % exhaustSources.size());
+				// Randomize each puff independently. The deterministic phase alone made
+				// a multi-engine plume look like a perfectly symmetric spiral.
+				double phase = level.random.nextDouble() * (Math.PI * 2.0D)
+						+ elapsed * 0.071D + clusterIndex * 1.617D;
+				double pulse = 0.72D + level.random.nextDouble() * 0.42D;
+				double lateralStrength = 0.66D + level.random.nextDouble() * 0.55D;
 				Vec3 aroundNozzle = sideA.scale(Math.cos(phase)).add(sideB.scale(Math.sin(phase)));
-				double downward = groundBurst ? 0.08D : 0.68D;
-				Vec3 direction = unit(aroundNozzle.add(exhaustDirection.scale(downward)), exhaustDirection);
-				Vec3 rayStart = engine.add(exhaustDirection.scale(0.48D * rocketScale));
+				// When the nozzle is close to the pad, hot gases are reflected sideways
+				// and upward. Starting just above the pad prevents every ray from being
+				// clipped by a solid block directly below the engine.
+				double exhaustStrength = groundBurst ? 0.02D : 0.52D + level.random.nextDouble() * 0.30D;
+				double reboundStrength = groundBurst ? 0.10D + level.random.nextDouble() * 0.36D : 0.0D;
+				Vec3 direction = unit(
+						aroundNozzle.scale(lateralStrength)
+								.add(exhaustDirection.scale(exhaustStrength - reboundStrength)),
+						exhaustDirection
+				);
+				double lateralLaunchOffset = (groundBurst ? 0.15D : 0.06D) * rocketScale;
+				Vec3 rayStart = engine
+						.add(exhaustDirection.scale(0.47D * rocketScale))
+						.add(aroundNozzle.scale(lateralLaunchOffset));
 				double requestedDistance = groundBurst ? 3.2D : 4.8D;
 				double freeDistance = freeSmokeDistance(level, rayStart, direction, requestedDistance);
 				if (freeDistance < 0.12D) {
@@ -1772,6 +1787,31 @@ public final class RocketLaunchEventSystem {
 						direction.x * speed, direction.y * speed, direction.z * speed, 1.0D);
 			}
 		}
+	}
+
+	private static List<Vec3> buildConnectedEngineExhaustSources(EngineCluster cluster, double rocketScale) {
+		if (cluster == null || cluster.points.isEmpty()) {
+			return List.of();
+		}
+		Map<BlockPos, PersistedEnginePoint> engineByPos = new HashMap<>();
+		List<Vec3> sources = new ArrayList<>();
+		for (PersistedEnginePoint point : cluster.points) {
+			engineByPos.put(point.pos(), point);
+			sources.add(engineVisualPosition(point, rocketScale));
+		}
+		// EAST and SOUTH cover every shared edge exactly once.
+		for (PersistedEnginePoint point : cluster.points) {
+			for (Direction direction : new Direction[]{Direction.EAST, Direction.SOUTH}) {
+				PersistedEnginePoint neighbour = engineByPos.get(point.pos().relative(direction));
+				if (neighbour == null) {
+					continue;
+				}
+				Vec3 first = engineVisualPosition(point, rocketScale);
+				Vec3 second = engineVisualPosition(neighbour, rocketScale);
+				sources.add(first.add(second).scale(0.5D));
+			}
+		}
+		return sources;
 	}
 
 	private static List<EngineCluster> clusterEnginePoints(List<PersistedEnginePoint> engines) {
@@ -1894,9 +1934,6 @@ public final class RocketLaunchEventSystem {
 				// not become part of the launched rigid body.
 				continue;
 			}
-			if (level.getBlockEntity(block.pos()) != null || current.getBlock() instanceof FallingBlock) {
-				return false;
-			}
 			block.state = serializeBlockState(current);
 			currentBlocks.add(block);
 		}
@@ -1972,20 +2009,46 @@ public final class RocketLaunchEventSystem {
 		stateDirty = true;
 	}
 
-	private static boolean isRocketPowered(ServerLevel level, List<PersistedRocketBlock> blocks) {
-		if (level == null || blocks == null) {
-			return false;
+	private static boolean isRocketBlockPowered(ServerLevel level, BlockPos pos) {
+		return level.getBlockState(pos).is(Blocks.REDSTONE_BLOCK) || level.hasNeighborSignal(pos);
+	}
+
+	private static void tickArmedPowerScan(ServerLevel level, MinecraftServer server) {
+		if (level == null || server == null || rocket == null || rocket.blocks == null || rocket.blocks.isEmpty()) {
+			return;
 		}
-		for (PersistedRocketBlock block : blocks) {
+		int scanned = 0;
+		while (scanned++ < ARMED_POWER_CHECKS_PER_TICK) {
+			if (armedPowerScanCursor >= rocket.blocks.size()) {
+				armedPowerScanCursor = 0;
+				armedPowerStatePrimed = true;
+			}
+			PersistedRocketBlock block = rocket.blocks.get(armedPowerScanCursor++);
 			if (block == null || !level.hasChunkAt(block.pos())) {
 				continue;
 			}
 			BlockPos pos = block.pos();
-			if (level.hasNeighborSignal(pos) || level.getBestNeighborSignal(pos) > 0 || level.getBlockState(pos).is(Blocks.REDSTONE_BLOCK)) {
-				return true;
+			if (isRocketBlockPowered(level, pos)) {
+				ACTIVE_ARMED_POWER_POINTS.add(pos);
+			} else {
+				ACTIVE_ARMED_POWER_POINTS.remove(pos);
 			}
 		}
-		return false;
+		if (!armedPowerStatePrimed) {
+			return;
+		}
+		boolean powered = !ACTIVE_ARMED_POWER_POINTS.isEmpty();
+		if (powered && !rocket.lastTriggerPowered) {
+			startLaunch(server, level);
+			return;
+		}
+		rocket.lastTriggerPowered = powered;
+	}
+
+	private static void resetArmedPowerScan() {
+		ACTIVE_ARMED_POWER_POINTS.clear();
+		armedPowerScanCursor = 0;
+		armedPowerStatePrimed = false;
 	}
 
 	private static ServerLevel rocketLevel(MinecraftServer server) {
@@ -2004,7 +2067,8 @@ public final class RocketLaunchEventSystem {
 			try (Reader reader = Files.newBufferedReader(path)) {
 				RocketState loaded = STATE_GSON.fromJson(reader, RocketState.class);
 				if (isValidState(loaded)) {
-					rocket = loaded;
+				rocket = loaded;
+				resetArmedPowerScan();
 				} else {
 					Lg2.LOGGER.warn("Ignoring invalid persisted rocket-launch state from {}", path);
 				}
