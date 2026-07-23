@@ -17,12 +17,24 @@ final class ServerTabPlaceholders {
 	private static final int TAB_LOGO_GLYPHS_BASE = 0xF100;
 	private static final int TAB_LOGO_FRAME_COUNT = 48;
 	private static final int TAB_LOGO_FRAME_TICKS = 2;
+	private static final int TPS_SAMPLE_WINDOW = 120;
+	private static final long MAX_TPS_SAMPLE_NANOS = 5_000_000_000L;
+	private static final long[] TICK_INTERVAL_SAMPLES_NANOS = new long[TPS_SAMPLE_WINDOW];
+	private static int tickIntervalSampleCount;
+	private static int nextTickIntervalSample;
+	private static long tickIntervalSampleTotalNanos;
+	private static long previousTickStartNanos = Long.MIN_VALUE;
 
 	private ServerTabPlaceholders() {
 	}
 
 	static void register() {
-		ServerLifecycleEvents.SERVER_STARTED.register(ServerTabPlaceholders::refreshAllHeaders);
+		ServerLifecycleEvents.SERVER_STARTED.register(server -> {
+			resetTpsMeasurement();
+			refreshAllHeaders(server);
+		});
+		ServerLifecycleEvents.SERVER_STOPPING.register(server -> resetTpsMeasurement());
+		ServerTickEvents.START_SERVER_TICK.register(server -> recordTickStart());
 		ServerTickEvents.END_SERVER_TICK.register(server -> {
 			if ((server.getTickCount() % TAB_LOGO_FRAME_TICKS) == 0) {
 				refreshAllHeaders(server);
@@ -65,8 +77,8 @@ final class ServerTabPlaceholders {
 	}
 
 	private static String buildFooterText(MinecraftServer server, ServerPlayer player) {
-		String pingValue = Math.max(0, player.connection.latency()) + " мс";
-		String tpsValue = formatTps(server);
+		String pingValue = formatPing(player);
+		String tpsValue = formatTps();
 		return "\n§a\uED81 §7" + pingValue
 				+ " §8• §a\uED82 §7" + tpsValue;
 	}
@@ -77,13 +89,64 @@ final class ServerTabPlaceholders {
 		return String.valueOf((char) (TAB_LOGO_GLYPHS_BASE + frame));
 	}
 
-	private static String formatTps(MinecraftServer server) {
-		double mspt = Math.max(0.0D, server.getAverageTickTimeNanos() / 1_000_000.0D);
-		double tps = mspt <= 0.0D ? 20.0D : Math.min(20.0D, 1000.0D / mspt);
+	private static String formatPing(ServerPlayer player) {
+		if (player == null || player.connection == null) {
+			return "-";
+		}
+		int latencyMillis = player.connection.latency();
+		return latencyMillis < 0 ? "-" : latencyMillis + " мс";
+	}
+
+	private static String formatTps() {
+		if (tickIntervalSampleCount == 0 || tickIntervalSampleTotalNanos <= 0L) {
+			return "-";
+		}
+		double averageTickIntervalNanos = tickIntervalSampleTotalNanos / (double) tickIntervalSampleCount;
+		double tps = Math.min(20.0D, 1_000_000_000.0D / averageTickIntervalNanos);
 		if (Math.abs(tps - Math.rint(tps)) < 0.05D) {
 			return Long.toString(Math.round(tps));
 		}
 		return String.format(Locale.ROOT, "%.1f", tps);
+	}
+
+	/**
+	 * Measures the period between actual server tick starts. Unlike the vanilla average
+	 * tick-work-time metric, this includes the scheduler delay between ticks and therefore
+	 * reports the TPS players are actually receiving.
+	 */
+	private static void recordTickStart() {
+		long now = System.nanoTime();
+		long previous = previousTickStartNanos;
+		previousTickStartNanos = now;
+		if (previous == Long.MIN_VALUE) {
+			return;
+		}
+
+		long elapsedNanos = now - previous;
+		if (elapsedNanos <= 0L || elapsedNanos > MAX_TPS_SAMPLE_NANOS) {
+			resetTpsSamples();
+			return;
+		}
+
+		if (tickIntervalSampleCount == TPS_SAMPLE_WINDOW) {
+			tickIntervalSampleTotalNanos -= TICK_INTERVAL_SAMPLES_NANOS[nextTickIntervalSample];
+		} else {
+			tickIntervalSampleCount++;
+		}
+		TICK_INTERVAL_SAMPLES_NANOS[nextTickIntervalSample] = elapsedNanos;
+		tickIntervalSampleTotalNanos += elapsedNanos;
+		nextTickIntervalSample = (nextTickIntervalSample + 1) % TPS_SAMPLE_WINDOW;
+	}
+
+	private static void resetTpsMeasurement() {
+		previousTickStartNanos = Long.MIN_VALUE;
+		resetTpsSamples();
+	}
+
+	private static void resetTpsSamples() {
+		tickIntervalSampleCount = 0;
+		nextTickIntervalSample = 0;
+		tickIntervalSampleTotalNanos = 0L;
 	}
 
 	private static void applyNoShadow(TabComponent component) {

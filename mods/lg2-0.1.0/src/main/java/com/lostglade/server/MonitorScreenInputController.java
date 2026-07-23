@@ -198,11 +198,15 @@ final class MonitorScreenInputController {
 					UiRect panelRect = galleryFileMenuPanelRect(layout);
 					UiRect headerRect = galleryFileMenuHeaderRect(layout);
 					UiRect closeRect = galleryFileMenuCloseRect(layout);
+					boolean wallpaperVisible = currentGalleryItemCanBeWallpaperLocked(mediaState);
+					int actionCount = wallpaperVisible ? 5 : 4;
+					int playerBackgroundIndex = wallpaperVisible ? 3 : 2;
+					int deleteIndex = playerBackgroundIndex + 1;
 					boolean insideWindow = panelRect.contains(touchPoint.x(), touchPoint.y()) || headerRect.contains(touchPoint.x(), touchPoint.y());
 					if (closeRect.contains(touchPoint.x(), touchPoint.y()) || !insideWindow) {
 						mediaState.galleryFileMenuOpen = false;
 						mediaState.version++;
-					} else if (galleryFileMenuActionRect(layout, 0).contains(touchPoint.x(), touchPoint.y())) {
+					} else if (galleryFileMenuActionRect(layout, 0, actionCount).contains(touchPoint.x(), touchPoint.y())) {
 						GalleryItem item = currentGalleryItemLocked(mediaState);
 						if (currentGalleryItemSavedLocked(mediaState) && item != null) {
 							PENDING_GALLERY_RENAMES.put(player.getUUID(), new PendingGalleryRenameRequest(component.runtimeKey(), mediaState.galleryIndex, item.url()));
@@ -212,7 +216,7 @@ final class MonitorScreenInputController {
 							mediaState.version++;
 							player.displayClientMessage(galleryRenamePromptMessage(player), true);
 						}
-					} else if (galleryFileMenuActionRect(layout, 1).contains(touchPoint.x(), touchPoint.y())) {
+					} else if (galleryFileMenuActionRect(layout, 1, actionCount).contains(touchPoint.x(), touchPoint.y())) {
 						GalleryItem item = currentGalleryItemLocked(mediaState);
 						if (currentGalleryItemSavedLocked(mediaState) && item != null && effectiveGalleryItemKind(item) != GalleryItemKind.LIVE_CAMERA) {
 							shareItem = item;
@@ -220,20 +224,20 @@ final class MonitorScreenInputController {
 							mediaState.statusText = "";
 							mediaState.version++;
 						}
-					} else if (galleryFileMenuActionRect(layout, 2).contains(touchPoint.x(), touchPoint.y())) {
-						if (currentGalleryItemCanBeWallpaperLocked(mediaState)) {
+					} else if (wallpaperVisible && galleryFileMenuActionRect(layout, 2, actionCount).contains(touchPoint.x(), touchPoint.y())) {
+						if (wallpaperVisible) {
 							galleryWallpaperRequested = true;
 							mediaState.galleryFileMenuOpen = false;
 							mediaState.statusText = "";
 							mediaState.version++;
 						}
-					} else if (galleryFileMenuActionRect(layout, 3).contains(touchPoint.x(), touchPoint.y())) {
+					} else if (galleryFileMenuActionRect(layout, playerBackgroundIndex, actionCount).contains(touchPoint.x(), touchPoint.y())) {
 						mediaState.galleryFileMenuOpen = false;
 						mediaState.playerBackgroundMenuOpen = true;
 						mediaState.galleryDeleteConfirmOpen = false;
 						mediaState.youtubeQueueOpen = false;
 						mediaState.version++;
-					} else if (galleryFileMenuActionRect(layout, 4).contains(touchPoint.x(), touchPoint.y())) {
+					} else if (galleryFileMenuActionRect(layout, deleteIndex, actionCount).contains(touchPoint.x(), touchPoint.y())) {
 						if (currentGalleryItemSavedLocked(mediaState)) {
 							mediaState.galleryFileMenuOpen = false;
 							mediaState.galleryDeleteConfirmOpen = true;
@@ -673,7 +677,7 @@ final class MonitorScreenInputController {
 			} else if (!galleryBrowser
 					&& mediaState.mode == ScreenViewMode.GALLERY
 					&& (usesMusicPlayerLayoutLocked(mediaState)
-					? mediaGalleryMusicPrimaryActionRect(layout)
+					? mediaGalleryMusicPrimaryActionRect(layout, repeatButtonVisibleLocked(mediaState))
 					: mediaPrimaryActionRect(layout, mediaState)).contains(touchPoint.x(), touchPoint.y())) {
 				synchronized (mediaState) {
 					if (currentGalleryItemSavedLocked(mediaState)) {
@@ -814,7 +818,8 @@ final class MonitorScreenInputController {
 					&& mediaState.mode == ScreenViewMode.YOUTUBE_MUSIC
 					&& !isGalleryBackedYoutubeLocked(mediaState)
 					&& !isYoutubeHomePromptLocked(mediaState)
-					&& mediaYoutubeMusicDownloadRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+					&& resolvedActionVisible(mediaState)
+					&& mediaYoutubeMusicDownloadRect(layout, true).contains(touchPoint.x(), touchPoint.y())) {
 				synchronized (mediaState) {
 					youtubeDownloadRequested = true;
 					mediaState.statusText = "";
@@ -852,7 +857,12 @@ final class MonitorScreenInputController {
 					&& mediaState.mode == ScreenViewMode.YOUTUBE_MUSIC
 					&& !isYoutubeHomePromptLocked(mediaState)
 					&& !isGalleryBackedYoutubeLocked(mediaState)
-					&& mediaYoutubeMusicRepeatRect(layout).contains(touchPoint.x(), touchPoint.y()))
+					&& mediaYoutubeMusicRepeatRect(layout, resolvedActionVisible(mediaState)).contains(touchPoint.x(), touchPoint.y()))
+					|| (playerUiVisible
+					&& mediaState.mode == ScreenViewMode.GALLERY
+					&& usesMusicPlayerLayoutLocked(mediaState)
+					&& repeatButtonVisibleLocked(mediaState)
+					&& mediaGalleryMusicRepeatRect(layout, resolvedActionVisible(mediaState)).contains(touchPoint.x(), touchPoint.y()))
 					|| (playerUiVisible
 					&& repeatButtonVisibleLocked(mediaState)
 					&& !usesMusicPlayerLayoutLocked(mediaState)
@@ -872,7 +882,7 @@ final class MonitorScreenInputController {
 					&& isYoutubeFamilyMode(mediaState.mode)
 					&& !isGalleryBackedYoutubeLocked(mediaState)
 					&& (isYoutubeMusicMode(mediaState.mode)
-					? mediaQueueToggleRect(layout, mediaState.mode)
+					? mediaYoutubeMusicQueueRect(layout, resolvedActionVisible(mediaState))
 					: mediaQueueActionRect(layout, mediaState)).contains(touchPoint.x(), touchPoint.y())) {
 				synchronized (mediaState) {
 					mediaState.youtubeQueueOpen = !mediaState.youtubeQueueOpen;
@@ -886,7 +896,7 @@ final class MonitorScreenInputController {
 			} else if (isYoutubeMusicMode(mediaState.mode)
 					&& !isYoutubeHomePromptLocked(mediaState)
 					&& !isGalleryBackedYoutubeLocked(mediaState)
-					&& mediaYoutubeMusicShuffleRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+					&& mediaYoutubeMusicShuffleRect(layout, resolvedActionVisible(mediaState)).contains(touchPoint.x(), touchPoint.y())) {
 				synchronized (mediaState) {
 					mediaState.youtubeMusicShuffleEnabled = !mediaState.youtubeMusicShuffleEnabled;
 					if (mediaState.youtubeMusicShuffleEnabled) {
@@ -901,7 +911,7 @@ final class MonitorScreenInputController {
 			} else if (isYoutubeMusicMode(mediaState.mode)
 					&& !isYoutubeHomePromptLocked(mediaState)
 					&& !isGalleryBackedYoutubeLocked(mediaState)
-					&& mediaYoutubeMusicSearchRect(layout).contains(touchPoint.x(), touchPoint.y())) {
+					&& mediaYoutubeMusicSearchRect(layout, resolvedActionVisible(mediaState)).contains(touchPoint.x(), touchPoint.y())) {
 				requestMediaLink(
 						player,
 						component.runtimeKey(),

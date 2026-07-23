@@ -3568,7 +3568,7 @@ public final class MonitorScreenSystem {
 			youtubeMusicSearchSegment = MediaButtonSegment.LEFT;
 			youtubeMusicShuffleSegment = MediaButtonSegment.MIDDLE;
 			youtubeMusicRepeatSegment = MediaButtonSegment.MIDDLE;
-			queueButtonSegment = MediaButtonSegment.MIDDLE;
+			queueButtonSegment = showYoutubeMusicDownloadButton ? MediaButtonSegment.MIDDLE : MediaButtonSegment.RIGHT;
 			primaryActionSegment = MediaButtonSegment.RIGHT;
 		} else if (musicPlayerLayout && galleryMode && showPrimaryActionButton && showRepeatButton) {
 			repeatButtonSegment = MediaButtonSegment.LEFT;
@@ -3596,11 +3596,11 @@ public final class MonitorScreenSystem {
 		UiRect scaleRect = mediaScaleActionRect(layout, showWallpaperActionButton, showPrimaryActionButton, showNonMusicQueueButton, showRepeatButton && nonMusicChrome, nonMusicChrome);
 		UiRect repeatRect = nonMusicChrome
 				? mediaRepeatActionRect(layout, showWallpaperActionButton, showPrimaryActionButton, showNonMusicQueueButton, showRepeatButton, nonMusicChrome)
-				: youtubeMusicMode ? mediaYoutubeMusicRepeatRect(layout) : mediaGalleryMusicRepeatRect(layout);
+				: youtubeMusicMode ? mediaYoutubeMusicRepeatRect(layout, showYoutubeMusicDownloadButton) : mediaGalleryMusicRepeatRect(layout, showPrimaryActionButton);
 		UiRect primaryActionRect = mediaPrimaryActionRect(layout, showWallpaperActionButton, showPrimaryActionButton, showNonMusicQueueButton, showRepeatButton && nonMusicChrome, nonMusicChrome);
 		UiRect wallpaperActionRect = mediaWallpaperActionRect(layout, showWallpaperActionButton, showPrimaryActionButton, showNonMusicQueueButton, showRepeatButton && nonMusicChrome, nonMusicChrome);
 		UiRect queueToggleRect = musicPlayerLayout
-				? mediaQueueToggleRect(layout, chromeMode)
+				? youtubeMusicMode ? mediaYoutubeMusicQueueRect(layout, showYoutubeMusicDownloadButton) : mediaQueueToggleRect(layout, chromeMode)
 				: mediaQueueActionRect(layout, showWallpaperActionButton, showPrimaryActionButton, showNonMusicQueueButton, showRepeatButton && nonMusicChrome, nonMusicChrome);
 		UiRect timelineRect = mediaTimelineRect(layout, state);
 		boolean darkPlayerSurface = usesDarkMediaPlayerSurface(state);
@@ -3704,8 +3704,8 @@ public final class MonitorScreenSystem {
 				drawMediaCenterControls(graphics, layout, state);
 			}
 			if (youtubeMusicMode && !galleryBackedYoutube && !youtubeHomePrompt) {
-				drawYoutubeMusicSearchButton(graphics, mediaYoutubeMusicSearchRect(layout), layout, youtubeMusicSearchSegment);
-				drawYoutubeMusicShuffleButton(graphics, mediaYoutubeMusicShuffleRect(layout), state.youtubeMusicShuffleEnabled(), layout, youtubeMusicShuffleSegment);
+				drawYoutubeMusicSearchButton(graphics, mediaYoutubeMusicSearchRect(layout, showYoutubeMusicDownloadButton), layout, youtubeMusicSearchSegment);
+				drawYoutubeMusicShuffleButton(graphics, mediaYoutubeMusicShuffleRect(layout, showYoutubeMusicDownloadButton), state.youtubeMusicShuffleEnabled(), layout, youtubeMusicShuffleSegment);
 				drawMediaRepeatButton(graphics, repeatRect, resolvedRepeatMode(state), layout, youtubeMusicRepeatSegment);
 				if (showQueueButton) {
 					drawMediaQueueToggleButton(graphics, queueToggleRect, state.youtubeQueueOpen(), layout, queueButtonSegment);
@@ -3720,7 +3720,7 @@ public final class MonitorScreenSystem {
 				if (showPrimaryActionButton) {
 					drawGalleryPlayerActionButton(
 							graphics,
-							mediaGalleryMusicPrimaryActionRect(layout),
+							mediaGalleryMusicPrimaryActionRect(layout, showRepeatButton),
 							state,
 							layout,
 							primaryActionSegment
@@ -4510,8 +4510,8 @@ public final class MonitorScreenSystem {
 		int progressWidth = Math.max(trackRect.height(), Math.round(trackRect.width() * fraction));
 		fillRoundedRect(graphics, new UiRect(trackRect.x(), trackRect.y(), Math.min(trackRect.width(), progressWidth), trackRect.height()), trackArc, playedFill);
 		if (state.timelineSeekable()) {
-			int markerWidth = clampInt(Math.round(trackRect.height() * 0.9F), 6, 10);
-			int markerHeight = clampInt(trackRect.height() + layout.unit() + 1, trackRect.height() + 8, trackRect.height() + 20);
+			int markerWidth = 2;
+			int markerHeight = clampInt(trackRect.height() + Math.max(5, layout.unit()), 7, 16);
 			int markerCenterX = trackRect.x() + Math.round(trackRect.width() * fraction);
 			int markerX = clampInt(markerCenterX - markerWidth / 2, trackRect.x(), Math.max(trackRect.x(), trackRect.right() - markerWidth));
 			int markerY = trackRect.y() + (trackRect.height() - markerHeight) / 2;
@@ -5248,11 +5248,17 @@ public final class MonitorScreenSystem {
 				: window != null && window.title() != null ? window.title() : "";
 		drawOverlayWindowHeaderText(graphics, layout, header, headerTitle, headerSubtitle);
 
-		drawGalleryFileMenuActionButton(graphics, layout, galleryFileMenuActionRect(layout, 0), PlayerUiIcon.EDIT, "ПЕРЕИМЕНОВАТЬ", "", file != null && file.canRename(), false, false);
-		drawGalleryFileMenuActionButton(graphics, layout, galleryFileMenuActionRect(layout, 1), PlayerUiIcon.SEND_PLANE, "ПОДЕЛИТЬСЯ", "", file != null && file.canShare(), false, false);
-		drawGalleryFileMenuActionButton(graphics, layout, galleryFileMenuActionRect(layout, 2), file != null && file.wallpaperSelected() ? PlayerUiIcon.CHECK : PlayerUiIcon.WALLPAPER, file != null && file.wallpaperSelected() ? "ОБОИ УСТАНОВЛЕНЫ" : "СДЕЛАТЬ ОБОЯМИ", "", file != null && file.canWallpaper(), file != null && file.wallpaperSelected(), false);
-		drawGalleryFileMenuActionButton(graphics, layout, galleryFileMenuActionRect(layout, 3), PlayerUiIcon.SETTINGS, "ФОН ПЛЕЕРА", "", true, false, false);
-		drawGalleryFileMenuActionButton(graphics, layout, galleryFileMenuActionRect(layout, 4), PlayerUiIcon.TRASH, "УДАЛИТЬ", "", file != null && file.saved(), false, true);
+		boolean wallpaperVisible = file != null && file.canWallpaper();
+		int actionCount = wallpaperVisible ? 5 : 4;
+		int playerBackgroundIndex = wallpaperVisible ? 3 : 2;
+		int deleteIndex = playerBackgroundIndex + 1;
+		drawGalleryFileMenuActionButton(graphics, layout, galleryFileMenuActionRect(layout, 0, actionCount), PlayerUiIcon.EDIT, "ПЕРЕИМЕНОВАТЬ", "", file != null && file.canRename(), false, false);
+		drawGalleryFileMenuActionButton(graphics, layout, galleryFileMenuActionRect(layout, 1, actionCount), PlayerUiIcon.SEND_PLANE, "ПОДЕЛИТЬСЯ", "", file != null && file.canShare(), false, false);
+		if (wallpaperVisible) {
+			drawGalleryFileMenuActionButton(graphics, layout, galleryFileMenuActionRect(layout, 2, actionCount), file.wallpaperSelected() ? PlayerUiIcon.CHECK : PlayerUiIcon.WALLPAPER, file.wallpaperSelected() ? "ОБОИ УСТАНОВЛЕНЫ" : "СДЕЛАТЬ ОБОЯМИ", "", true, file.wallpaperSelected(), false);
+		}
+		drawGalleryFileMenuActionButton(graphics, layout, galleryFileMenuActionRect(layout, playerBackgroundIndex, actionCount), PlayerUiIcon.SETTINGS, "ФОН ПЛЕЕРА", "", true, false, false);
+		drawGalleryFileMenuActionButton(graphics, layout, galleryFileMenuActionRect(layout, deleteIndex, actionCount), PlayerUiIcon.TRASH, "УДАЛИТЬ", "", file != null && file.saved(), false, true);
 	}
 
 	static void drawOverlayBackdrop(Graphics2D graphics, UiRect rect) {
@@ -6150,15 +6156,25 @@ public final class MonitorScreenSystem {
 
 	static UiRect mediaYoutubeMusicInfoRect(UiLayout layout) {
 		UiRect artworkRect = mediaYoutubeMusicArtworkRect(layout);
-		int gap = clampInt(layout.unit() * 3 / 4, 6, 12);
+		if (youtubeMusicMicroLayout(layout)) {
+			UiRect canvas = mediaCanvasRect(layout);
+			int gap = mediaYoutubeMusicInfoGap(layout);
+			return new UiRect(
+					artworkRect.right() + gap,
+					artworkRect.y(),
+					Math.max(32, canvas.right() - artworkRect.right() - gap),
+					mediaYoutubeMusicInfoHeight(layout)
+			);
+		}
+		int gap = mediaYoutubeMusicInfoGap(layout);
 		if (youtubeMusicLandscapeLayout(layout)) {
 			UiRect closeRect = mediaCloseRect(layout);
-			int sideInset = clampInt(layout.unit() * 2, 12, 28);
-			int right = artworkRect.x() - clampInt(layout.unit() * 2, 12, 24);
+			int left = closeRect.right() + gap;
+			int right = artworkRect.x() - gap;
 			return new UiRect(
-					sideInset,
-					closeRect.bottom() + clampInt(layout.unit(), 6, 14),
-					Math.max(48, right - sideInset),
+					left,
+					artworkRect.y(),
+					Math.max(36, right - left),
 					mediaYoutubeMusicInfoHeight(layout)
 			);
 		}
@@ -6173,6 +6189,9 @@ public final class MonitorScreenSystem {
 	static UiRect mediaYoutubeMusicTitleRect(UiLayout layout) {
 		UiRect infoRect = mediaYoutubeMusicInfoRect(layout);
 		int titleHeight = Math.max(clampInt(layout.unit() * 2, 14, 28), (int) Math.round(infoRect.height() * 0.66D));
+		if (ultraCompactScreenLayout(layout)) {
+			titleHeight = Math.min(titleHeight, Math.max(10, infoRect.height() - 10));
+		}
 		return new UiRect(infoRect.x(), infoRect.y(), infoRect.width(), Math.min(infoRect.height(), titleHeight));
 	}
 
@@ -6184,53 +6203,61 @@ public final class MonitorScreenSystem {
 				infoRect.x(),
 				Math.min(infoRect.bottom(), titleRect.bottom() + gap),
 				infoRect.width(),
-				Math.max(10, infoRect.bottom() - titleRect.bottom() - gap)
+				Math.max(0, infoRect.bottom() - titleRect.bottom() - gap)
 		);
 	}
 
 	static int mediaYoutubeMusicInfoHeight(UiLayout layout) {
+		if (youtubeMusicMicroLayout(layout)) {
+			return clampInt(layout.unit() * 6 + 2, 26, 32);
+		}
 		return ultraCompactScreenLayout(layout)
-				? clampInt(layout.unit() * 3 + 2, 18, 28)
+				? clampInt(layout.unit() * 6 + 2, 24, 28)
 				: compactScreenLayout(layout)
 				? clampInt(layout.unit() * 4, 24, 40)
 				: clampInt(layout.unit() * 5, 34, 60);
 	}
 
 	static int mediaYoutubeMusicTrackHeight(UiLayout layout) {
-		return ultraCompactScreenLayout(layout)
-				? clampInt(layout.unit() / 2 + 2, 8, 10)
-				: compactScreenLayout(layout)
-				? clampInt(layout.unit() / 2 + 3, 9, 12)
-				: clampInt(layout.unit() / 2 + 4, 10, 14);
+		return mediaTimelineTrackHeight(layout);
 	}
 
 	static int mediaYoutubeMusicTimeRowHeight(UiLayout layout) {
+		if (youtubeMusicMicroLayout(layout)) {
+			return 10;
+		}
 		return ultraCompactScreenLayout(layout)
-				? clampInt(layout.unit() * 2, 14, 18)
+				? clampInt(layout.unit() * 2, 10, 14)
 				: compactScreenLayout(layout)
-				? clampInt(layout.unit() * 2 + 1, 16, 22)
+				? clampInt(layout.unit() * 2 + 1, 14, 20)
 				: clampInt(layout.unit() * 2 + 2, 18, 26);
 	}
 
 	static int mediaYoutubeMusicControlsRowHeight(UiLayout layout) {
+		if (youtubeMusicMicroLayout(layout)) {
+			return 18;
+		}
 		return ultraCompactScreenLayout(layout)
-				? clampInt(layout.unit() * 4, 24, 30)
+				? clampInt(layout.unit() * 4, 18, 24)
 				: compactScreenLayout(layout)
-				? clampInt(layout.unit() * 4 + 2, 30, 40)
+				? clampInt(layout.unit() * 4 + 2, 26, 36)
 				: clampInt(layout.unit() * 5, 38, 54);
 	}
 
 	static int mediaYoutubeMusicActionsRowHeight(UiLayout layout) {
+		if (youtubeMusicMicroLayout(layout)) {
+			return 14;
+		}
 		return ultraCompactScreenLayout(layout)
-				? clampInt(layout.unit() * 2, 18, 22)
+				? clampInt(layout.unit() * 2 + 2, 12, 16)
 				: compactScreenLayout(layout)
-				? clampInt(layout.unit() * 2 + 2, 20, 28)
+				? clampInt(layout.unit() * 2 + 2, 18, 26)
 				: clampInt(layout.unit() * 2 + 4, 24, 34);
 	}
 
 	static UiRect mediaYoutubeMusicCurrentTimeRect(UiLayout layout) {
 		UiRect timelineRect = mediaTimelineRect(layout, ScreenViewMode.YOUTUBE_MUSIC);
-		int top = timelineRect.bottom() + clampInt(layout.unit() / 3, 2, 6);
+		int top = timelineRect.bottom() + mediaYoutubeMusicTimeGap(layout);
 		return new UiRect(timelineRect.x(), top, Math.max(16, timelineRect.width() / 2), mediaYoutubeMusicTimeRowHeight(layout));
 	}
 
@@ -6243,18 +6270,19 @@ public final class MonitorScreenSystem {
 	static UiRect mediaYoutubeMusicControlsRowRect(UiLayout layout) {
 		UiRect timelineRect = mediaTimelineRect(layout, ScreenViewMode.YOUTUBE_MUSIC);
 		UiRect totalTimeRect = mediaYoutubeMusicTotalTimeRect(layout);
-		int top = totalTimeRect.bottom() + clampInt(layout.unit() * 3 / 4, 6, 12);
+		int top = totalTimeRect.bottom() + mediaYoutubeMusicControlsGap(layout);
 		return new UiRect(timelineRect.x(), top, timelineRect.width(), mediaYoutubeMusicControlsRowHeight(layout));
 	}
 
 	static UiRect mediaYoutubeMusicActionsRowRect(UiLayout layout) {
 		if (youtubeMusicLandscapeLayout(layout)) {
 			UiRect artworkRect = mediaYoutubeMusicArtworkRect(layout);
-			int top = artworkRect.bottom() + clampInt(layout.unit(), 6, 14);
-			return new UiRect(artworkRect.x(), top, artworkRect.width(), mediaYoutubeMusicActionsRowHeight(layout));
+			int height = mediaYoutubeMusicActionsRowHeight(layout);
+			UiRect canvas = mediaCanvasRect(layout);
+			return new UiRect(canvas.x(), artworkRect.bottom() + mediaYoutubeMusicActionsGap(layout), canvas.width(), height);
 		}
 		UiRect controlsRect = mediaYoutubeMusicControlsRowRect(layout);
-		int top = controlsRect.bottom() + clampInt(layout.unit() * 3 / 4, 6, 12);
+		int top = controlsRect.bottom() + mediaYoutubeMusicActionsGap(layout);
 		return new UiRect(controlsRect.x(), top, controlsRect.width(), mediaYoutubeMusicActionsRowHeight(layout));
 	}
 
@@ -6328,19 +6356,24 @@ public final class MonitorScreenSystem {
 	}
 
 	static void drawSeekGlyph(Graphics2D graphics, UiRect rect, Color color, boolean backward) {
-		int padX = Math.max(2, rect.width() / 6);
-		int padY = Math.max(2, rect.height() / 6);
-		int barWidth = Math.max(2, rect.width() / 8);
-		int triangleWidth = Math.max(6, rect.width() - padX * 2 - barWidth - Math.max(2, rect.width() / 10));
-		int gap = Math.max(2, rect.width() / 10);
+		if (graphics == null || rect == null || rect.width() <= 0 || rect.height() <= 0) {
+			return;
+		}
+		int glyphWidth = Math.max(3, Math.min(rect.width(), (int) Math.round(rect.width() * 0.78D)));
+		int glyphHeight = Math.max(3, Math.min(rect.height(), (int) Math.round(rect.height() * 0.72D)));
+		int barWidth = Math.max(1, glyphWidth / 7);
+		int gap = Math.max(1, glyphWidth / 10);
+		int triangleWidth = Math.max(1, glyphWidth - barWidth - gap);
+		int glyphX = rect.x() + (rect.width() - glyphWidth) / 2;
+		int glyphY = rect.y() + (rect.height() - glyphHeight) / 2;
 		UiRect barRect;
 		UiRect triangleRect;
 		if (backward) {
-			barRect = new UiRect(rect.x() + padX, rect.y() + padY, barWidth, Math.max(8, rect.height() - padY * 2));
-			triangleRect = new UiRect(barRect.right() + gap, rect.y() + padY, triangleWidth, Math.max(8, rect.height() - padY * 2));
+			barRect = new UiRect(glyphX, glyphY, barWidth, glyphHeight);
+			triangleRect = new UiRect(barRect.right() + gap, glyphY, triangleWidth, glyphHeight);
 		} else {
-			triangleRect = new UiRect(rect.x() + padX, rect.y() + padY, triangleWidth, Math.max(8, rect.height() - padY * 2));
-			barRect = new UiRect(triangleRect.right() + gap, rect.y() + padY, barWidth, Math.max(8, rect.height() - padY * 2));
+			triangleRect = new UiRect(glyphX, glyphY, triangleWidth, glyphHeight);
+			barRect = new UiRect(triangleRect.right() + gap, glyphY, barWidth, glyphHeight);
 		}
 		graphics.setColor(color);
 		graphics.fillRoundRect(barRect.x(), barRect.y(), barRect.width(), barRect.height(), barRect.width(), barRect.width());
@@ -6692,8 +6725,8 @@ public final class MonitorScreenSystem {
 	static int mediaTransportIconSize(UiRect rect, UiLayout layout) {
 		return clampInt(
 				(int) Math.round(Math.min(rect.width(), rect.height()) * 0.44D),
-				10,
-				Math.max(10, Math.min(rect.width(), rect.height()) - Math.max(6, layout.unit()))
+				ultraCompactScreenLayout(layout) ? 8 : 10,
+				Math.max(ultraCompactScreenLayout(layout) ? 8 : 10, Math.min(rect.width(), rect.height()) - Math.max(4, layout.unit()))
 		);
 	}
 
@@ -6729,9 +6762,19 @@ public final class MonitorScreenSystem {
 		int viewportX = Math.max(0, (canvasWidth - viewportWidth) / 2);
 		int viewportY = Math.max(0, (canvasHeight - viewportHeight) / 2);
 		int minSpan = Math.max(1, Math.min(width, height));
-		double scale = 1.0D + Math.max(0, minSpan - 1) * 0.5D;
-		int margin = clampInt((int) Math.round(4.0D * scale), 4, 32);
-		int unit = clampInt((int) Math.round(5.0D * scale), 5, 32);
+		// Only the first two screen sizes use the denser scale. Starting at 3x3,
+		// restore the original roomier proportions.
+		double scale = minSpan <= 1
+				? 0.85D
+				: minSpan == 2
+				? 1.35D
+				: 1.0D + (minSpan - 1) * 0.50D;
+		int margin = clampInt(
+				(int) Math.round((minSpan >= 3 ? 4.0D : 3.0D) * scale),
+				3,
+				32
+		);
+		int unit = clampInt((int) Math.round(5.0D * scale), 4, 32);
 		return new UiLayout(canvasWidth, canvasHeight, viewportX, viewportY, viewportWidth, viewportHeight, margin, unit);
 	}
 
@@ -6760,7 +6803,17 @@ public final class MonitorScreenSystem {
 	}
 
 	static boolean youtubeMusicLandscapeLayout(UiLayout layout) {
-		return false;
+		if (layout == null) {
+			return false;
+		}
+		return layout.viewportWidth() >= layout.viewportHeight() * 3 / 2;
+	}
+
+	static boolean youtubeMusicMicroLayout(UiLayout layout) {
+		if (layout == null || youtubeMusicLandscapeLayout(layout)) {
+			return false;
+		}
+		return layout.viewportWidth() <= MAP_SIZE && layout.viewportHeight() <= MAP_SIZE;
 	}
 
 	static UiRect workspaceRect(UiLayout layout) {
@@ -7281,7 +7334,9 @@ public final class MonitorScreenSystem {
 	}
 
 	static int mediaYoutubeMusicActionButtonSize(UiLayout layout) {
-		return clampInt(mediaYoutubeMusicActionsRowHeight(layout), 20, 38);
+		return ultraCompactScreenLayout(layout)
+				? clampInt(mediaYoutubeMusicActionsRowHeight(layout), 12, 16)
+				: clampInt(mediaYoutubeMusicActionsRowHeight(layout), 18, 36);
 	}
 
 	static int mediaYoutubeMusicActionButtonsGap(UiLayout layout) {
@@ -7303,27 +7358,60 @@ public final class MonitorScreenSystem {
 	}
 
 	static UiRect mediaYoutubeMusicSearchRect(UiLayout layout) {
-		return mediaYoutubeMusicActionButtonRect(layout, 0, 5);
+		return mediaYoutubeMusicSearchRect(layout, true);
+	}
+
+	static UiRect mediaYoutubeMusicSearchRect(UiLayout layout, boolean downloadVisible) {
+		return mediaYoutubeMusicActionButtonRect(layout, 0, mediaYoutubeMusicActionCount(downloadVisible));
 	}
 
 	static UiRect mediaYoutubeMusicShuffleRect(UiLayout layout) {
-		return mediaYoutubeMusicActionButtonRect(layout, 1, 5);
+		return mediaYoutubeMusicShuffleRect(layout, true);
+	}
+
+	static UiRect mediaYoutubeMusicShuffleRect(UiLayout layout, boolean downloadVisible) {
+		return mediaYoutubeMusicActionButtonRect(layout, 1, mediaYoutubeMusicActionCount(downloadVisible));
 	}
 
 	static UiRect mediaYoutubeMusicRepeatRect(UiLayout layout) {
-		return mediaYoutubeMusicActionButtonRect(layout, 2, 5);
+		return mediaYoutubeMusicRepeatRect(layout, true);
+	}
+
+	static UiRect mediaYoutubeMusicRepeatRect(UiLayout layout, boolean downloadVisible) {
+		return mediaYoutubeMusicActionButtonRect(layout, 2, mediaYoutubeMusicActionCount(downloadVisible));
 	}
 
 	static UiRect mediaYoutubeMusicDownloadRect(UiLayout layout) {
-		return mediaYoutubeMusicActionButtonRect(layout, 4, 5);
+		return mediaYoutubeMusicDownloadRect(layout, true);
+	}
+
+	static UiRect mediaYoutubeMusicDownloadRect(UiLayout layout, boolean downloadVisible) {
+		int total = mediaYoutubeMusicActionCount(downloadVisible);
+		return mediaYoutubeMusicActionButtonRect(layout, total - 1, total);
+	}
+
+	static UiRect mediaYoutubeMusicQueueRect(UiLayout layout, boolean downloadVisible) {
+		return mediaYoutubeMusicActionButtonRect(layout, 3, mediaYoutubeMusicActionCount(downloadVisible));
+	}
+
+	static int mediaYoutubeMusicActionCount(boolean downloadVisible) {
+		return downloadVisible ? 5 : 4;
 	}
 
 	static UiRect mediaGalleryMusicRepeatRect(UiLayout layout) {
-		return mediaYoutubeMusicActionButtonRect(layout, 0, 2);
+		return mediaGalleryMusicRepeatRect(layout, true);
+	}
+
+	static UiRect mediaGalleryMusicRepeatRect(UiLayout layout, boolean primaryActionVisible) {
+		return mediaYoutubeMusicActionButtonRect(layout, 0, primaryActionVisible ? 2 : 1);
 	}
 
 	static UiRect mediaGalleryMusicPrimaryActionRect(UiLayout layout) {
-		return mediaYoutubeMusicActionButtonRect(layout, 1, 2);
+		return mediaGalleryMusicPrimaryActionRect(layout, true);
+	}
+
+	static UiRect mediaGalleryMusicPrimaryActionRect(UiLayout layout, boolean repeatVisible) {
+		return mediaYoutubeMusicActionButtonRect(layout, repeatVisible ? 1 : 0, repeatVisible ? 2 : 1);
 	}
 
 	static UiRect mediaTimelineRect(UiLayout layout) {
@@ -7369,8 +7457,15 @@ public final class MonitorScreenSystem {
 
 	static UiRect mediaTimelineRect(UiLayout layout, ScreenViewMode mode) {
 		if (isYoutubeMusicMode(mode)) {
+			if (youtubeMusicMicroLayout(layout)) {
+				UiRect canvas = mediaCanvasRect(layout);
+				UiRect artworkRect = mediaYoutubeMusicArtworkRect(layout);
+				UiRect infoRect = mediaYoutubeMusicInfoRect(layout);
+				int top = Math.max(artworkRect.bottom(), infoRect.bottom()) + mediaYoutubeMusicTimelineGap(layout);
+				return new UiRect(canvas.x(), top, canvas.width(), mediaYoutubeMusicTrackHeight(layout));
+			}
 			UiRect infoRect = mediaYoutubeMusicInfoRect(layout);
-			int gap = clampInt(layout.unit(), 8, 18);
+			int gap = mediaYoutubeMusicTimelineGap(layout);
 			int height = mediaYoutubeMusicTrackHeight(layout);
 			return new UiRect(
 					infoRect.x(),
@@ -7396,8 +7491,10 @@ public final class MonitorScreenSystem {
 		int left = canvas.x() + sideInset;
 		int right = mediaTimelineRightEdge(layout, mode, wallpaperVisible, primaryVisible, queueVisible, repeatVisible, scaleVisible);
 		int height = ultraCompactScreenLayout(layout)
-				? clampInt(layout.unit() * 2 + 2, 12, 14)
-				: clampInt(layout.unit() * 2, 18, 28);
+				? clampInt(layout.unit() * 2 + 1, 10, 12)
+				: compactScreenLayout(layout)
+				? clampInt(layout.unit() * 2, 14, 20)
+				: clampInt(layout.unit() * 2, 16, 28);
 		return new UiRect(
 				left,
 				canvas.bottom() - height - sideInset,
@@ -7636,49 +7733,115 @@ public final class MonitorScreenSystem {
 		return scrollbarThumbRect(mediaGalleryBrowserScrollbarTrackRect(layout), scroll, visibleRows, totalRows);
 	}
 
-	static UiRect mediaYoutubeMusicArtworkRect(UiLayout layout) {
-		UiRect canvas = mediaCanvasRect(layout);
-		UiRect closeRect = mediaCloseRect(layout);
-		int topInset = closeRect.bottom() + clampInt(layout.unit() / 2 + 1, 4, 10);
-		int minSize = ultraCompactScreenLayout(layout)
-				? clampInt(layout.unit() * 7, 38, 54)
+	static int mediaYoutubeMusicInfoGap(UiLayout layout) {
+		return ultraCompactScreenLayout(layout) ? Math.max(3, layout.unit()) : clampInt(layout.unit() * 3 / 4, 6, 12);
+	}
+
+	static int mediaYoutubeMusicTimelineGap(UiLayout layout) {
+		return youtubeMusicMicroLayout(layout)
+				? 3
+				: ultraCompactScreenLayout(layout) ? Math.max(3, layout.unit()) : clampInt(layout.unit(), 8, 18);
+	}
+
+	static int mediaYoutubeMusicTimeGap(UiLayout layout) {
+		return ultraCompactScreenLayout(layout) ? 2 : clampInt(layout.unit() / 3, 2, 6);
+	}
+
+	static int mediaYoutubeMusicControlsGap(UiLayout layout) {
+		return ultraCompactScreenLayout(layout) ? 3 : clampInt(layout.unit() * 3 / 4, 6, 12);
+	}
+
+	static int mediaYoutubeMusicActionsGap(UiLayout layout) {
+		return ultraCompactScreenLayout(layout) ? 3 : clampInt(layout.unit() * 3 / 4, 6, 12);
+	}
+
+	static int mediaYoutubeMusicArtworkMinSize(UiLayout layout) {
+		return ultraCompactScreenLayout(layout)
+				? clampInt(layout.unit() * 7, 32, 48)
 				: compactScreenLayout(layout)
 				? clampInt(layout.unit() * 8, 54, 86)
 				: clampInt(layout.unit() * 10, 88, 176);
+	}
+
+	static int mediaYoutubeMusicArtworkSize(UiLayout layout) {
+		UiRect canvas = mediaCanvasRect(layout);
+		if (youtubeMusicMicroLayout(layout)) {
+			return clampInt(
+					(int) Math.round(Math.min(canvas.width() * 0.40D, canvas.height() * 0.38D)),
+					34,
+					46
+			);
+		}
+		int minSize = mediaYoutubeMusicArtworkMinSize(layout);
 		if (youtubeMusicLandscapeLayout(layout)) {
-			int sideInset = clampInt(layout.unit() * 2, 12, 28);
-			int bottomInset = clampInt(layout.unit() * 2, 12, 26);
 			int availableHeight = Math.max(
 					minSize,
-					canvas.bottom() - topInset - mediaYoutubeMusicActionsRowHeight(layout) - bottomInset - clampInt(layout.unit(), 6, 16)
+					canvas.height() - mediaYoutubeMusicActionsRowHeight(layout) - mediaYoutubeMusicActionsGap(layout)
 			);
 			int maxWidth = Math.max(minSize, canvas.width() / 3);
 			int preferredSize = (int) Math.round(Math.min(canvas.width() * 0.28D, availableHeight));
-			int size = clampInt(preferredSize, minSize, Math.max(minSize, Math.min(maxWidth, availableHeight)));
-			return new UiRect(
-					canvas.right() - sideInset - size,
-					topInset + Math.max(0, (availableHeight - size) / 2),
-					size,
-					size
-			);
+			return clampInt(preferredSize, minSize, Math.max(minSize, Math.min(maxWidth, availableHeight)));
 		}
-		int sideInset = clampInt(layout.unit() * 2, 12, 28);
-		int reservedBottom = mediaYoutubeMusicInfoHeight(layout)
+		int sideInset = ultraCompactScreenLayout(layout) ? Math.max(2, layout.unit()) : clampInt(layout.unit() * 2, 12, 28);
+		int reservedBelowArtwork = mediaYoutubeMusicInfoGap(layout)
+				+ mediaYoutubeMusicInfoHeight(layout)
+				+ mediaYoutubeMusicTimelineGap(layout)
 				+ mediaYoutubeMusicTrackHeight(layout)
+				+ mediaYoutubeMusicTimeGap(layout)
 				+ mediaYoutubeMusicTimeRowHeight(layout)
+				+ mediaYoutubeMusicControlsGap(layout)
 				+ mediaYoutubeMusicControlsRowHeight(layout)
-				+ mediaYoutubeMusicActionsRowHeight(layout)
-				+ clampInt(layout.unit() * 4, 20, 58);
+				+ mediaYoutubeMusicActionsGap(layout)
+				+ mediaYoutubeMusicActionsRowHeight(layout);
 		int maxWidth = Math.max(minSize, canvas.width() - sideInset * 2);
-		int availableHeight = Math.max(minSize, canvas.height() - topInset - reservedBottom);
+		int availableHeight = Math.max(minSize, canvas.height() - reservedBelowArtwork);
 		int preferredSize = (int) Math.round(Math.min(maxWidth, canvas.height() * 0.40D));
-		int size = clampInt(preferredSize, minSize, Math.max(minSize, Math.min(maxWidth, availableHeight)));
-		return new UiRect(
-				canvas.x() + (canvas.width() - size) / 2,
-				topInset + Math.max(0, (availableHeight - size) / 3),
-				size,
-				size
-		);
+		return clampInt(preferredSize, minSize, Math.max(minSize, Math.min(maxWidth, availableHeight)));
+	}
+
+	static int mediaYoutubeMusicContentTop(UiLayout layout, int artworkSize) {
+		UiRect canvas = mediaCanvasRect(layout);
+		int contentHeight;
+		if (youtubeMusicMicroLayout(layout)) {
+			contentHeight = Math.max(artworkSize, mediaYoutubeMusicInfoHeight(layout))
+					+ mediaYoutubeMusicTimelineGap(layout)
+					+ mediaYoutubeMusicTrackHeight(layout)
+					+ mediaYoutubeMusicTimeGap(layout)
+					+ mediaYoutubeMusicTimeRowHeight(layout)
+					+ mediaYoutubeMusicControlsGap(layout)
+					+ mediaYoutubeMusicControlsRowHeight(layout)
+					+ mediaYoutubeMusicActionsGap(layout)
+					+ mediaYoutubeMusicActionsRowHeight(layout);
+		} else if (youtubeMusicLandscapeLayout(layout)) {
+			contentHeight = artworkSize + mediaYoutubeMusicActionsGap(layout) + mediaYoutubeMusicActionsRowHeight(layout);
+		} else {
+			contentHeight = artworkSize
+					+ mediaYoutubeMusicInfoGap(layout)
+					+ mediaYoutubeMusicInfoHeight(layout)
+					+ mediaYoutubeMusicTimelineGap(layout)
+					+ mediaYoutubeMusicTrackHeight(layout)
+					+ mediaYoutubeMusicTimeGap(layout)
+					+ mediaYoutubeMusicTimeRowHeight(layout)
+					+ mediaYoutubeMusicControlsGap(layout)
+					+ mediaYoutubeMusicControlsRowHeight(layout)
+					+ mediaYoutubeMusicActionsGap(layout)
+					+ mediaYoutubeMusicActionsRowHeight(layout);
+		}
+		return canvas.y() + Math.max(0, (canvas.height() - contentHeight) / 2);
+	}
+
+	static UiRect mediaYoutubeMusicArtworkRect(UiLayout layout) {
+		UiRect canvas = mediaCanvasRect(layout);
+		int size = mediaYoutubeMusicArtworkSize(layout);
+		int top = mediaYoutubeMusicContentTop(layout, size);
+		if (youtubeMusicMicroLayout(layout)) {
+			return new UiRect(canvas.x(), top, size, size);
+		}
+		if (youtubeMusicLandscapeLayout(layout)) {
+			int sideInset = ultraCompactScreenLayout(layout) ? Math.max(2, layout.unit()) : clampInt(layout.unit() * 2, 12, 28);
+			return new UiRect(canvas.right() - sideInset - size, top, size, size);
+		}
+		return new UiRect(canvas.x() + (canvas.width() - size) / 2, top, size, size);
 	}
 
 	static UiRect mediaQueuePanelRect(UiLayout layout) {
@@ -7929,11 +8092,15 @@ public final class MonitorScreenSystem {
 	}
 
 	static UiRect galleryFileMenuActionRect(UiLayout layout, int index) {
+		return galleryFileMenuActionRect(layout, index, 5);
+	}
+
+	static UiRect galleryFileMenuActionRect(UiLayout layout, int index, int actionCount) {
 		UiRect body = galleryFileMenuBodyRect(layout);
-		int actionCount = 5;
-		int safeIndex = clampInt(index, 0, actionCount - 1);
+		int count = Math.max(1, actionCount);
+		int safeIndex = clampInt(index, 0, count - 1);
 		int gap = ultraCompactScreenLayout(layout) ? Math.max(1, layout.unit() / 4) : clampInt(layout.unit() / 2, 4, 8);
-		int height = Math.max(16, (body.height() - gap * (actionCount - 1)) / actionCount);
+		int height = Math.max(16, (body.height() - gap * (count - 1)) / count);
 		return new UiRect(
 				body.x(),
 				body.y() + safeIndex * (height + gap),
@@ -8261,7 +8428,7 @@ public final class MonitorScreenSystem {
 		if (isYoutubeMusicMode(mode)) {
 			return new UiRect(timeline.x(), timeline.y(), 0, 0);
 		}
-		int size = Math.max(12, timeline.height() - 4);
+		int size = Math.max(10, timeline.height() - 2);
 		return new UiRect(timeline.x() + 2, timeline.y() + (timeline.height() - size) / 2, size, size);
 	}
 
@@ -8270,7 +8437,7 @@ public final class MonitorScreenSystem {
 		if (isYoutubeMusicMode(mode)) {
 			return new UiRect(timeline.x(), timeline.y(), 0, 0);
 		}
-		int size = Math.max(12, timeline.height() - 4);
+		int size = Math.max(10, timeline.height() - 2);
 		return new UiRect(timeline.x() + 2, timeline.y() + (timeline.height() - size) / 2, size, size);
 	}
 
@@ -8321,7 +8488,7 @@ public final class MonitorScreenSystem {
 		ScreenViewMode mode = mediaChromeMode(state);
 		UiRect timeline = mediaTimelineRect(layout, state);
 		UiRect counter = isYoutubeMusicMode(mode) ? mediaTimelineCounterRect(layout, mode) : mediaTimelineCounterRect(layout, state);
-		int sideInset = clampInt(layout.unit() / 2, 4, 8);
+		int sideInset = ultraCompactScreenLayout(layout) ? 2 : clampInt(layout.unit() / 2, 4, 8);
 		int counterGap = timelineCounterGap(layout);
 		int x;
 		int right;
@@ -8333,7 +8500,7 @@ public final class MonitorScreenSystem {
 			x = playPause.right() + sideInset;
 			right = counter.width() > 0 ? counter.x() - counterGap : timeline.right() - sideInset;
 		}
-		int height = clampInt(layout.unit() / 2, 6, 10);
+		int height = mediaTimelineTrackHeight(layout);
 		return new UiRect(x, timeline.y() + timeline.height() / 2 - height / 2, Math.max(12, right - x), height);
 	}
 
@@ -8341,7 +8508,7 @@ public final class MonitorScreenSystem {
 		ScreenViewMode mode = mediaChromeMode(state);
 		UiRect timeline = mediaTimelineRect(layout, state);
 		UiRect counter = mediaTimelineCounterRect(layout, state);
-		int sideInset = clampInt(layout.unit() / 2, 4, 8);
+		int sideInset = ultraCompactScreenLayout(layout) ? 2 : clampInt(layout.unit() / 2, 4, 8);
 		int counterGap = timelineCounterGap(layout);
 		int x;
 		int right;
@@ -8349,19 +8516,19 @@ public final class MonitorScreenSystem {
 			x = timeline.x() + sideInset;
 			right = counter.width() > 0 ? counter.x() - counterGap : timeline.right() - sideInset;
 		} else {
-			int size = Math.max(12, timeline.height() - 4);
+			int size = Math.max(10, timeline.height() - 2);
 			UiRect playPause = new UiRect(timeline.x() + 2, timeline.y() + (timeline.height() - size) / 2, size, size);
 			x = playPause.right() + sideInset;
 			right = counter.width() > 0 ? counter.x() - counterGap : timeline.right() - sideInset;
 		}
-		int height = clampInt(layout.unit() / 2, 6, 10);
+		int height = mediaTimelineTrackHeight(layout);
 		return new UiRect(x, timeline.y() + timeline.height() / 2 - height / 2, Math.max(12, right - x), height);
 	}
 
 	static UiRect mediaTimelineTrackRect(UiLayout layout, ScreenViewMode mode) {
 		UiRect timeline = mediaTimelineRect(layout, mode);
 		UiRect counter = mediaTimelineCounterRect(layout, mode);
-		int sideInset = clampInt(layout.unit() / 2, 4, 8);
+		int sideInset = ultraCompactScreenLayout(layout) ? 2 : clampInt(layout.unit() / 2, 4, 8);
 		int x;
 		int right;
 		if (isYoutubeMusicMode(mode)) {
@@ -8376,13 +8543,20 @@ public final class MonitorScreenSystem {
 					? counter.x() - sideInset
 					: timeline.right() - sideInset;
 		}
-		int height = clampInt(layout.unit() / 2, 6, 10);
+		int height = mediaTimelineTrackHeight(layout);
 		return new UiRect(
 				x,
 				timeline.y() + timeline.height() / 2 - height / 2,
 				Math.max(12, right - x),
 				height
 		);
+	}
+
+	static int mediaTimelineTrackHeight(UiLayout layout) {
+		if (layout == null) {
+			return 2;
+		}
+		return clampInt((int) Math.round(layout.unit() * 0.40D), 2, 5);
 	}
 
 	static int timelineCounterReservedWidth(UiLayout layout) {
@@ -8439,19 +8613,20 @@ public final class MonitorScreenSystem {
 	static UiRect mediaCenterPlayPauseRect(UiLayout layout, ScreenViewMode mode) {
 		if (isYoutubeMusicMode(mode)) {
 			UiRect controls = mediaYoutubeMusicControlsRowRect(layout);
-			int height = controls.height();
-			int sideButtonSize = mediaCenterSideButtonSize(layout, mode, height);
 			int gap = mediaCenterControlGap(layout, mode);
-			int maxWidth = Math.max(32, controls.width() - sideButtonSize * 2 - gap * 2);
-			int minWidth = Math.min(ultraCompactScreenLayout(layout) ? 48 : 72, maxWidth);
+			// Keep the transport controls as one aligned group.  On very narrow rows
+			// reduce all three buttons together instead of shrinking only prev/next.
+			int maxSharedHeight = Math.max(1, (controls.width() - gap * 2) / 3);
+			int height = Math.min(controls.height(), maxSharedHeight);
+			int maxWidth = Math.max(height, controls.width() - height * 2 - gap * 2);
 			int width = clampInt(
-					(int) Math.round(controls.width() * (youtubeMusicLandscapeLayout(layout) ? 0.46D : 0.54D)),
-					Math.max(32, minWidth),
-					Math.max(Math.max(32, minWidth), maxWidth)
+					Math.max(height, (int) Math.round(controls.width() * (youtubeMusicLandscapeLayout(layout) ? 0.46D : 0.54D))),
+					height,
+					maxWidth
 			);
 			return new UiRect(
 					controls.x() + (controls.width() - width) / 2,
-					controls.y(),
+					controls.y() + (controls.height() - height) / 2,
 					width,
 					height
 			);
@@ -8459,9 +8634,9 @@ public final class MonitorScreenSystem {
 		UiRect canvas = mediaCanvasRect(layout);
 		int height;
 		if (ultraCompactScreenLayout(layout)) {
-			height = clampInt(layout.unit() * 5, 24, 34);
+			height = clampInt(layout.unit() * 5, 20, 28);
 		} else if (compactScreenLayout(layout)) {
-			height = clampInt(layout.unit() * 5, 30, 52);
+			height = clampInt(layout.unit() * 5, 26, 46);
 		} else {
 			height = clampInt(layout.unit() * 6, 46, 92);
 		}
@@ -8530,7 +8705,7 @@ public final class MonitorScreenSystem {
 
 	static int mediaCenterSideButtonSize(UiLayout layout, ScreenViewMode mode, int rowHeight) {
 		if (isYoutubeMusicMode(mode)) {
-			return clampInt(rowHeight, ultraCompactScreenLayout(layout) ? 22 : 28, 54);
+			return rowHeight;
 		}
 		return rowHeight;
 	}
@@ -8540,10 +8715,10 @@ public final class MonitorScreenSystem {
 			return mediaYoutubeMusicActionButtonsGap(layout);
 		}
 		if (ultraCompactScreenLayout(layout)) {
-			return clampInt(layout.unit(), 8, 12);
+			return clampInt(layout.unit(), 4, 8);
 		}
 		if (compactScreenLayout(layout)) {
-			return clampInt(layout.unit() + 2, 10, 18);
+			return clampInt(layout.unit() + 1, 6, 14);
 		}
 		return clampInt(layout.unit() * 2, 14, 28);
 	}
@@ -11802,9 +11977,6 @@ public final class MonitorScreenSystem {
 		}
 		if (isGalleryBackedYoutubeLocked(state)) {
 			return true;
-		}
-		if (state.mode == ScreenViewMode.GALLERY && currentGalleryItemSavedLocked(state)) {
-			return false;
 		}
 		if (state.mode == ScreenViewMode.YOUTUBE || state.mode == ScreenViewMode.YOUTUBE_MUSIC) {
 			return state.sourceUrl != null && !state.sourceUrl.isBlank();

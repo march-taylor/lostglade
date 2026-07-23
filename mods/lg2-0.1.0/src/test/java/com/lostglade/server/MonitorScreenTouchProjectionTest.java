@@ -18,6 +18,9 @@ public final class MonitorScreenTouchProjectionTest {
 		mediaCanvasRespectsViewportSafeInset();
 		mediaTimelineWidthTracksVisibleButtons();
 		timelineCounterWidthTracksLabelLength();
+		compactMusicPlayerKeepsControlsOnScreen();
+		compactVideoTimelineStaysThinAndReachable();
+		conditionalPlayerActionsStayCentered();
 		System.out.println("Monitor screen touch projection checks passed");
 	}
 
@@ -129,6 +132,108 @@ public final class MonitorScreenTouchProjectionTest {
 				shortLabelWidth < longLabelWidth,
 				"timeline counter width should shrink for compact frame labels instead of reserving the full video timer width"
 		);
+	}
+
+	private static void compactMusicPlayerKeepsControlsOnScreen() {
+		UiLayout square = MonitorScreenSystem.createUiLayout(1, 1);
+		UiLayout portrait = MonitorScreenSystem.createUiLayout(1, 2);
+		UiLayout landscape = MonitorScreenSystem.createUiLayout(2, 1);
+
+		require(!MonitorScreenSystem.youtubeMusicLandscapeLayout(square), "1x1 music player must use the micro layout");
+		require(MonitorScreenSystem.youtubeMusicMicroLayout(square), "1x1 music player must use the dense micro layout");
+		require(!MonitorScreenSystem.youtubeMusicLandscapeLayout(portrait), "1x2 music player must remain vertical");
+		require(MonitorScreenSystem.youtubeMusicLandscapeLayout(landscape), "2x1 music player must use the horizontal layout");
+
+		for (UiLayout layout : new UiLayout[]{square, portrait, landscape}) {
+			UiRect canvas = MonitorScreenSystem.mediaCanvasRect(layout);
+			UiRect artwork = MonitorScreenSystem.mediaYoutubeMusicArtworkRect(layout);
+			UiRect info = MonitorScreenSystem.mediaYoutubeMusicInfoRect(layout);
+			UiRect timeline = MonitorScreenSystem.mediaTimelineRect(layout, ScreenViewMode.YOUTUBE_MUSIC);
+			UiRect controls = MonitorScreenSystem.mediaYoutubeMusicControlsRowRect(layout);
+			UiRect actions = MonitorScreenSystem.mediaYoutubeMusicActionsRowRect(layout);
+
+			require(contains(canvas, artwork), "music artwork must remain on screen");
+			require(
+					Math.abs((artwork.y() - canvas.y()) - (canvas.bottom() - actions.bottom())) <= 1,
+					"music player must keep equal top and bottom insets"
+			);
+			require(contains(canvas, info), "track metadata must remain on screen");
+			require(contains(canvas, timeline), "music timeline must remain on screen");
+			require(contains(canvas, controls), "music transport controls must remain on screen");
+			require(contains(canvas, actions), "music action controls must remain on screen");
+			require(
+					contains(canvas, MonitorScreenSystem.mediaCenterPlayPauseRect(layout, ScreenViewMode.YOUTUBE_MUSIC)),
+					"music pause button must remain on screen"
+			);
+			UiRect musicPlayPause = MonitorScreenSystem.mediaCenterPlayPauseRect(layout, ScreenViewMode.YOUTUBE_MUSIC);
+			UiRect musicBack = MonitorScreenSystem.mediaCenterBackRect(layout, ScreenViewMode.YOUTUBE_MUSIC);
+			UiRect musicForward = MonitorScreenSystem.mediaCenterForwardRect(layout, ScreenViewMode.YOUTUBE_MUSIC);
+			require(musicPlayPause.width() >= musicPlayPause.height(), "music pause button must never be vertically squeezed");
+			require(
+					musicBack.height() == musicPlayPause.height() && musicForward.height() == musicPlayPause.height(),
+					"music transport controls must keep one shared height"
+			);
+			require(
+					contains(canvas, MonitorScreenSystem.mediaYoutubeMusicDownloadRect(layout)),
+					"music download button must remain on screen"
+			);
+			require(
+					MonitorScreenSystem.mediaTimelineTrackRect(layout, ScreenViewMode.YOUTUBE_MUSIC).height() <= 2,
+					"music timeline must stay one or two pixels thick"
+			);
+		}
+	}
+
+	private static void compactVideoTimelineStaysThinAndReachable() {
+		UiLayout layout = MonitorScreenSystem.createUiLayout(1, 1);
+		UiRect canvas = MonitorScreenSystem.mediaCanvasRect(layout);
+		UiRect track = MonitorScreenSystem.mediaTimelineTrackRect(layout, ScreenViewMode.YOUTUBE);
+		UiRect playPause = MonitorScreenSystem.mediaCenterPlayPauseRect(layout, ScreenViewMode.YOUTUBE);
+		require(track.height() <= 2, "video timeline must stay one or two pixels thick");
+		require(contains(canvas, track), "video timeline must remain on screen");
+		require(contains(canvas, playPause), "video pause button must remain on screen");
+
+		UiLayout compact = MonitorScreenSystem.createUiLayout(2, 2);
+		UiLayout standard = MonitorScreenSystem.createUiLayout(3, 3);
+		require(compact.unit() == 7, "2x2 layout should be only slightly denser than the original scale");
+		require(standard.unit() == 10, "3x3 layout should keep the original scale");
+		require(standard.margin() == 8, "3x3 layout should keep the original margins");
+		UiRect standardMusicPlayPause = MonitorScreenSystem.mediaCenterPlayPauseRect(standard, ScreenViewMode.YOUTUBE_MUSIC);
+		require(standardMusicPlayPause.width() > standardMusicPlayPause.height(), "large music pause button should use available horizontal space");
+		require(
+				MonitorScreenSystem.mediaCenterBackRect(standard, ScreenViewMode.YOUTUBE_MUSIC).height() == standardMusicPlayPause.height()
+						&& MonitorScreenSystem.mediaCenterForwardRect(standard, ScreenViewMode.YOUTUBE_MUSIC).height() == standardMusicPlayPause.height(),
+				"large music transport controls must keep one shared height"
+		);
+	}
+
+	private static void conditionalPlayerActionsStayCentered() {
+		UiLayout layout = MonitorScreenSystem.createUiLayout(1, 1);
+		UiRect row = MonitorScreenSystem.mediaYoutubeMusicActionsRowRect(layout);
+		UiRect galleryDelete = MonitorScreenSystem.mediaGalleryMusicPrimaryActionRect(layout, false);
+		require(centerDistance(row, galleryDelete) <= 1, "a lone gallery delete button must be centered");
+
+		UiRect youtubeSearch = MonitorScreenSystem.mediaYoutubeMusicSearchRect(layout, false);
+		UiRect youtubeQueue = MonitorScreenSystem.mediaYoutubeMusicQueueRect(layout, false);
+		require(
+					Math.abs((youtubeSearch.x() + youtubeQueue.right()) - (row.x() + row.right())) <= 1,
+					"the four YouTube Music actions must be centered when download is unavailable"
+		);
+
+		UiRect fileMenu = MonitorScreenSystem.galleryFileMenuBodyRect(layout);
+		UiRect finalFourAction = MonitorScreenSystem.galleryFileMenuActionRect(layout, 3, 4);
+		require(contains(fileMenu, finalFourAction), "the four-action file menu must fit its panel");
+	}
+
+	private static int centerDistance(UiRect left, UiRect right) {
+		return Math.abs((left.x() + left.right()) - (right.x() + right.right()));
+	}
+
+	private static boolean contains(UiRect outer, UiRect inner) {
+		return inner.x() >= outer.x()
+				&& inner.y() >= outer.y()
+				&& inner.right() <= outer.right()
+				&& inner.bottom() <= outer.bottom();
 	}
 
 	private static Vec3 screenPlanePoint(BlockPos framePos, Direction facing, double u, double v) {

@@ -73,9 +73,11 @@ import java.util.StringJoiner;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 import javax.imageio.ImageIO;
@@ -99,8 +101,14 @@ public final class MonitorSupportRuntime {
 	private static final long SUPPORT_NOTIFICATION_SOUND_DURATION_MS = 2500L;
 	private static final String SUPPORT_NOTIFICATION_SOURCE_PREFIX = "support:notification:";
 	private static final Path SUPPORT_NOTIFICATION_SOUND_FILE = Path.of(System.getProperty("user.dir"), "cache", "lg2-monitor", "support-notification.ogg");
-	private static final long TELEGRAM_POLL_INTERVAL_MS = 1800L;
-	private static final long TELEGRAM_REQUEST_TIMEOUT_SECONDS = 12L;
+	private static final long TELEGRAM_POLL_INTERVAL_MS = 300L;
+	private static final long TELEGRAM_POLL_TIMEOUT_SECONDS = 25L;
+	private static final long TELEGRAM_REQUEST_TIMEOUT_SECONDS = 20L;
+	private static final long TELEGRAM_POLL_REQUEST_TIMEOUT_SECONDS = TELEGRAM_POLL_TIMEOUT_SECONDS + 10L;
+	private static final long TELEGRAM_RETRY_INITIAL_DELAY_MS = 1_000L;
+	private static final long TELEGRAM_RETRY_MAX_DELAY_MS = 60_000L;
+	private static final long TELEGRAM_FAILURE_LOG_INTERVAL_MS = 60_000L;
+	private static final int MAX_PENDING_TELEGRAM_UPDATES = 500;
 	private static final ZoneId MOSCOW_ZONE = ZoneId.of("Europe/Moscow");
 	private static final DateTimeFormatter MESSAGE_TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm").withZone(MOSCOW_ZONE);
 	private static final Color TINKOFF_BLUE = new Color(66, 139, 249);
@@ -118,9 +126,15 @@ public final class MonitorSupportRuntime {
 	private static final ConcurrentMap<Long, SupportTicket> TICKETS = new ConcurrentHashMap<>();
 	private static final ConcurrentMap<TelegramMessageKey, Long> TELEGRAM_MESSAGE_TICKETS = new ConcurrentHashMap<>();
 	private static final ConcurrentMap<Long, Long> LAST_TELEGRAM_TICKETS = new ConcurrentHashMap<>();
+	private static final ConcurrentSkipListMap<Long, PendingTelegramUpdate> PENDING_TELEGRAM_UPDATES = new ConcurrentSkipListMap<>();
+	private static final ConcurrentSkipListMap<Long, PendingTelegramDelivery> PENDING_TELEGRAM_DELIVERIES = new ConcurrentSkipListMap<>();
 	private static final Set<UUID> MINECRAFT_SUPPORT_OPERATORS = ConcurrentHashMap.newKeySet();
 	private static final Set<Long> TELEGRAM_CHAT_IDS = ConcurrentHashMap.newKeySet();
 	private static final AtomicLong NEXT_TICKET_ID = new AtomicLong(1L);
+	private static final AtomicLong NEXT_TELEGRAM_DELIVERY_ID = new AtomicLong(1L);
+	private static final AtomicLong LAST_TELEGRAM_POLL_FAILURE_LOG_AT = new AtomicLong();
+	private static final AtomicLong LAST_TELEGRAM_DELIVERY_FAILURE_LOG_AT = new AtomicLong();
+	private static final AtomicBoolean TELEGRAM_INBOX_PROCESSING = new AtomicBoolean();
 	private static final Object PERSISTENCE_LOCK = new Object();
 	private static final HttpClient TELEGRAM_HTTP_CLIENT = HttpClient.newBuilder()
 			.connectTimeout(Duration.ofSeconds(TELEGRAM_REQUEST_TIMEOUT_SECONDS))
@@ -129,7 +143,11 @@ public final class MonitorSupportRuntime {
 	private static volatile boolean loaded;
 	private static volatile String telegramToken = "";
 	private static volatile long telegramOffset;
-	private static volatile ScheduledExecutorService telegramExecutor;
+	private static volatile int telegramPollFailures;
+	private static volatile long telegramPollRetryAtMillis;
+	private static volatile ScheduledExecutorService telegramPollExecutor;
+	private static volatile ScheduledExecutorService telegramInboxExecutor;
+	private static volatile ScheduledExecutorService telegramDeliveryExecutor;
 	private static volatile MinecraftServer activeServer;
 
 	private MonitorSupportRuntime() {
@@ -641,6 +659,7 @@ public final class MonitorSupportRuntime {
 		telegramToken = readConfiguredTelegramToken();
 		if (telegramConfigured()) {
 			startTelegramPolling(server);
+			processPendingTelegramUpdates(server);
 			publishTelegramCommands();
 		} else {
 			Lg2.LOGGER.info("Support Telegram bot token is not configured");
@@ -649,12 +668,23 @@ public final class MonitorSupportRuntime {
 
 	private static void stop(MinecraftServer server) {
 		activeServer = null;
-		save(server);
-		ScheduledExecutorService executor = telegramExecutor;
-		telegramExecutor = null;
-		if (executor != null) {
-			executor.shutdownNow();
+		TELEGRAM_INBOX_PROCESSING.set(false);
+		ScheduledExecutorService pollExecutor = telegramPollExecutor;
+		ScheduledExecutorService inboxExecutor = telegramInboxExecutor;
+		ScheduledExecutorService deliveryExecutor = telegramDeliveryExecutor;
+		telegramPollExecutor = null;
+		telegramInboxExecutor = null;
+		telegramDeliveryExecutor = null;
+		if (pollExecutor != null) {
+			pollExecutor.shutdownNow();
 		}
+		if (inboxExecutor != null) {
+			inboxExecutor.shutdownNow();
+		}
+		if (deliveryExecutor != null) {
+			deliveryExecutor.shutdownNow();
+		}
+		save(server);
 		PENDING_INPUTS.clear();
 	}
 
@@ -739,21 +769,14 @@ public final class MonitorSupportRuntime {
 			if (chatId == null) {
 				continue;
 			}
-			runTelegramTask(() -> {
-				List<Integer> messageIds = sendTelegramTicketInternal(chatId, ticket, message, safeAttachments);
-				boolean stored = false;
-				for (Integer messageId : messageIds) {
-					if (messageId != null && messageId > 0) {
-						TELEGRAM_MESSAGE_TICKETS.put(new TelegramMessageKey(chatId, messageId), ticket.id());
-						stored = true;
-					}
-				}
-				if (stored) {
-					LAST_TELEGRAM_TICKETS.put(chatId, ticket.id());
-					save(server);
-				}
-			});
+			long deliveryId = NEXT_TELEGRAM_DELIVERY_ID.getAndIncrement();
+			PENDING_TELEGRAM_DELIVERIES.put(
+					deliveryId,
+					new PendingTelegramDelivery(deliveryId, chatId, ticket.id(), message, safeAttachments, 0, List.of(), 0, 0L)
+			);
 		}
+		save(server);
+		scheduleTelegramDelivery();
 	}
 
 	private static void addSupportReply(MinecraftServer server, long ticketId, String author, String message) {
@@ -830,6 +853,7 @@ public final class MonitorSupportRuntime {
 		if (!removedTicketIds.isEmpty()) {
 			TELEGRAM_MESSAGE_TICKETS.entrySet().removeIf(entry -> removedTicketIds.contains(entry.getValue()));
 			LAST_TELEGRAM_TICKETS.entrySet().removeIf(entry -> removedTicketIds.contains(entry.getValue()));
+			PENDING_TELEGRAM_DELIVERIES.entrySet().removeIf(entry -> removedTicketIds.contains(entry.getValue().ticketId()));
 		}
 		if (server != null) {
 			save(server);
@@ -894,45 +918,77 @@ public final class MonitorSupportRuntime {
 		if (server == null || !telegramConfigured()) {
 			return;
 		}
-		ScheduledExecutorService current = telegramExecutor;
-		if (current != null && !current.isShutdown()) {
-			return;
+		ScheduledExecutorService currentPollExecutor = telegramPollExecutor;
+		if (currentPollExecutor == null || currentPollExecutor.isShutdown()) {
+			ScheduledExecutorService pollExecutor = Executors.newSingleThreadScheduledExecutor(runnable -> {
+				Thread thread = new Thread(runnable, "lg2-support-telegram-poll");
+				thread.setDaemon(true);
+				thread.setPriority(Math.max(Thread.MIN_PRIORITY, Thread.NORM_PRIORITY - 1));
+				return thread;
+			});
+			telegramPollExecutor = pollExecutor;
+			pollExecutor.scheduleWithFixedDelay(
+					() -> pollTelegramUpdates(server),
+					400L,
+					TELEGRAM_POLL_INTERVAL_MS,
+					TimeUnit.MILLISECONDS
+			);
 		}
-		ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor(runnable -> {
-			Thread thread = new Thread(runnable, "lg2-support-telegram");
-			thread.setDaemon(true);
-			thread.setPriority(Math.max(Thread.MIN_PRIORITY, Thread.NORM_PRIORITY - 1));
-			return thread;
-		});
-		telegramExecutor = executor;
-		executor.scheduleWithFixedDelay(
-				() -> pollTelegramUpdates(server),
-				400L,
-				TELEGRAM_POLL_INTERVAL_MS,
-				TimeUnit.MILLISECONDS
-		);
+		ScheduledExecutorService currentInboxExecutor = telegramInboxExecutor;
+		if (currentInboxExecutor == null || currentInboxExecutor.isShutdown()) {
+			ScheduledExecutorService inboxExecutor = Executors.newSingleThreadScheduledExecutor(runnable -> {
+				Thread thread = new Thread(runnable, "lg2-support-telegram-inbox");
+				thread.setDaemon(true);
+				thread.setPriority(Math.max(Thread.MIN_PRIORITY, Thread.NORM_PRIORITY - 1));
+				return thread;
+			});
+			telegramInboxExecutor = inboxExecutor;
+		}
+		ScheduledExecutorService currentDeliveryExecutor = telegramDeliveryExecutor;
+		if (currentDeliveryExecutor == null || currentDeliveryExecutor.isShutdown()) {
+			ScheduledExecutorService deliveryExecutor = Executors.newSingleThreadScheduledExecutor(runnable -> {
+				Thread thread = new Thread(runnable, "lg2-support-telegram-delivery");
+				thread.setDaemon(true);
+				thread.setPriority(Math.max(Thread.MIN_PRIORITY, Thread.NORM_PRIORITY - 1));
+				return thread;
+			});
+			telegramDeliveryExecutor = deliveryExecutor;
+			deliveryExecutor.scheduleWithFixedDelay(
+					MonitorSupportRuntime::deliverPendingTelegramMessages,
+					250L,
+					1_000L,
+					TimeUnit.MILLISECONDS
+			);
+		}
 	}
 
 	private static void pollTelegramUpdates(MinecraftServer server) {
 		if (server == null || !telegramConfigured()) {
 			return;
 		}
+		if (System.currentTimeMillis() < telegramPollRetryAtMillis) {
+			return;
+		}
 		try {
-			String query = "timeout=0&offset=" + Math.max(0L, telegramOffset);
+			String query = "timeout=" + TELEGRAM_POLL_TIMEOUT_SECONDS + "&offset=" + Math.max(0L, telegramOffset);
 			HttpRequest request = HttpRequest.newBuilder(telegramApiUri("getUpdates?" + query))
-					.timeout(Duration.ofSeconds(TELEGRAM_REQUEST_TIMEOUT_SECONDS))
+					.timeout(Duration.ofSeconds(TELEGRAM_POLL_REQUEST_TIMEOUT_SECONDS))
 					.GET()
 					.build();
 			HttpResponse<String> response = TELEGRAM_HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
 			if (response.statusCode() < 200 || response.statusCode() >= 300) {
+				recordTelegramPollFailure("HTTP " + response.statusCode());
 				return;
 			}
 			JsonElement parsed = JsonParser.parseString(response.body());
 			if (!(parsed instanceof JsonObject root) || !root.has("ok") || !root.get("ok").getAsBoolean()) {
+				recordTelegramPollFailure("Telegram API returned an invalid response");
 				return;
 			}
 			JsonArray result = root.getAsJsonArray("result");
 			if (result == null) {
+				telegramPollFailures = 0;
+				telegramPollRetryAtMillis = 0L;
 				return;
 			}
 			for (JsonElement element : result) {
@@ -940,26 +996,121 @@ public final class MonitorSupportRuntime {
 					continue;
 				}
 				long updateId = readLong(update, "update_id", -1L);
-				if (updateId >= 0L) {
-					telegramOffset = Math.max(telegramOffset, updateId + 1L);
+				if (updateId < 0L) {
+					continue;
 				}
-				JsonObject telegramMessage = update.getAsJsonObject("message");
-				if (telegramMessage != null) {
-					handleTelegramMessage(server, telegramMessage);
+				if (!acceptTelegramUpdate(server, updateId, update)) {
+					recordTelegramPollFailure("could not persist the incoming update queue");
+					return;
 				}
 			}
+			telegramPollFailures = 0;
+			telegramPollRetryAtMillis = 0L;
+			processPendingTelegramUpdates(server);
 		} catch (IOException exception) {
-			Lg2.LOGGER.warn("Failed to poll support Telegram bot", exception);
+			recordTelegramPollFailure(exception.toString());
 		} catch (InterruptedException exception) {
 			Thread.currentThread().interrupt();
 		} catch (RuntimeException exception) {
-			Lg2.LOGGER.warn("Failed to process support Telegram update", exception);
+			recordTelegramPollFailure(exception.toString());
 		}
 	}
 
-	private static void handleTelegramMessage(MinecraftServer server, JsonObject message) {
+	private static void recordTelegramPollFailure(String reason) {
+		int failures = Math.min(telegramPollFailures + 1, 30);
+		telegramPollFailures = failures;
+		long retryDelay = telegramRetryDelayMillis(failures);
+		telegramPollRetryAtMillis = System.currentTimeMillis() + retryDelay;
+		logTelegramFailure(LAST_TELEGRAM_POLL_FAILURE_LOG_AT, "Failed to poll support Telegram bot", reason, retryDelay);
+	}
+
+	private static void recordTelegramDeliveryFailure(String reason) {
+		logTelegramFailure(LAST_TELEGRAM_DELIVERY_FAILURE_LOG_AT, "Failed to deliver support Telegram message", reason, 0L);
+	}
+
+	private static void logTelegramFailure(AtomicLong lastLoggedAt, String summary, String reason, long retryDelay) {
+		long now = System.currentTimeMillis();
+		long last = lastLoggedAt.get();
+		if (now - last < TELEGRAM_FAILURE_LOG_INTERVAL_MS || !lastLoggedAt.compareAndSet(last, now)) {
+			return;
+		}
+		String retryText = retryDelay > 0L ? "; retry in " + retryDelay + " ms" : "";
+		Lg2.LOGGER.warn("{}: {}{}", summary, reason == null ? "unknown failure" : reason, retryText);
+	}
+
+	private static long telegramRetryDelayMillis(int failures) {
+		int exponent = Math.max(0, Math.min(6, failures - 1));
+		return Math.min(TELEGRAM_RETRY_MAX_DELAY_MS, TELEGRAM_RETRY_INITIAL_DELAY_MS << exponent);
+	}
+
+	private static boolean acceptTelegramUpdate(MinecraftServer server, long updateId, JsonObject update) {
+		if (updateId < telegramOffset) {
+			return true;
+		}
+		synchronized (PERSISTENCE_LOCK) {
+			if (updateId < telegramOffset) {
+				return true;
+			}
+			if (PENDING_TELEGRAM_UPDATES.size() >= MAX_PENDING_TELEGRAM_UPDATES) {
+				return false;
+			}
+			PendingTelegramUpdate pending = new PendingTelegramUpdate(updateId, update.toString());
+			PENDING_TELEGRAM_UPDATES.putIfAbsent(updateId, pending);
+			long previousOffset = telegramOffset;
+			telegramOffset = updateId + 1L;
+			if (save(server)) {
+				return true;
+			}
+			telegramOffset = previousOffset;
+			PENDING_TELEGRAM_UPDATES.remove(updateId, pending);
+			return false;
+		}
+	}
+
+	private static void processPendingTelegramUpdates(MinecraftServer server) {
+		if (server == null || !telegramConfigured() || PENDING_TELEGRAM_UPDATES.isEmpty()) {
+			return;
+		}
+		if (!TELEGRAM_INBOX_PROCESSING.compareAndSet(false, true)) {
+			return;
+		}
+		runTelegramInboxTask(() -> processNextPendingTelegramUpdate(server));
+	}
+
+	private static void processNextPendingTelegramUpdate(MinecraftServer server) {
+		PendingTelegramUpdate pending = PENDING_TELEGRAM_UPDATES.firstEntry() == null ? null : PENDING_TELEGRAM_UPDATES.firstEntry().getValue();
+		if (pending == null || server == null || activeServer != server) {
+			TELEGRAM_INBOX_PROCESSING.set(false);
+			return;
+		}
+		try {
+			JsonElement parsed = JsonParser.parseString(pending.updateJson());
+			JsonObject update = parsed instanceof JsonObject object ? object : null;
+			JsonObject message = update == null ? null : update.getAsJsonObject("message");
+			if (message == null) {
+				completeTelegramUpdate(server, pending.updateId());
+				return;
+			}
+			handleTelegramMessage(server, message, () -> completeTelegramUpdate(server, pending.updateId()));
+		} catch (RuntimeException exception) {
+			TELEGRAM_INBOX_PROCESSING.set(false);
+			recordTelegramPollFailure("could not process queued update: " + exception);
+		}
+	}
+
+	private static void completeTelegramUpdate(MinecraftServer server, long updateId) {
+		synchronized (PERSISTENCE_LOCK) {
+			PENDING_TELEGRAM_UPDATES.remove(updateId);
+			save(server);
+		}
+		TELEGRAM_INBOX_PROCESSING.set(false);
+		processPendingTelegramUpdates(server);
+	}
+
+	private static void handleTelegramMessage(MinecraftServer server, JsonObject message, Runnable completed) {
 		long chatId = telegramChatId(message);
 		if (chatId == Long.MIN_VALUE) {
+			completed.run();
 			return;
 		}
 		String text = telegramMessageText(message);
@@ -969,28 +1120,35 @@ public final class MonitorSupportRuntime {
 			TELEGRAM_CHAT_IDS.add(chatId);
 			saveTelegramOperatorConfig();
 			save(server);
+			completed.run();
 			return;
 		}
 		if (lower.equals("/stop") || isSupportOffCommand(text)) {
 			ensureLoaded(server);
 			TELEGRAM_CHAT_IDS.remove(chatId);
 			LAST_TELEGRAM_TICKETS.remove(chatId);
+			PENDING_TELEGRAM_DELIVERIES.entrySet().removeIf(entry -> entry.getValue().chatId() == chatId);
 			saveTelegramOperatorConfig();
 			save(server);
+			completed.run();
 			return;
 		}
 		if (lower.equals("/help")) {
+			completed.run();
 			return;
 		}
 		if (isSupportStatusCommand(text)) {
 			sendTelegramMessage(chatId, telegramStatusText(server, chatId));
+			completed.run();
 			return;
 		}
 		if (!TELEGRAM_CHAT_IDS.contains(chatId)) {
+			completed.run();
 			return;
 		}
 		TelegramReply reply = parseTelegramReply(chatId, message, text);
 		if (reply == null) {
+			completed.run();
 			return;
 		}
 		String author = telegramAuthor(message);
@@ -998,16 +1156,20 @@ public final class MonitorSupportRuntime {
 		SupportAttachment attachment = downloadTelegramAttachment(chatId, incomingMessageId, message);
 		MinecraftServer targetServer = activeServer != null ? activeServer : server;
 		if (targetServer == null) {
-			return;
+			throw new IllegalStateException("Minecraft server is not available for Telegram reply");
 		}
 		targetServer.execute(() -> {
-			SupportTicket ticket = TICKETS.get(reply.ticketId());
-			if (ticket == null) {
-				return;
-			}
-			addSupportReply(targetServer, reply.ticketId(), author, reply.message(), attachment == null ? List.of() : List.of(attachment));
-			if (incomingMessageId > 0) {
-				setTelegramMessageReaction(chatId, incomingMessageId);
+			try {
+				SupportTicket ticket = TICKETS.get(reply.ticketId());
+				if (ticket == null) {
+					return;
+				}
+				addSupportReply(targetServer, reply.ticketId(), author, reply.message(), attachment == null ? List.of() : List.of(attachment));
+				if (incomingMessageId > 0) {
+					setTelegramMessageReaction(chatId, incomingMessageId);
+				}
+			} finally {
+				completed.run();
 			}
 		});
 	}
@@ -1298,32 +1460,128 @@ public final class MonitorSupportRuntime {
 		runTelegramTask(() -> sendTelegramMessageInternal(chatId, text));
 	}
 
-	private static List<Integer> sendTelegramTicketInternal(long chatId, SupportTicket ticket, String message, List<SupportAttachment> attachments) {
-		List<SupportAttachment> safeAttachments = attachments == null ? List.of() : attachments;
-		List<SupportAttachment> localAttachments = safeAttachments.stream()
+	private static void scheduleTelegramDelivery() {
+		ScheduledExecutorService executor = telegramDeliveryExecutor;
+		if (executor == null || executor.isShutdown()) {
+			MinecraftServer server = activeServer;
+			if (server != null && telegramConfigured()) {
+				startTelegramPolling(server);
+				executor = telegramDeliveryExecutor;
+			}
+		}
+		if (executor != null && !executor.isShutdown()) {
+			executor.execute(MonitorSupportRuntime::deliverPendingTelegramMessages);
+		}
+	}
+
+	private static void deliverPendingTelegramMessages() {
+		if (!telegramConfigured()) {
+			return;
+		}
+		Map.Entry<Long, PendingTelegramDelivery> entry = PENDING_TELEGRAM_DELIVERIES.firstEntry();
+		if (entry == null) {
+			return;
+		}
+		PendingTelegramDelivery delivery = entry.getValue();
+		if (delivery == null || System.currentTimeMillis() < delivery.nextAttemptAtMillis()) {
+			return;
+		}
+		// Never send a notification before its queue entry has reached disk. If the
+		// world save is temporarily unavailable, the periodic worker will try again.
+		if (!save(activeServer)) {
+			recordTelegramDeliveryFailure("could not persist the delivery queue");
+			return;
+		}
+		SupportTicket ticket = TICKETS.get(delivery.ticketId());
+		if (ticket == null || !TELEGRAM_CHAT_IDS.contains(delivery.chatId())) {
+			PENDING_TELEGRAM_DELIVERIES.remove(delivery.id(), delivery);
+			save(activeServer);
+			return;
+		}
+		List<SupportAttachment> localAttachments = delivery.attachments().stream()
 				.filter(attachment -> telegramAttachmentPath(attachment) != null)
 				.toList();
+		int messageId;
+		int totalParts;
 		if (localAttachments.isEmpty()) {
-			return List.of(sendTelegramMessageInternal(chatId, formatTelegramTicket(ticket, message, safeAttachments)));
-		}
-		List<Integer> messageIds = new ArrayList<>();
-		boolean captionSent = false;
-		for (SupportAttachment attachment : localAttachments) {
+			totalParts = 1;
+			messageId = sendTelegramMessageInternal(delivery.chatId(), formatTelegramTicket(ticket, delivery.message(), delivery.attachments()));
+		} else {
+			totalParts = localAttachments.size();
+			if (delivery.nextPartIndex() >= totalParts) {
+				completeTelegramDelivery(delivery, ticket);
+				return;
+			}
+			SupportAttachment attachment = localAttachments.get(delivery.nextPartIndex());
 			Path file = telegramAttachmentPath(attachment);
 			if (file == null) {
-				continue;
+				retryTelegramDelivery(delivery, "attachment is no longer available");
+				return;
 			}
-			String caption = captionSent ? "" : truncateTelegramCaption(formatTelegramTicket(ticket, message, List.of()));
-			int messageId = sendTelegramDocumentInternal(chatId, file, telegramFileName(attachment, file), caption);
-			if (messageId > 0) {
-				messageIds.add(messageId);
-				captionSent = true;
-			}
+			String caption = delivery.nextPartIndex() == 0
+					? truncateTelegramCaption(formatTelegramTicket(ticket, delivery.message(), List.of()))
+					: "";
+			messageId = sendTelegramDocumentInternal(delivery.chatId(), file, telegramFileName(attachment, file), caption);
 		}
-		if (messageIds.isEmpty()) {
-			return List.of(sendTelegramMessageInternal(chatId, formatTelegramTicket(ticket, message, safeAttachments)));
+		if (messageId <= 0) {
+			retryTelegramDelivery(delivery, "Telegram did not confirm delivery");
+			return;
 		}
-		return messageIds;
+		List<Integer> confirmedMessageIds = new ArrayList<>(delivery.confirmedMessageIds());
+		confirmedMessageIds.add(messageId);
+		TELEGRAM_MESSAGE_TICKETS.put(new TelegramMessageKey(delivery.chatId(), messageId), delivery.ticketId());
+		LAST_TELEGRAM_TICKETS.put(delivery.chatId(), delivery.ticketId());
+		PendingTelegramDelivery updated = new PendingTelegramDelivery(
+				delivery.id(),
+				delivery.chatId(),
+				delivery.ticketId(),
+				delivery.message(),
+				delivery.attachments(),
+				delivery.nextPartIndex() + 1,
+				List.copyOf(confirmedMessageIds),
+				0,
+				0L
+		);
+		if (updated.nextPartIndex() >= totalParts) {
+			PENDING_TELEGRAM_DELIVERIES.remove(delivery.id(), delivery);
+		} else {
+			PENDING_TELEGRAM_DELIVERIES.replace(delivery.id(), delivery, updated);
+		}
+		save(activeServer);
+		if (updated.nextPartIndex() < totalParts) {
+			scheduleTelegramDelivery();
+		}
+	}
+
+	private static void completeTelegramDelivery(PendingTelegramDelivery delivery, SupportTicket ticket) {
+		if (delivery == null || ticket == null) {
+			return;
+		}
+		PENDING_TELEGRAM_DELIVERIES.remove(delivery.id(), delivery);
+		LAST_TELEGRAM_TICKETS.put(delivery.chatId(), ticket.id());
+		save(activeServer);
+	}
+
+	private static void retryTelegramDelivery(PendingTelegramDelivery delivery, String reason) {
+		if (delivery == null) {
+			return;
+		}
+		int attempts = Math.min(delivery.attempts() + 1, 30);
+		long retryDelay = telegramRetryDelayMillis(attempts);
+		PendingTelegramDelivery updated = new PendingTelegramDelivery(
+				delivery.id(),
+				delivery.chatId(),
+				delivery.ticketId(),
+				delivery.message(),
+				delivery.attachments(),
+				delivery.nextPartIndex(),
+				delivery.confirmedMessageIds(),
+				attempts,
+				System.currentTimeMillis() + retryDelay
+		);
+		PENDING_TELEGRAM_DELIVERIES.replace(delivery.id(), delivery, updated);
+		save(activeServer);
+		recordTelegramDeliveryFailure(reason + "; retrying in " + retryDelay + " ms");
 	}
 
 	private static int sendTelegramMessageInternal(long chatId, String text) {
@@ -1351,11 +1609,11 @@ public final class MonitorSupportRuntime {
 			JsonObject result = root.getAsJsonObject("result");
 			return result != null ? readInt(result, "message_id", -1) : -1;
 		} catch (IOException exception) {
-			Lg2.LOGGER.warn("Failed to send support Telegram message", exception);
+			Lg2.LOGGER.debug("Failed to send support Telegram message: {}", exception.toString());
 		} catch (InterruptedException exception) {
 			Thread.currentThread().interrupt();
 		} catch (RuntimeException exception) {
-			Lg2.LOGGER.warn("Failed to build support Telegram message", exception);
+			Lg2.LOGGER.debug("Failed to build support Telegram message: {}", exception.toString());
 		}
 		return -1;
 	}
@@ -1384,11 +1642,11 @@ public final class MonitorSupportRuntime {
 			}
 			return readTelegramMessageId(response.body());
 		} catch (IOException exception) {
-			Lg2.LOGGER.warn("Failed to send support Telegram attachment", exception);
+			Lg2.LOGGER.debug("Failed to send support Telegram attachment: {}", exception.toString());
 		} catch (InterruptedException exception) {
 			Thread.currentThread().interrupt();
 		} catch (RuntimeException exception) {
-			Lg2.LOGGER.warn("Failed to build support Telegram attachment", exception);
+			Lg2.LOGGER.debug("Failed to build support Telegram attachment: {}", exception.toString());
 		}
 		return -1;
 	}
@@ -1487,15 +1745,31 @@ public final class MonitorSupportRuntime {
 	}
 
 	private static void runTelegramTask(Runnable runnable) {
-		ScheduledExecutorService executor = telegramExecutor;
+		ScheduledExecutorService executor = telegramDeliveryExecutor;
 		if (executor == null || executor.isShutdown()) {
 			MinecraftServer server = activeServer;
 			if (server != null && telegramConfigured()) {
 				startTelegramPolling(server);
-				executor = telegramExecutor;
+				executor = telegramDeliveryExecutor;
 			}
 		}
 		if (executor == null || executor.isShutdown()) {
+			return;
+		}
+		executor.execute(runnable);
+	}
+
+	private static void runTelegramInboxTask(Runnable runnable) {
+		ScheduledExecutorService executor = telegramInboxExecutor;
+		if (executor == null || executor.isShutdown()) {
+			MinecraftServer server = activeServer;
+			if (server != null && telegramConfigured()) {
+				startTelegramPolling(server);
+				executor = telegramInboxExecutor;
+			}
+		}
+		if (executor == null || executor.isShutdown()) {
+			TELEGRAM_INBOX_PROCESSING.set(false);
 			return;
 		}
 		executor.execute(runnable);
@@ -2596,7 +2870,13 @@ public final class MonitorSupportRuntime {
 			TICKETS.clear();
 			TELEGRAM_MESSAGE_TICKETS.clear();
 			LAST_TELEGRAM_TICKETS.clear();
+			PENDING_TELEGRAM_UPDATES.clear();
+			PENDING_TELEGRAM_DELIVERIES.clear();
 			NEXT_TICKET_ID.set(1L);
+			NEXT_TELEGRAM_DELIVERY_ID.set(1L);
+			telegramOffset = 0L;
+			telegramPollFailures = 0;
+			telegramPollRetryAtMillis = 0L;
 			loaded = true;
 			if (server == null) {
 				return;
@@ -2631,6 +2911,8 @@ public final class MonitorSupportRuntime {
 					}
 				}
 				NEXT_TICKET_ID.set(Math.max(1L, readLong(root, "next_ticket_id", 1L)));
+				NEXT_TELEGRAM_DELIVERY_ID.set(Math.max(1L, readLong(root, "next_telegram_delivery_id", 1L)));
+				telegramOffset = Math.max(0L, readLong(root, "telegram_offset", 0L));
 				JsonArray screens = root.getAsJsonArray("screens");
 				if (screens != null) {
 					for (JsonElement element : screens) {
@@ -2669,6 +2951,26 @@ public final class MonitorSupportRuntime {
 							if (chatId != Long.MIN_VALUE && ticketId > 0L) {
 								LAST_TELEGRAM_TICKETS.put(chatId, ticketId);
 							}
+						}
+					}
+				}
+				JsonArray pendingUpdates = root.getAsJsonArray("pending_telegram_updates");
+				if (pendingUpdates != null) {
+					for (JsonElement element : pendingUpdates) {
+						if (element instanceof JsonObject pendingObject) {
+							long updateId = readLong(pendingObject, "update_id", -1L);
+							String updateJson = readString(pendingObject, "update_json");
+							if (updateId >= 0L && !updateJson.isBlank()) {
+								PENDING_TELEGRAM_UPDATES.put(updateId, new PendingTelegramUpdate(updateId, updateJson));
+							}
+						}
+					}
+				}
+				JsonArray pendingDeliveries = root.getAsJsonArray("pending_telegram_deliveries");
+				if (pendingDeliveries != null) {
+					for (JsonElement element : pendingDeliveries) {
+						if (element instanceof JsonObject pendingObject) {
+							loadPendingTelegramDelivery(pendingObject);
 						}
 					}
 				}
@@ -2723,12 +3025,13 @@ public final class MonitorSupportRuntime {
 		}
 	}
 
-	private static void save(MinecraftServer server) {
+	private static boolean save(MinecraftServer server) {
 		synchronized (PERSISTENCE_LOCK) {
 			if (server == null || !loaded) {
-				return;
+				return false;
 			}
 			Path path = statePath(server);
+			Path temporaryPath = path.resolveSibling(path.getFileName() + ".tmp");
 			try {
 				Files.createDirectories(path.getParent());
 				JsonObject root = new JsonObject();
@@ -2743,6 +3046,8 @@ public final class MonitorSupportRuntime {
 						.forEach(telegramChats::add);
 				root.add("telegram_chats", telegramChats);
 				root.addProperty("next_ticket_id", NEXT_TICKET_ID.get());
+				root.addProperty("next_telegram_delivery_id", NEXT_TELEGRAM_DELIVERY_ID.get());
+				root.addProperty("telegram_offset", telegramOffset);
 				JsonArray screens = new JsonArray();
 				STATES.entrySet().stream()
 						.sorted(Comparator.comparing(entry -> screenKeyId(entry.getKey())))
@@ -2772,13 +3077,37 @@ public final class MonitorSupportRuntime {
 							object.addProperty("chat_id", entry.getKey());
 							object.addProperty("ticket_id", entry.getValue());
 							lastTickets.add(object);
-						});
+					});
 				root.add("last_telegram_tickets", lastTickets);
-				try (Writer writer = Files.newBufferedWriter(path, StandardCharsets.UTF_8)) {
+				JsonArray pendingUpdates = new JsonArray();
+				for (PendingTelegramUpdate pending : PENDING_TELEGRAM_UPDATES.values()) {
+					JsonObject object = new JsonObject();
+					object.addProperty("update_id", pending.updateId());
+					object.addProperty("update_json", pending.updateJson());
+					pendingUpdates.add(object);
+				}
+				root.add("pending_telegram_updates", pendingUpdates);
+				JsonArray pendingDeliveries = new JsonArray();
+				for (PendingTelegramDelivery delivery : PENDING_TELEGRAM_DELIVERIES.values()) {
+					pendingDeliveries.add(writePendingTelegramDelivery(delivery));
+				}
+				root.add("pending_telegram_deliveries", pendingDeliveries);
+				try (Writer writer = Files.newBufferedWriter(temporaryPath, StandardCharsets.UTF_8)) {
 					GSON.toJson(root, writer);
 				}
+				try {
+					Files.move(temporaryPath, path, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+				} catch (java.nio.file.AtomicMoveNotSupportedException ignored) {
+					Files.move(temporaryPath, path, StandardCopyOption.REPLACE_EXISTING);
+				}
+				return true;
 			} catch (IOException exception) {
 				Lg2.LOGGER.warn("Failed to save support settings", exception);
+				try {
+					Files.deleteIfExists(temporaryPath);
+				} catch (IOException ignored) {
+				}
+				return false;
 			}
 		}
 	}
@@ -2935,6 +3264,76 @@ public final class MonitorSupportRuntime {
 		object.addProperty("url", attachment == null || attachment.url() == null ? "" : attachment.url());
 		object.addProperty("local_media", attachment == null || attachment.localMediaKey() == null ? "" : attachment.localMediaKey());
 		object.addProperty("kind", attachment == null || attachment.kind() == null ? GalleryItemKind.MEDIA.persistedName() : attachment.kind().persistedName());
+		return object;
+	}
+
+	private static void loadPendingTelegramDelivery(JsonObject object) {
+		long id = readLong(object, "id", -1L);
+		long chatId = readLong(object, "chat_id", Long.MIN_VALUE);
+		long ticketId = readLong(object, "ticket_id", -1L);
+		if (id <= 0L || chatId == Long.MIN_VALUE || ticketId <= 0L) {
+			return;
+		}
+		List<SupportAttachment> attachments = new ArrayList<>();
+		JsonArray attachmentArray = object.getAsJsonArray("attachments");
+		if (attachmentArray != null) {
+			for (JsonElement element : attachmentArray) {
+				if (element instanceof JsonObject attachmentObject) {
+					SupportAttachment attachment = readAttachment(attachmentObject);
+					if (attachment != null) {
+						attachments.add(attachment);
+					}
+				}
+			}
+		}
+		List<Integer> confirmedMessageIds = new ArrayList<>();
+		JsonArray confirmedArray = object.getAsJsonArray("confirmed_message_ids");
+		if (confirmedArray != null) {
+			for (JsonElement element : confirmedArray) {
+				try {
+					int messageId = element.getAsInt();
+					if (messageId > 0) {
+						confirmedMessageIds.add(messageId);
+					}
+				} catch (RuntimeException ignored) {
+				}
+			}
+		}
+		PENDING_TELEGRAM_DELIVERIES.put(id, new PendingTelegramDelivery(
+				id,
+				chatId,
+				ticketId,
+				readString(object, "message"),
+				List.copyOf(attachments),
+				Math.max(0, readInt(object, "next_part_index", 0)),
+				List.copyOf(confirmedMessageIds),
+				Math.max(0, readInt(object, "attempts", 0)),
+				Math.max(0L, readLong(object, "next_attempt_at", 0L))
+		));
+		NEXT_TELEGRAM_DELIVERY_ID.set(Math.max(NEXT_TELEGRAM_DELIVERY_ID.get(), id + 1L));
+	}
+
+	private static JsonObject writePendingTelegramDelivery(PendingTelegramDelivery delivery) {
+		JsonObject object = new JsonObject();
+		object.addProperty("id", delivery.id());
+		object.addProperty("chat_id", delivery.chatId());
+		object.addProperty("ticket_id", delivery.ticketId());
+		object.addProperty("message", delivery.message() == null ? "" : delivery.message());
+		object.addProperty("next_part_index", delivery.nextPartIndex());
+		object.addProperty("attempts", delivery.attempts());
+		object.addProperty("next_attempt_at", delivery.nextAttemptAtMillis());
+		JsonArray attachments = new JsonArray();
+		for (SupportAttachment attachment : delivery.attachments()) {
+			attachments.add(writeAttachment(attachment));
+		}
+		object.add("attachments", attachments);
+		JsonArray confirmedMessageIds = new JsonArray();
+		for (Integer messageId : delivery.confirmedMessageIds()) {
+			if (messageId != null && messageId > 0) {
+				confirmedMessageIds.add(messageId);
+			}
+		}
+		object.add("confirmed_message_ids", confirmedMessageIds);
 		return object;
 	}
 
@@ -3296,6 +3695,22 @@ public final class MonitorSupportRuntime {
 	}
 
 	private record TelegramMessageKey(long chatId, int messageId) {
+	}
+
+	private record PendingTelegramUpdate(long updateId, String updateJson) {
+	}
+
+	private record PendingTelegramDelivery(
+			long id,
+			long chatId,
+			long ticketId,
+			String message,
+			List<SupportAttachment> attachments,
+			int nextPartIndex,
+			List<Integer> confirmedMessageIds,
+			int attempts,
+			long nextAttemptAtMillis
+	) {
 	}
 
 	private record TelegramReply(long ticketId, String message) {
