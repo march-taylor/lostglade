@@ -487,6 +487,7 @@ public final class ModItems {
 		copyShieldComponent(properties, DataComponents.EQUIPPABLE);
 		copyShieldComponent(properties, DataComponents.BLOCKS_ATTACKS);
 		copyShieldComponent(properties, DataComponents.BREAK_SOUND);
+		copyShieldComponent(properties, DataComponents.ENCHANTABLE);
 		return properties;
 	}
 

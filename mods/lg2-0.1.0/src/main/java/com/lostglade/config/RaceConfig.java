@@ -239,6 +239,16 @@ public final class RaceConfig {
 		changed |= normalizeNonNegative(ability.markShieldBashDiamondKnockbackBlocks, value -> ability.markShieldBashDiamondKnockbackBlocks = value);
 		changed |= normalizeNonNegative(ability.markShieldBashNetheriteKnockbackBlocks, value -> ability.markShieldBashNetheriteKnockbackBlocks = value);
 		changed |= normalizeNonNegative(ability.milkDefenseTeleportDistanceBlocks, value -> ability.milkDefenseTeleportDistanceBlocks = value);
+		changed |= normalizeNonNegative(ability.puroSanAttackBackJumpBlocks, value -> ability.puroSanAttackBackJumpBlocks = value);
+		changed |= normalizeNonNegative(ability.puroSanAttackWaveRadiusBlocks, value -> ability.puroSanAttackWaveRadiusBlocks = value);
+		changed |= normalizeNonNegative(ability.puroSanAttackDamage, value -> ability.puroSanAttackDamage = value);
+		changed |= normalizeNonNegative(ability.puroSanAttackDebuffSeconds, value -> ability.puroSanAttackDebuffSeconds = value);
+		changed |= normalizeNonNegative(ability.puroSanDefenseJumpBlocks, value -> ability.puroSanDefenseJumpBlocks = value);
+		changed |= normalizeNonNegative(ability.puroSanUniqueDashBlocks, value -> ability.puroSanUniqueDashBlocks = value);
+		changed |= normalizeNonNegative(ability.puroSanShnyagaChargeSeconds, value -> ability.puroSanShnyagaChargeSeconds = value);
+		changed |= normalizeNonNegative(ability.puroSanShnyagaSpeedBonusRatio, value -> ability.puroSanShnyagaSpeedBonusRatio = value);
+		changed |= normalizeNonNegative(ability.puroSanShnyagaShieldHealthRatio, value -> ability.puroSanShnyagaShieldHealthRatio = value);
+
 		changed |= normalizeNonNegative(ability.kilkaAttackChargeSeconds, value -> ability.kilkaAttackChargeSeconds = value);
 		changed |= normalizeNonNegative(ability.kilkaAttackRadiusBlocks, value -> ability.kilkaAttackRadiusBlocks = value);
 		changed |= normalizeNonNegative(ability.kilkaAttackKnockbackBlocks, value -> ability.kilkaAttackKnockbackBlocks = value);
@@ -476,6 +486,16 @@ public final class RaceConfig {
 			addDoubleIfNonZero(json, "markShieldBashDiamondKnockbackBlocks", ability.markShieldBashDiamondKnockbackBlocks);
 			addDoubleIfNonZero(json, "markShieldBashNetheriteKnockbackBlocks", ability.markShieldBashNetheriteKnockbackBlocks);
 			addDoubleIfNonZero(json, "milkDefenseTeleportDistanceBlocks", ability.milkDefenseTeleportDistanceBlocks);
+			addDoubleIfNonZero(json, "puroSanAttackBackJumpBlocks", ability.puroSanAttackBackJumpBlocks);
+			addDoubleIfNonZero(json, "puroSanAttackWaveRadiusBlocks", ability.puroSanAttackWaveRadiusBlocks);
+			addDoubleIfNonZero(json, "puroSanAttackDamage", ability.puroSanAttackDamage);
+			addDoubleIfNonZero(json, "puroSanAttackDebuffSeconds", ability.puroSanAttackDebuffSeconds);
+			addDoubleIfNonZero(json, "puroSanDefenseJumpBlocks", ability.puroSanDefenseJumpBlocks);
+			addDoubleIfNonZero(json, "puroSanUniqueDashBlocks", ability.puroSanUniqueDashBlocks);
+			addDoubleIfNonZero(json, "puroSanShnyagaChargeSeconds", ability.puroSanShnyagaChargeSeconds);
+			addDoubleIfNonZero(json, "puroSanShnyagaSpeedBonusRatio", ability.puroSanShnyagaSpeedBonusRatio);
+			addDoubleIfNonZero(json, "puroSanShnyagaShieldHealthRatio", ability.puroSanShnyagaShieldHealthRatio);
+
 			addDoubleIfNonZero(json, "kilkaAttackChargeSeconds", ability.kilkaAttackChargeSeconds);
 			addDoubleIfNonZero(json, "kilkaAttackRadiusBlocks", ability.kilkaAttackRadiusBlocks);
 			addDoubleIfNonZero(json, "kilkaAttackKnockbackBlocks", ability.kilkaAttackKnockbackBlocks);
@@ -691,6 +711,16 @@ public final class RaceConfig {
 		public double markShieldBashDiamondKnockbackBlocks = 0.0D;
 		public double markShieldBashNetheriteKnockbackBlocks = 0.0D;
 		public double milkDefenseTeleportDistanceBlocks = 0.0D;
+		public double puroSanAttackBackJumpBlocks = 0.0D;
+		public double puroSanAttackWaveRadiusBlocks = 0.0D;
+		public double puroSanAttackDamage = 0.0D;
+		public double puroSanAttackDebuffSeconds = 0.0D;
+		public double puroSanDefenseJumpBlocks = 0.0D;
+		public double puroSanUniqueDashBlocks = 0.0D;
+		public double puroSanShnyagaChargeSeconds = 0.0D;
+		public double puroSanShnyagaSpeedBonusRatio = 0.0D;
+		public double puroSanShnyagaShieldHealthRatio = 0.0D;
+
 		public double kilkaAttackChargeSeconds = 0.0D;
 		public double kilkaAttackRadiusBlocks = 0.0D;
 		public double kilkaAttackKnockbackBlocks = 0.0D;

@@ -31,6 +31,11 @@ public abstract class LivingEntityCartelDefenseMixin {
 			cir.setReturnValue(false);
 			return;
 		}
+		if ((Object) this instanceof ServerPlayer player
+				&& ServerRaceSystem.shouldCancelPuroSanDefenseFallDamage(player, damageSource)) {
+			cir.setReturnValue(false);
+			return;
+		}
 		if (ServerRaceSystem.shouldCancelKilkaSalmonOwnerSuffocationDamage((LivingEntity) (Object) this, damageSource)) {
 			cir.setReturnValue(false);
 			return;
@@ -70,6 +75,7 @@ public abstract class LivingEntityCartelDefenseMixin {
 		ServerRaceSystem.handleMilkStockCombatDamage(level, (LivingEntity) (Object) this, damageSource, damage, cir.getReturnValueZ());
 		ServerRaceSystem.handleLittleDictatorCombatDamage(level, (LivingEntity) (Object) this, damageSource, damage, cir.getReturnValueZ());
 		ServerRaceSystem.handleKilkaIncomingDamage(level, (LivingEntity) (Object) this, damageSource, damage, cir.getReturnValueZ());
+		ServerRaceSystem.handlePuroSanOverdriveCombatDamage(level, (LivingEntity) (Object) this, damageSource, damage, cir.getReturnValueZ());
 		ServerRaceSystem.handleMilkDefenseDodge(level, (LivingEntity) (Object) this, damageSource, damage, cir.getReturnValueZ());
 		if (cir.getReturnValueZ() && damage > 0.0F && (Object) this instanceof ServerPlayer player) {
 			ServerMilkPocketDimensionSystem.recordPlayerDamage(player);

@@ -346,7 +346,7 @@
       "enabled": true,
       "id": "mark_potroshitel",
       "displayName": "Марк Потрошитель",
-      "ownerNickname": "Rajas_YT",
+      "ownerNickname": "",
       "description": "У всех нас есть сила в руках для того, чтобы убить, но большинство боится ее использовать.",
       "attack": {
         "enabled": true,
@@ -582,6 +582,60 @@
         "enabled": true,
         "abilityId": "kilka_stock",
         "name": "Гидробионт",
+        "description": ""
+      }
+    },
+    {
+      "enabled": true,
+      "id": "puro_san",
+      "displayName": "Пуро-Сан",
+      "ownerNickname": "Rajas_YT",
+      "description": "",
+      "attack": {
+        "enabled": true,
+        "abilityId": "puro_san_attack",
+        "name": "Лунный откат",
+        "description": "",
+        "priceBitcoins": 300,
+        "cooldownSeconds": 300.0,
+        "puroSanAttackBackJumpBlocks": 5.0,
+        "puroSanAttackWaveRadiusBlocks": 3.0,
+        "puroSanAttackDamage": 4.0,
+        "puroSanAttackDebuffSeconds": 1.5
+      },
+      "defense": {
+        "enabled": true,
+        "abilityId": "puro_san_defense",
+        "name": "Прыжок в небо",
+        "description": "",
+        "priceBitcoins": 600,
+        "cooldownSeconds": 60.0,
+        "puroSanDefenseJumpBlocks": 10.0
+      },
+      "uniqueAbility": {
+        "enabled": true,
+        "abilityId": "puro_san_unique",
+        "name": "Рывок",
+        "description": "",
+        "priceBitcoins": 1000,
+        "cooldownSeconds": 30.0,
+        "puroSanUniqueDashBlocks": 3.0
+      },
+      "shnyaga": {
+        "enabled": true,
+        "abilityId": "puro_san_shnyaga",
+        "name": "Разгон",
+        "description": "",
+        "priceBitcoins": 1500,
+        "cooldownSeconds": 300.0,
+        "puroSanShnyagaChargeSeconds": 5.0,
+        "puroSanShnyagaSpeedBonusRatio": 0.2,
+        "puroSanShnyagaShieldHealthRatio": 0.5
+      },
+      "stock": {
+        "enabled": true,
+        "abilityId": "puro_san_stock",
+        "name": "Ассасин",
         "description": ""
       }
     }

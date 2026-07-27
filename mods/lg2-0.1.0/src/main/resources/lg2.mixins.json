@@ -91,6 +91,7 @@
 		"MobDeathLootMixin",
 		"SheepRainbowWoolShearMixin",
 		"PlayerCocaineSprintMixin",
+		"PlayerPuroSanOverdriveMixin",
 		"PlayerContainerMenuAccessor",
 		"PlayerListRendererBotSystemMessageMixin",
 		"PlayerTrackedDataAccessor",

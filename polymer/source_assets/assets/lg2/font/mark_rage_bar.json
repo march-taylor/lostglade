@@ -3,8 +3,8 @@
     {
       "type": "bitmap",
       "file": "lg2:font/mark_rage_bar.png",
-      "ascent": 10,
-      "height": 14,
+      "ascent": 9,
+      "height": 26,
       "chars": [
         ""
       ]
