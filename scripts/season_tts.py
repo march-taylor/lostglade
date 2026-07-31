@@ -445,11 +445,18 @@ def run_worker_batch(tasks: list[PartTask], args: argparse.Namespace) -> None:
             command.extend(["--ref-text", args.resolved_ref_text])
         if args.instruct:
             command.extend(["--instruct", args.instruct])
+        command.extend(["--cpu-threads", str(max(1, args.cpu_threads))])
         if args.tail_silence_ms is not None:
             command.extend(["--tail-silence-ms", str(args.tail_silence_ms)])
 
         env = os.environ.copy()
         env["MIOPEN_ENABLE_LOGGING"] = "0"
+        # Leave the ROCm model on the GPU while preventing NumPy/Numba/tokenization
+        # from consuming every CPU core. These limits do not alter generated audio.
+        cpu_threads = str(max(1, args.cpu_threads))
+        for variable in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMBA_NUM_THREADS"):
+            env[variable] = cpu_threads
+        env["TOKENIZERS_PARALLELISM"] = "false"
         numba_cache_dir = Path("/tmp/lg2-numba-cache")
         numba_cache_dir.mkdir(parents=True, exist_ok=True)
         env["NUMBA_CACHE_DIR"] = str(numba_cache_dir)
@@ -627,6 +634,12 @@ def add_qwen_arguments(parser: argparse.ArgumentParser) -> None:
         type=int,
         default=DEFAULT_MAX_CHARS,
         help="Maximum characters per generated chunk. Use 0 to disable splitting entirely (default).",
+    )
+    parser.add_argument(
+        "--cpu-threads",
+        type=int,
+        default=4,
+        help="Maximum CPU threads used for audio preparation; defaults to 4 without changing TTS quality.",
     )
 
 

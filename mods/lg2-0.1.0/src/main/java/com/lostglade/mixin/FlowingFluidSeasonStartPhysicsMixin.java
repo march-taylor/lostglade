@@ -23,6 +23,8 @@ public abstract class FlowingFluidSeasonStartPhysicsMixin {
 	) {
 		if (SeasonStartSystem.shouldFreezeSceneBoundaryPhysics(level, pos)) {
 			ci.cancel();
+			return;
 		}
+		SeasonStartSystem.propagateWorldRevealPlayerPhysics(level, pos);
 	}
 }

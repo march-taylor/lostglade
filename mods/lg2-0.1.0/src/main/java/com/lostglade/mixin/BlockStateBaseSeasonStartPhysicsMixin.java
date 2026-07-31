@@ -27,7 +27,7 @@ public abstract class BlockStateBaseSeasonStartPhysicsMixin {
 			RandomSource random,
 			CallbackInfoReturnable<BlockState> cir
 	) {
-		if (level instanceof Level gameLevel && SeasonStartSystem.shouldFreezeSceneBoundaryPhysics(gameLevel, pos)) {
+		if (level instanceof Level gameLevel && SeasonStartSystem.shouldFreezeSceneBoundaryPhysics(gameLevel, pos, neighborPos)) {
 			cir.setReturnValue((BlockState) (Object) this);
 		}
 	}

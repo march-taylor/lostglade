@@ -170,45 +170,45 @@
       "generatorVersion": 4
     },
     "phase1_wait_start_prompt_01": {
-      "fingerprint": "3e5c5cf5de0ecd87ae9d1553590c4b37b73c6219c0e71db189508ae9f98260be",
-      "text": "Когда будете готовы слушать и играть, напишите в чат слово start. Можно и по-русски: старт.",
+      "fingerprint": "33bca131f0e08a848a563dcc94429bd1071589ab477d3202fba3479714d1d58c",
+      "text": "Если слышите меня, напишите что-нибудь в чат. Идём дальше.",
       "outputPath": "config/lg2-season-start/voice/phase1_wait_start_prompt_01.wav",
-      "durationTicks": 131,
+      "durationTicks": 86,
       "generatorVersion": 4
     },
     "phase1_wait_start_prompt_02": {
-      "fingerprint": "3b272507a047a39aefc50f2a39645bdc5c6839a2ae5ad37c634ab4ac42570cde",
-      "text": "Старт сцены начинается словом старт. Просто напишите его.",
+      "fingerprint": "ddd9915d07b534b493a5b1e7703902189b05e1ffc949af47ac3ca61acca94e58",
+      "text": "Проверка связи. Любое сообщение в чат — и начнём.",
       "outputPath": "config/lg2-season-start/voice/phase1_wait_start_prompt_02.wav",
-      "durationTicks": 89,
+      "durationTicks": 87,
       "generatorVersion": 4
     },
     "phase1_wait_start_prompt_03": {
-      "fingerprint": "af02741df6abb6ee05a1ce1a9af6ba2ab526bdc9e924212fb7b6f31f5e8f2cac",
-      "text": "Я не начну говорить в пустоту. Напишите start. Или старт по-русски. Четыре буквы и чуть-чуть воли.",
+      "fingerprint": "6df6ead4ead8121e0cba2ec5b8a7d4c99601769667aa3120fb7b53e4c5390a7c",
+      "text": "Жду любой знак в чате. Потом продолжим.",
       "outputPath": "config/lg2-season-start/voice/phase1_wait_start_prompt_03.wav",
-      "durationTicks": 145,
+      "durationTicks": 60,
       "generatorVersion": 4
     },
     "phase1_wait_start_wrong_01": {
-      "fingerprint": "dfe43951c43ec5521c8b9980f5b38fdde36fec670670d5dd4f472ab11ce08234",
-      "text": "Нет. Я просил start. Не вашу поэзию",
+      "fingerprint": "8426668b525efd3b99d50c87f4e1a94d5ca580535f3bbc625928064d1347532a",
+      "text": "Почти. Нужное слово — старт.",
       "outputPath": "config/lg2-season-start/voice/phase1_wait_start_wrong_01.wav",
-      "durationTicks": 78,
+      "durationTicks": 47,
       "generatorVersion": 4
     },
     "phase1_wait_start_wrong_02": {
-      "fingerprint": "3665bc59b9ddee16e44498048c194cce81e0ecb0cfa7ca91f50815e294886e01",
-      "text": "Любопытно. Но для запуска сцены мне всё ещё нужно слово start. Или старт по-русски.",
+      "fingerprint": "7b47f5b4012a698c4d59579be5a654d9c5fd3ac5f2a234206ad19a6271ef5c93",
+      "text": "Сообщение дошло. Когда будете готовы — напишите старт.",
       "outputPath": "config/lg2-season-start/voice/phase1_wait_start_wrong_02.wav",
-      "durationTicks": 126,
+      "durationTicks": 84,
       "generatorVersion": 4
     },
     "phase1_wait_start_confirmed": {
-      "fingerprint": "5201a8736e964aaa6b6d08499c646f1106e9c7198e6da5254f7fff9e34ed55e4",
-      "text": "Да. команда принята.",
+      "fingerprint": "44f65246bfe497af830b6e0229a9de95d89f127c7d243eecf4d2efb7acbb6151",
+      "text": "Принято. Начинаем.",
       "outputPath": "config/lg2-season-start/voice/phase1_wait_start_confirmed.wav",
-      "durationTicks": 41,
+      "durationTicks": 36,
       "generatorVersion": 4
     },
     "phase1_mined_start_recall": {
@@ -926,10 +926,10 @@
       "generatorVersion": 4
     },
     "phase5_menu_spending": {
-      "fingerprint": "6814745c0e7d75c95291af21a1aaf339cf495dcead10ca06a63310aa5d0a9b23",
-      "text": "Теперь посмотрим, на что вы сможете его тратить.",
+      "fingerprint": "223a0eb315184471f180f9f1cf3b371900eec9b33608d2a572076f88f762ba48",
+      "text": "Сейчас посмотрим, что делать дальше.",
       "outputPath": "config/lg2-season-start/voice/phase5_menu_spending.wav",
-      "durationTicks": 62,
+      "durationTicks": 63,
       "generatorVersion": 4
     },
     "phase5_menu_approach_core": {
@@ -1171,10 +1171,10 @@
       "generatorVersion": 4
     },
     "intro_guided_bitcoin_lost_01": {
-      "fingerprint": "e203457f240c7f05cac159ba20d50d1e63b7249145d0f9d825e6d38f0694b2a7",
-      "text": "Ну ты дуралей, конечно. Как ты умудрился потерять единственный биткоин? Он улетел. Теперь ищи его.",
+      "fingerprint": "d3c8f69838110801856f6b942294fa490d5b4f5283a704cf13087e3cb4336f81",
+      "text": "Ну ты дуралей... Биткоин был один. Теперь иди за ним.",
       "outputPath": "config/lg2-season-start/voice/intro_guided_bitcoin_lost_01.wav",
-      "durationTicks": 135,
+      "durationTicks": 99,
       "generatorVersion": 4
     },
     "intro_guided_bitcoin_lost_02": {
@@ -1192,10 +1192,10 @@
       "generatorVersion": 4
     },
     "intro_guided_bitcoin_recovered": {
-      "fingerprint": "742f4bdf0ce2353daf00b6e0a8e11bcbee07979260af338b7ee1825533f21544",
-      "text": "Нашёл. Невероятно. Теперь не теряй его снова и иди ко мне.",
+      "fingerprint": "acd422147c354e1c6ae6e5ec66a08bc26df962bd4f9492eb7e43a63c278da7b2",
+      "text": "Вот. Нашёл. Теперь донеси до сервера.",
       "outputPath": "config/lg2-season-start/voice/intro_guided_bitcoin_recovered.wav",
-      "durationTicks": 83,
+      "durationTicks": 76,
       "generatorVersion": 4
     },
     "intro_guide_wrong_way_04": {
@@ -1483,6 +1483,48 @@
       "text": "Если вы ещё ничего не купили, вернитесь к ядру и откройте меню сервера. Способности сами себя не получат.",
       "outputPath": "config/lg2-season-start/voice/phase5_menu_race_reminder.wav",
       "durationTicks": 135,
+      "generatorVersion": 4
+    },
+    "intro_guided_bitcoin_lost_again": {
+      "fingerprint": "bfeed85f725a5fada0c6419d82408ece2b7f1843899c72a485ef1c14dfd7bcba",
+      "text": "Ты снова его потерял. Я уже начинаю думать, что биткоин от тебя уходит сам. Иди подними.",
+      "outputPath": "config/lg2-season-start/voice/intro_guided_bitcoin_lost_again.wav",
+      "durationTicks": 137,
+      "generatorVersion": 4
+    },
+    "intro_guided_bitcoin_recovered_locked": {
+      "fingerprint": "874bc535ab51d394c82ef613d2c7dfa992ee22835b7b5455cdd97ffcf0988b5c",
+      "text": "Нашёл второй раз. Я заблокировал слот с бит-коином. Не обижайся: это чтобы ты не потерял его в третий раз. Подойди ко мне и посмотри на сервер. Тогда разблокирую.",
+      "outputPath": "config/lg2-season-start/voice/intro_guided_bitcoin_recovered_locked.wav",
+      "durationTicks": 276,
+      "generatorVersion": 4
+    },
+    "intro_guided_bitcoin_slot_unlocked": {
+      "fingerprint": "5f7860e4bf940c7bdee113d098e8fc88bb756008cddafc3c70f40ee3b24a0591",
+      "text": "Ладно. Смотришь правильно. Слот разблокирован. Бросай бит-коин в сервер.",
+      "outputPath": "config/lg2-season-start/voice/intro_guided_bitcoin_slot_unlocked.wav",
+      "durationTicks": 116,
+      "generatorVersion": 4
+    },
+    "intro_server_before_bitcoin": {
+      "fingerprint": "94526e09ef48f0ba6b36cbf0714416bef613c4debe2e9b2e5db847dab2629f95",
+      "text": "Сервер нашли. Бит-коин ещё нет. Сначала добудьте его.",
+      "outputPath": "config/lg2-season-start/voice/intro_server_before_bitcoin.wav",
+      "durationTicks": 87,
+      "generatorVersion": 4
+    },
+    "intro_server_without_bitcoin": {
+      "fingerprint": "53956d07de2436450357a8ad0e5468ae2a3702eeac209feb2c09375d2f50987b",
+      "text": "Я на месте. Бит-коин где-то ещё гуляет. Возвращайтесь за ним.",
+      "outputPath": "config/lg2-season-start/voice/intro_server_without_bitcoin.wav",
+      "durationTicks": 102,
+      "generatorVersion": 4
+    },
+    "intro_server_without_bitcoin_again": {
+      "fingerprint": "337ac9f17f4501def12c797059039cacece0f2a59d62529ac402373bc4baab86",
+      "text": "Опять ты у меня. Бит-коин от этого ближе не стал. Разворачивайся: он там, где ты его оставил.",
+      "outputPath": "config/lg2-season-start/voice/intro_server_without_bitcoin_again.wav",
+      "durationTicks": 158,
       "generatorVersion": 4
     }
   }

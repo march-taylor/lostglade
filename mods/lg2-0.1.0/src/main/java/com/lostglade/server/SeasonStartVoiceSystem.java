@@ -47,6 +47,9 @@ public final class SeasonStartVoiceSystem {
 	private static final int AUDIO_SAMPLE_RATE = 48_000;
 	private static final int AUDIO_FRAME_SAMPLES = 960;
 	private static final long AUDIO_FRAME_DURATION_MS = 20L;
+	private static final int NARRATION_INTERRUPT_FADE_SAMPLES = AUDIO_FRAME_SAMPLES;
+	private static final int NARRATION_START_FADE_SAMPLES = 240;
+	private static final int NARRATION_END_FADE_SAMPLES = 240;
 	private static final long REALTIME_INTERRUPT_GRACE_TICKS = 18L;
 	private static final long FEEDBACK_PREEMPT_GRACE_TICKS = 6L;
 	private static final long FEEDBACK_QUEUE_TTL_TICKS = 20L * 3L;
@@ -109,7 +112,6 @@ public final class SeasonStartVoiceSystem {
 		for (ActiveCuePlayback playback : new ArrayList<>(ACTIVE_PLAYBACKS.values())) {
 			cancelActivePlayback(playback);
 		}
-		ACTIVE_PLAYBACKS.clear();
 		CHANNEL_QUEUES.clear();
 	}
 
@@ -275,7 +277,7 @@ public final class SeasonStartVoiceSystem {
 		if (channelKey == null || channelKey.isBlank()) {
 			return;
 		}
-		ActiveCuePlayback active = ACTIVE_PLAYBACKS.remove(channelKey);
+		ActiveCuePlayback active = ACTIVE_PLAYBACKS.get(channelKey);
 		if (active == null) {
 			return;
 		}
@@ -302,6 +304,13 @@ public final class SeasonStartVoiceSystem {
 
 	private static void cancelActivePlayback(ActiveCuePlayback active) {
 		if (active == null || active.future == null || active.future.isDone()) {
+			return;
+		}
+		// Stopping an Opus stream in the middle of a non-zero PCM wave creates an
+		// audible click in Simple Voice Chat. Keep the channel alive just long
+		// enough for its sender to emit a short tail down to silence.
+		if (active.voiceStreamStarted) {
+			active.requestFadeOut();
 			return;
 		}
 		active.future.complete(null);
@@ -461,33 +470,30 @@ public final class SeasonStartVoiceSystem {
 		}
 
 		float voiceGain = resolveVoiceGain(queuedCue.cue);
-		// Server narration is a world-wide radio channel, not a physical speaker at
-		// the core. Every listener receives an individual positional stream at their
-		// own camera, which keeps volume identical anywhere in the world.
-		List<CompletableFuture<Void>> futures = new ArrayList<>();
-		for (UUID recipientId : voiceRecipientIds) {
-			ServerPlayer recipient = server.getPlayerList().getPlayer(recipientId);
-			if (recipient == null) {
-				continue;
-			}
-			Vec3 personalOrigin = new Vec3(recipient.getX(), recipient.getEyeY() - 0.35D, recipient.getZ());
-			futures.add(playClipToRecipients(
-					server,
-					voicechatApi,
-					voicechatServerApi,
-					clip,
-					personalOrigin,
-					List.of(recipientId),
-					queuedCue.channelKey,
-					playback.playbackId,
-					voiceGain
-			));
+		// Narration must come from the actual server core. A per-player camera origin
+		// makes the voice appear to move whenever the player turns or walks.
+		Vec3 serverOrigin = SeasonStartSystem.resolveServerVoiceOrigin(server, queuedCue.focusPlayerId == null
+				? null
+				: server.getPlayerList().getPlayer(queuedCue.focusPlayerId));
+		if (serverOrigin == null) {
+			// The core can be unavailable only while the scene is being created. Keep a
+			// stable fallback for that exceptional moment rather than changing position
+			// from frame to frame.
+			ServerPlayer fallbackPlayer = server.getPlayerList().getPlayer(voiceRecipientIds.get(0));
+			serverOrigin = fallbackPlayer == null ? Vec3.ZERO : fallbackPlayer.position();
 		}
-		if (futures.isEmpty()) {
-			bridgePlaybackFuture(playback, delayedFuture(queuedCue.cue.durationTicks));
-			return;
-		}
-		bridgePlaybackFuture(playback, combineInterruptibleFutures(futures));
+		playback.markVoiceStreamStarted();
+		bridgePlaybackFuture(playback, playClipToRecipients(
+				server,
+				voicechatApi,
+				voicechatServerApi,
+				clip,
+				serverOrigin,
+				voiceRecipientIds,
+				queuedCue.channelKey,
+				playback.playbackId,
+				voiceGain
+		));
 	}
 
 	private static List<ServerPlayer> resolveRecipients(MinecraftServer server, VoiceCue cue, UUID focusPlayerId) {
@@ -554,6 +560,7 @@ public final class SeasonStartVoiceSystem {
 				voiceGain,
 				0,
 				System.nanoTime(),
+				null,
 				future,
 				executor
 		);
@@ -575,12 +582,20 @@ public final class SeasonStartVoiceSystem {
 			float voiceGain,
 			int frameIndex,
 			long playbackStartNanos,
+			short[] previousFrame,
 			CompletableFuture<Void> future,
 			ScheduledExecutorService executor
 	) {
 		if (shouldAbortPlayback(channelKey, playbackId, future)) {
 			closeQuietly(encoder);
 			future.complete(null);
+			return;
+		}
+		if (isFadeOutRequested(channelKey, playbackId)) {
+			scheduleNarrationFadeOut(
+					server, voicechatServerApi, encoder, channelId, origin, distance, category,
+					recipientIds, channelKey, playbackId, frameIndex, previousFrame, future, executor
+			);
 			return;
 		}
 		if (frameIndex >= clip.frames.length) {
@@ -597,8 +612,16 @@ public final class SeasonStartVoiceSystem {
 				future.complete(null);
 				return;
 			}
+			if (isFadeOutRequested(channelKey, playbackId)) {
+				scheduleNarrationFadeOut(
+						server, voicechatServerApi, encoder, channelId, origin, distance, category,
+						recipientIds, channelKey, playbackId, frameIndex, previousFrame, future, executor
+				);
+				return;
+			}
 			try {
-				byte[] opus = encoder.encode(applyVoiceGain(clip.frames[frameIndex], voiceGain));
+				short[] pcmFrame = applyVoiceGain(clip.frames[frameIndex], voiceGain);
+				byte[] opus = encoder.encode(pcmFrame);
 				LocationSoundPacket soundPacket = new LocationSoundPacket(
 						channelId,
 						SERVER_VOICE_SOURCE_ID,
@@ -636,6 +659,7 @@ public final class SeasonStartVoiceSystem {
 						voiceGain,
 						frameIndex + 1,
 						playbackStartNanos,
+						pcmFrame,
 						future,
 						executor
 				);
@@ -644,6 +668,94 @@ public final class SeasonStartVoiceSystem {
 				future.completeExceptionally(throwable);
 			}
 		}, delayNanos, TimeUnit.NANOSECONDS);
+	}
+
+	private static void scheduleNarrationFadeOut(
+			MinecraftServer server,
+			VoicechatServerApi voicechatServerApi,
+			OpusEncoder encoder,
+			UUID channelId,
+			Vec3 origin,
+			float distance,
+			String category,
+			List<UUID> recipientIds,
+			String channelKey,
+			long playbackId,
+			int sequence,
+			short[] previousFrame,
+			CompletableFuture<Void> future,
+			ScheduledExecutorService executor
+	) {
+		if (previousFrame == null || shouldAbortPlayback(channelKey, playbackId, future)) {
+			closeQuietly(encoder);
+			future.complete(null);
+			return;
+		}
+		short[] fadeFrame = createInterruptFadeFrame(previousFrame);
+		executor.execute(() -> {
+			try {
+				sendNarrationFrame(server, voicechatServerApi, encoder, channelId, origin, distance, category,
+						recipientIds, channelKey, playbackId, sequence, fadeFrame, future);
+				// One silent frame lets the client decoder finish the same stream cleanly.
+				executor.schedule(() -> {
+					try {
+						sendNarrationFrame(server, voicechatServerApi, encoder, channelId, origin, distance, category,
+								recipientIds, channelKey, playbackId, sequence + 1, new short[AUDIO_FRAME_SAMPLES], future);
+					} finally {
+						closeQuietly(encoder);
+						future.complete(null);
+					}
+				}, AUDIO_FRAME_DURATION_MS, TimeUnit.MILLISECONDS);
+			} catch (Throwable throwable) {
+				closeQuietly(encoder);
+				future.completeExceptionally(throwable);
+			}
+		});
+	}
+
+	private static void sendNarrationFrame(
+			MinecraftServer server,
+			VoicechatServerApi voicechatServerApi,
+			OpusEncoder encoder,
+			UUID channelId,
+			Vec3 origin,
+			float distance,
+			String category,
+			List<UUID> recipientIds,
+			String channelKey,
+			long playbackId,
+			int sequence,
+			short[] pcmFrame,
+			CompletableFuture<Void> future
+	) {
+		if (shouldAbortPlayback(channelKey, playbackId, future)) {
+			return;
+		}
+		byte[] opus = encoder.encode(pcmFrame);
+		LocationSoundPacket soundPacket = new LocationSoundPacket(
+				channelId, SERVER_VOICE_SOURCE_ID, origin, opus, sequence, distance, category
+		);
+		LocationalSoundPacketImpl wrappedPacket = new LocationalSoundPacketImpl(soundPacket);
+		for (UUID recipientId : recipientIds) {
+			ServerPlayer recipient = server.getPlayerList().getPlayer(recipientId);
+			if ("global".equals(channelKey) && !SeasonStartSystem.canReceiveSharedNarration(recipient)) {
+				continue;
+			}
+			VoicechatConnection receiverConnection = voicechatServerApi.getConnectionOf(recipientId);
+			if (receiverConnection != null) {
+				voicechatServerApi.sendLocationalSoundPacketTo(receiverConnection, wrappedPacket);
+			}
+		}
+	}
+
+	private static short[] createInterruptFadeFrame(short[] previousFrame) {
+		short[] fade = new short[AUDIO_FRAME_SAMPLES];
+		short lastSample = previousFrame.length == 0 ? 0 : previousFrame[previousFrame.length - 1];
+		for (int index = 0; index < fade.length; index++) {
+			double gain = 1.0D - Math.min(1.0D, (double) index / (double) NARRATION_INTERRUPT_FADE_SAMPLES);
+			fade[index] = (short) Math.round(lastSample * gain);
+		}
+		return fade;
 	}
 
 	private static float resolveVoiceGain(VoiceCue cue) {
@@ -728,6 +840,11 @@ public final class SeasonStartVoiceSystem {
 		return active == null || active.playbackId != playbackId;
 	}
 
+	private static boolean isFadeOutRequested(String channelKey, long playbackId) {
+		ActiveCuePlayback active = channelKey == null ? null : ACTIVE_PLAYBACKS.get(channelKey);
+		return active != null && active.playbackId == playbackId && active.fadeOutRequested;
+	}
+
 	private static void sendChatFallback(ServerPlayer recipient, VoiceCue cue) {
 		if (recipient == null || cue == null || !hasChatText(cue)) {
 			return;
@@ -786,10 +903,34 @@ public final class SeasonStartVoiceSystem {
 				int high = pcmBytes[byteIndex + 1];
 				frames[sampleIndex / AUDIO_FRAME_SAMPLES][sampleIndex % AUDIO_FRAME_SAMPLES] = (short) ((high << 8) | low);
 			}
+			applyClipEdgeFades(frames);
 			return new PcmClip(frames, frameCount);
 		} catch (Exception exception) {
 			Lg2.LOGGER.warn("Failed to load season-start voice clip {}", path, exception);
 			return null;
+		}
+	}
+
+	private static void applyClipEdgeFades(short[][] frames) {
+		if (frames == null || frames.length == 0) {
+			return;
+		}
+		short[] firstFrame = frames[0];
+		if (firstFrame != null) {
+			int fadeLength = Math.min(firstFrame.length, NARRATION_START_FADE_SAMPLES);
+			for (int index = 0; index < fadeLength; index++) {
+				double gain = (double) (index + 1) / (double) fadeLength;
+				firstFrame[index] = (short) Math.round(firstFrame[index] * gain);
+			}
+		}
+		short[] finalFrame = frames[frames.length - 1];
+		if (finalFrame == null) {
+			return;
+		}
+		int fadeStart = Math.max(0, finalFrame.length - NARRATION_END_FADE_SAMPLES);
+		for (int index = fadeStart; index < finalFrame.length; index++) {
+			double gain = (double) (finalFrame.length - 1 - index) / Math.max(1, finalFrame.length - fadeStart);
+			finalFrame[index] = (short) Math.round(finalFrame[index] * Math.max(0.0D, gain));
 		}
 	}
 
@@ -1039,7 +1180,28 @@ public final class SeasonStartVoiceSystem {
 	private record QueuedCue(VoiceCue cue, UUID focusPlayerId, long executeTick, String channelKey) {
 	}
 
-	private record ActiveCuePlayback(QueuedCue queuedCue, CompletableFuture<Void> future, long startedTick, long playbackId) {
+	private static final class ActiveCuePlayback {
+		private final QueuedCue queuedCue;
+		private final CompletableFuture<Void> future;
+		private final long startedTick;
+		private final long playbackId;
+		private volatile boolean voiceStreamStarted;
+		private volatile boolean fadeOutRequested;
+
+		private ActiveCuePlayback(QueuedCue queuedCue, CompletableFuture<Void> future, long startedTick, long playbackId) {
+			this.queuedCue = queuedCue;
+			this.future = future;
+			this.startedTick = startedTick;
+			this.playbackId = playbackId;
+		}
+
+		private void markVoiceStreamStarted() {
+			voiceStreamStarted = true;
+		}
+
+		private void requestFadeOut() {
+			fadeOutRequested = true;
+		}
 	}
 
 	private enum CueRole {

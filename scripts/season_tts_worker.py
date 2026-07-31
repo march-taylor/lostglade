@@ -106,6 +106,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--device", default="auto")
     parser.add_argument("--dtype", default="auto", choices=["auto", "float32", "float16", "bfloat16"])
     parser.add_argument("--attn", default="sdpa", choices=["sdpa", "eager", "flash_attention_2", "none"])
+    parser.add_argument(
+        "--cpu-threads",
+        type=int,
+        default=4,
+        help="Maximum CPU worker threads for audio preparation; model inference still runs on the selected GPU.",
+    )
     parser.add_argument("--tail-silence-ms", type=int, default=350)
     return parser
 
@@ -113,6 +119,15 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
+    cpu_threads = max(1, args.cpu_threads)
+    # Qwen's small CPU-side audio/token preparation can otherwise claim every core even
+    # when the model itself is correctly executing on ROCm. This does not change audio
+    # quality; it only caps parallel preprocessing work.
+    try:
+        torch.set_num_threads(cpu_threads)
+        torch.set_num_interop_threads(cpu_threads)
+    except RuntimeError:
+        pass
 
     jobs = json.loads(args.jobs_file.read_text(encoding="utf-8"))
     if not isinstance(jobs, list) or not jobs:
@@ -120,7 +135,7 @@ def main() -> int:
 
     device = pick_device(args.device)
     dtype = pick_dtype(device, args.dtype)
-    print(f"[worker] loading model on {device} with {dtype} for {len(jobs)} job(s)", flush=True)
+    print(f"[worker] loading model on {device} with {dtype} for {len(jobs)} job(s); CPU threads capped at {cpu_threads}", flush=True)
 
     with torch.inference_mode():
         if args.mode == "clone":

@@ -60,6 +60,7 @@ import net.minecraft.network.protocol.game.ClientGamePacketListener;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.dedicated.DedicatedServer;
 import net.minecraft.server.level.ServerBossEvent;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -120,6 +121,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -155,11 +157,10 @@ public final class SeasonStartSystem {
 			MobEffects.BLINDNESS,
 			false,
 			false,
-			true
+			false
 	);
 	private static final long INTRO_IDLE_TRIGGER_TICKS = 20L * 9L;
 	private static final long INTRO_IDLE_REPEAT_TICKS = 20L * 10L;
-	private static final long INTRO_LEAVE_REPEAT_TICKS = 20L * 7L;
 	private static final long INTRO_SPIN_REPEAT_TICKS = 20L * 6L;
 	private static final long INTRO_JUMP_REPEAT_TICKS = 20L * 4L;
 	private static final long INTRO_AIR_PUNCH_REPEAT_TICKS = 20L * 5L;
@@ -175,10 +176,14 @@ public final class SeasonStartSystem {
 	private static final long GUIDANCE_RECOVER_REACTION_WINDOW_TICKS = 20L * 4L;
 	private static final long GUIDANCE_STALL_AFTER_ALIGNMENT_TICKS = 20L;
 	private static final long GUIDANCE_STALL_AFTER_TURN_TICKS = 18L;
+	private static final long GUIDANCE_STALL_SEMANTIC_COOLDOWN_TICKS = 20L * 10L;
+	private static final long GUIDANCE_CORRECTION_SEMANTIC_COOLDOWN_TICKS = 20L * 8L;
+	private static final long GUIDANCE_DIRECTION_SEMANTIC_COOLDOWN_TICKS = 20L * 4L;
+	private static final long GUIDANCE_PROGRESS_SEMANTIC_COOLDOWN_TICKS = 20L * 5L;
 	private static final long ROUTE_STALL_AFTER_TICKS = 20L * 2L;
 	private static final long ROUTE_TURN_REPEAT_TICKS = 20L * 3L;
-	private static final long ROUTE_WRONG_WAY_GRACE_TICKS = 20L * 2L;
-	private static final long ROUTE_WRONG_WAY_REPEAT_TICKS = 20L * 5L;
+	private static final long ROUTE_WRONG_WAY_GRACE_TICKS = 20L + 4L;
+	private static final long ROUTE_WRONG_WAY_REPEAT_TICKS = 20L * 4L;
 	private static final long ROUTE_PROGRESS_CUE_TICKS = 20L * 2L;
 	private static final double ROUTE_WAYPOINT_REACHED_DISTANCE = 1.25D;
 	private static final double ROUTE_MOVEMENT_SQR = 0.045D * 0.045D;
@@ -203,27 +208,32 @@ public final class SeasonStartSystem {
 	private static final double GUIDANCE_QUIET_DISTANCE = 2.05D;
 	private static final double GUIDANCE_DROP_DISTANCE = 1.35D;
 	private static final double GUIDANCE_SERVER_SIGHT_DISTANCE = 4.0D;
+	// A "returned without the coin" line only makes sense after the player has
+	// actually gone out to search for it, not in the moment the coin is thrown.
+	private static final double GUIDANCE_SERVER_RETURN_ARM_DISTANCE = 7.0D;
 	private static final double GUIDANCE_PASSED_SERVER_DISTANCE = 5.0D;
 	private static final double GUIDANCE_PROGRESS_AWAY = 0.16D;
 	private static final double GUIDANCE_PROGRESS_TOWARD = -0.14D;
 	private static final double GUIDANCE_STALL_DELTA = 0.05D;
-	private static final double GUIDED_OFFERING_ESCAPE_SPEED_MIN = 0.18D;
-	private static final double GUIDED_OFFERING_ESCAPE_SPEED_MAX = 0.56D;
-	private static final double GUIDED_OFFERING_ESCAPE_TARGET_DISTANCE = 0.45D;
+	// A rejected first offering should read as a deliberate throw, not as a normal item drop.
+	private static final double GUIDED_OFFERING_ESCAPE_SPEED_MIN = 0.30D;
+	private static final double GUIDED_OFFERING_ESCAPE_SPEED_MAX = 0.82D;
+	private static final double GUIDED_OFFERING_ESCAPE_TARGET_DISTANCE = 0.55D;
+	private static final double GUIDED_OFFERING_ESCAPE_THROW_DISTANCE = 16.0D;
+	private static final double GUIDED_OFFERING_ESCAPE_BOUNDARY_MARGIN = 1.25D;
 	private static final double GUIDED_OFFERING_RECOVERY_DISTANCE = 1.2D;
+	// After the second recovery the coin is no longer a scripted throw. Give a normal
+	// vanilla toss a forgiving target near the server rather than requiring pixel precision.
+	private static final double GUIDED_FINAL_OFFERING_RADIUS = 1.55D;
 	private static final long GUIDED_OFFERING_ESCAPE_DELAY_TICKS = 5L;
+	private static final int GUIDED_OFFERING_MAX_ESCAPES = 2;
+	private static final int NO_LOCKED_GUIDED_BITCOIN_SLOT = -1;
 	private static final double GUIDANCE_RECOVER_WORSEN_THRESHOLD = 8.0D;
-	private static final String START_WORD_EN = "start";
-	private static final String START_WORD_RU = "старт";
 	private static final int STARTUP_CLEAR_WEATHER_TICKS = Integer.MAX_VALUE;
 	private static final String[] WAITING_START_PROMPT_TRIGGERS = {
 			"player_waiting_start_prompt_01",
 			"player_waiting_start_prompt_02",
 			"player_waiting_start_prompt_03"
-	};
-	private static final String[] WAITING_START_WRONG_TRIGGERS = {
-			"player_waiting_start_wrong_01",
-			"player_waiting_start_wrong_02"
 	};
 	private static final String[] INTRO_TARGET_LOCK_TRIGGERS = {
 			"intro_target_locked_01",
@@ -360,9 +370,10 @@ public final class SeasonStartSystem {
 			"guide_drop_coin_04"
 	};
 	private static final String[] INTRO_GUIDED_BITCOIN_LOST_TRIGGERS = {
-			"intro_guided_bitcoin_lost_01",
-			"intro_guided_bitcoin_lost_02",
-			"intro_guided_bitcoin_lost_03"
+			"intro_guided_bitcoin_lost_01"
+	};
+	private static final String[] INTRO_GUIDED_BITCOIN_LOST_AGAIN_TRIGGERS = {
+			"intro_guided_bitcoin_lost_again"
 	};
 	private static final String[] INTRO_GUIDED_BITCOIN_RECOVERED_TRIGGERS = {
 			"intro_guided_bitcoin_recovered"
@@ -588,6 +599,12 @@ public final class SeasonStartSystem {
 	private static final Set<Long> WORLD_REVEAL_REQUIRED_POSITIONS = new LinkedHashSet<>();
 	private static final Set<Long> WORLD_REVEAL_DEFERRED_POSITIONS = new LinkedHashSet<>();
 	private static final Set<Long> WORLD_REVEAL_REVEALED_POSITIONS = new HashSet<>();
+	// Terrain that a player has already mined during the reveal belongs to the
+	// player now; later reveal batches must never put the snapshot back there.
+	private static final Set<Long> WORLD_REVEAL_PLAYER_MINED_POSITIONS = new HashSet<>();
+	// Physics only propagates out of an actual player break. Animation placement
+	// itself must not make sand fall or water start flowing across the reveal.
+	private static final Set<Long> WORLD_REVEAL_PLAYER_PHYSICS_POSITIONS = new HashSet<>();
 	private static final Set<BlockPos> SHARED_BITCOIN_POSITIONS = new LinkedHashSet<>();
 	private static final Set<UUID> SCENE_BUILD_FLOATING_PLAYERS = new HashSet<>();
 	private static CompletableFuture<WorldRevealPlan> worldRevealPlanFuture = null;
@@ -704,6 +721,8 @@ public final class SeasonStartSystem {
 		WORLD_REVEAL_REQUIRED_POSITIONS.clear();
 		WORLD_REVEAL_DEFERRED_POSITIONS.clear();
 		WORLD_REVEAL_REVEALED_POSITIONS.clear();
+		WORLD_REVEAL_PLAYER_MINED_POSITIONS.clear();
+		WORLD_REVEAL_PLAYER_PHYSICS_POSITIONS.clear();
 		worldRevealPlanFuture = null;
 		worldRevealSnapshotLoadFuture = null;
 		worldRevealSnapshotLoadTask = null;
@@ -728,7 +747,13 @@ public final class SeasonStartSystem {
 			return onBeforeBlockBreak(level, serverPlayer, pos);
 		});
 		PlayerBlockBreakEvents.AFTER.register((world, player, pos, state, blockEntity) -> {
-			if (world instanceof ServerLevel level && state != null && isSharedBitcoinBlock(state)) {
+			if (!(world instanceof ServerLevel level) || pos == null) {
+				return;
+			}
+			if (worldRevealActive) {
+				rememberWorldRevealPlayerMine(level, pos);
+			}
+			if (state != null && isSharedBitcoinBlock(state)) {
 				restoreStartupLight(level, pos);
 			}
 		});
@@ -841,10 +866,33 @@ public final class SeasonStartSystem {
 			return false;
 		}
 		if (isInPrivateIntroPhase(player)) {
+			PlayerSceneState state = PLAYER_STATES.get(player.getUUID());
+			if (itemEntity.getOwner() == player
+					&& state != null
+					&& state.phase == PlayerPhase.GUIDED_TO_SERVER
+					&& state.guidedBitcoinEscapeCount >= GUIDED_OFFERING_MAX_ESCAPES
+					&& state.escapedGuidedOfferingId == null
+					&& itemEntity.getItem().is(ModItems.BITCOIN)) {
+				return false;
+			}
 			return true;
 		}
 		Entity owner = itemEntity.getOwner();
 		return owner instanceof ServerPlayer ownerPlayer && isInPrivateIntroPhase(ownerPlayer);
+	}
+
+	/** Prevents a player who has already lost the tutorial coin twice from dropping it a third time. */
+	public static boolean shouldBlockLockedGuidedBitcoinDrop(ServerPlayer player, ItemStack dropped) {
+		if (player == null || dropped == null || dropped.isEmpty() || !dropped.is(ModItems.BITCOIN) || !active) {
+			return false;
+		}
+		PlayerSceneState state = PLAYER_STATES.get(player.getUUID());
+		if (state == null || state.phase != PlayerPhase.GUIDED_TO_SERVER
+				|| state.lockedGuidedBitcoinSlot == NO_LOCKED_GUIDED_BITCOIN_SLOT) {
+			return false;
+		}
+		keepLockedGuidedBitcoinInSlot(player, state, dropped);
+		return true;
 	}
 
 	public static boolean shouldBlockEntityPush(Entity first, Entity second) {
@@ -893,10 +941,40 @@ public final class SeasonStartSystem {
 	}
 
 	public static boolean shouldFreezeSceneBoundaryPhysics(Level level, BlockPos pos) {
-		if (!sceneBoundaryPhysicsFrozen || level == null || pos == null || serverAnchor == null) {
+		if (!isInsideFrozenScenePhysicsArea(level, pos)) {
 			return false;
 		}
-		if (!(level instanceof ServerLevel serverLevel) || !Level.OVERWORLD.equals(level.dimension())) {
+		return !WORLD_REVEAL_PLAYER_PHYSICS_POSITIONS.contains(pos.asLong());
+	}
+
+	/** Allows neighbour updates caused by a player break, but not by reveal placement. */
+	public static boolean shouldFreezeSceneBoundaryPhysics(Level level, BlockPos pos, BlockPos neighborPos) {
+		if (!isInsideFrozenScenePhysicsArea(level, pos)) {
+			return false;
+		}
+		boolean playerTriggered = WORLD_REVEAL_PLAYER_PHYSICS_POSITIONS.contains(pos.asLong())
+				|| (neighborPos != null && WORLD_REVEAL_PLAYER_PHYSICS_POSITIONS.contains(neighborPos.asLong()));
+		if (!playerTriggered) {
+			return true;
+		}
+		allowWorldRevealPlayerPhysics(level, pos);
+		allowWorldRevealPlayerPhysics(level, neighborPos);
+		return false;
+	}
+
+	/** Lets a fluid spread naturally only after its source was exposed by a player action. */
+	public static void propagateWorldRevealPlayerPhysics(ServerLevel level, BlockPos pos) {
+		if (level == null || pos == null || !WORLD_REVEAL_PLAYER_PHYSICS_POSITIONS.contains(pos.asLong())) {
+			return;
+		}
+		for (Direction direction : Direction.values()) {
+			allowWorldRevealPlayerPhysics(level, pos.relative(direction));
+		}
+	}
+
+	private static boolean isInsideFrozenScenePhysicsArea(Level level, BlockPos pos) {
+		if (!sceneBoundaryPhysicsFrozen || level == null || pos == null || serverAnchor == null
+				|| !(level instanceof ServerLevel serverLevel) || !Level.OVERWORLD.equals(level.dimension())) {
 			return false;
 		}
 		BoxGeometry outerGeometry = computeOuterBoxGeometry(resolveServerAnchor(serverLevel));
@@ -906,6 +984,12 @@ public final class SeasonStartSystem {
 				&& pos.getY() <= outerGeometry.roofY + SCENE_PHYSICS_FREEZE_RADIUS
 				&& pos.getZ() >= outerGeometry.minZ - SCENE_PHYSICS_FREEZE_RADIUS
 				&& pos.getZ() <= outerGeometry.maxZ + SCENE_PHYSICS_FREEZE_RADIUS;
+	}
+
+	private static void allowWorldRevealPlayerPhysics(Level level, BlockPos pos) {
+		if (pos != null && isInsideFrozenScenePhysicsArea(level, pos)) {
+			WORLD_REVEAL_PLAYER_PHYSICS_POSITIONS.add(pos.asLong());
+		}
 	}
 
 	/** The progression UI unlocks halfway through startup, while the shared launch keeps running. */
@@ -1143,6 +1227,12 @@ public final class SeasonStartSystem {
 		if (receiver == null || pos == null || serverAnchor == null || !active) {
 			return false;
 		}
+		PlayerSceneState receiverState = PLAYER_STATES.get(receiver.getUUID());
+		if (SHARED_BITCOIN_POSITIONS.contains(pos)
+				&& receiverState != null
+				&& receiverState.phase != PlayerPhase.SHARED) {
+			return true;
+		}
 		BoxGeometry barrierGeometry = computeBarrierGeometry(serverAnchor);
 		MinecraftServer server = receiver.level().getServer();
 		for (Map.Entry<UUID, PlayerSceneState> entry : PLAYER_STATES.entrySet()) {
@@ -1158,6 +1248,45 @@ public final class SeasonStartSystem {
 			return owner != null && owner != receiver && shouldHidePlayerFrom(receiver, owner);
 		}
 		return false;
+	}
+
+	/**
+	 * Chunk data can arrive after a block-update filter has run, for example when a player
+	 * reconnects while somebody else is already in the shared phase. Explicitly correcting
+	 * that player's client view keeps future-scene bitcoin blocks out of the private scene.
+	 */
+	private static void syncBitcoinVisibilityForPlayer(ServerLevel level, ServerPlayer player, PlayerSceneState playerState) {
+		if (level == null || player == null || playerState == null || serverAnchor == null) {
+			return;
+		}
+		if (playerState.phase == PlayerPhase.SHARED) {
+			for (BlockPos pos : SHARED_BITCOIN_POSITIONS) {
+				player.connection.send(new ClientboundBlockUpdatePacket(pos, level.getBlockState(pos)));
+			}
+			return;
+		}
+		for (BlockPos pos : SHARED_BITCOIN_POSITIONS) {
+			player.connection.send(new ClientboundBlockUpdatePacket(pos, Blocks.AIR.defaultBlockState()));
+		}
+		BoxGeometry geometry = computeBarrierGeometry(serverAnchor);
+		for (Map.Entry<UUID, PlayerSceneState> entry : PLAYER_STATES.entrySet()) {
+			PlayerSceneState state = entry.getValue();
+			if (state == null) {
+				continue;
+			}
+			SlotDefinition slot = resolveSlotDefinition(geometry, state.slotIndex);
+			if (slot == null) {
+				continue;
+			}
+			boolean ownVisibleIntroOre = entry.getKey().equals(player.getUUID())
+					&& playerState.phase == PlayerPhase.ISOLATED
+					&& playerState.introOreRevealed
+					&& !playerState.minedIntroBitcoin;
+			player.connection.send(new ClientboundBlockUpdatePacket(
+					slot.orePos,
+					ownVisibleIntroOre ? level.getBlockState(slot.orePos) : Blocks.AIR.defaultBlockState()
+			));
+		}
 	}
 
 	private static boolean shouldSuppressTrackedEntityPacket(ServerPlayer receiver, Packet<?> packet) {
@@ -1371,8 +1500,8 @@ public final class SeasonStartSystem {
 		if (!tickWorldRevealSnapshotLoad(server)) {
 			return;
 		}
-		if ((active || worldRevealActive) && server.overworld() != null) {
-			enforceStartupClearWeather(server.overworld());
+		if ((active || worldRevealActive) && !worldRevealGameplayReleased && server.overworld() != null) {
+			enforceStartupEnvironment(server.overworld());
 		}
 		if (active) {
 			ServerLevel overworld = server.overworld();
@@ -1433,12 +1562,13 @@ public final class SeasonStartSystem {
 			return true;
 		}
 		if (worldRevealActive) {
-			BoxGeometry geometry = computeOuterBoxGeometry(resolveServerAnchor(level));
-			if (isInsideFootprint(geometry, pos)) {
-				player.displayClientMessage(Component.literal("Старт ещё завершает восстановление мира."), true);
-				return false;
+			// The collapse is the beginning of normal gameplay. Let players mine the
+			// terrain as soon as it is visible; only the actual server core remains protected.
+			allowWorldRevealPlayerPhysics(level, pos);
+			for (Direction direction : Direction.values()) {
+				allowWorldRevealPlayerPhysics(level, pos.relative(direction));
 			}
-			return true;
+			return !isServerStructureFootprint(pos);
 		}
 		if (!active) {
 			return true;
@@ -1448,26 +1578,40 @@ public final class SeasonStartSystem {
 			return true;
 		}
 		if (state.phase == PlayerPhase.WAITING_START) {
-			player.displayClientMessage(Component.literal("Сначала напишите в чат start или старт."), true);
 			return false;
 		}
 		if (SHARED_BITCOIN_POSITIONS.contains(pos)) {
 			if (state.phase != PlayerPhase.SHARED) {
-				player.displayClientMessage(Component.literal("Эта руда пока не для вашей фазы."), true);
 				return false;
 			}
 			return true;
 		}
 		SlotDefinition slot = resolveSlotDefinition(computeBarrierGeometry(resolveServerAnchor(level)), state.slotIndex);
 		if (slot != null && slot.orePos.equals(pos) && !state.minedIntroBitcoin) {
+			if (!state.introOreRevealed) {
+				return false;
+			}
 			handleIntroOreBroken(level, player, pos, state);
 			return false;
 		}
 		if (isProtectedSceneBlock(level, pos)) {
-			player.displayClientMessage(Component.literal("Эта часть стартовой сцены пока недоступна."), true);
 			return false;
 		}
 		return true;
+	}
+
+	private static void rememberWorldRevealPlayerMine(ServerLevel level, BlockPos pos) {
+		if (level == null || pos == null || serverAnchor == null || isServerStructureFootprint(pos)) {
+			return;
+		}
+		BoxGeometry outerGeometry = computeOuterBoxGeometry(resolveServerAnchor(level));
+		if (!isInsideFootprint(outerGeometry, pos)) {
+			return;
+		}
+		long key = pos.asLong();
+		WORLD_REVEAL_PLAYER_MINED_POSITIONS.add(key);
+		WORLD_REVEAL_REVEALED_POSITIONS.add(key);
+		WORLD_REVEAL_DEFERRED_POSITIONS.remove(key);
 	}
 
 	private static boolean onAllowChatMessage(PlayerChatMessage message, ServerPlayer sender, ChatType.Bound params) {
@@ -1486,16 +1630,9 @@ public final class SeasonStartSystem {
 			return false;
 		}
 
-		String raw = message.signedContent() == null ? "" : message.signedContent().trim();
-		String transformed = shouldUseLatinReplacement(raw) ? "srat" : "срать";
-		sender.sendSystemMessage(params.decorate(Component.literal(transformed)));
-
-		if (matchesStartWord(raw)) {
-			beginIntroAfterChatStart(server, sender, state);
-		} else {
-			fireRoundRobinTrigger(server, sender, state, WAITING_START_WRONG_TRIGGERS, false);
-		}
-		return false;
+		// Any message proves that the player can hear the server. Keep it unmodified and begin.
+		beginIntroAfterChatStart(server, sender, state);
+		return true;
 	}
 
 	private static int toggleSeasonStart(CommandContext<CommandSourceStack> context) {
@@ -1570,6 +1707,7 @@ public final class SeasonStartSystem {
 		state.nextGuidanceEarliestTick = Long.MAX_VALUE;
 		state.phase = PlayerPhase.SHARED;
 		applySharedPlayerState(player);
+		syncBitcoinVisibilityForPlayer(server.overworld(), player, state);
 		syncPrivatePlayerProfiles(server);
 		refreshSharedPlayerEntityTracking(server);
 		onPlayerEnteredSharedPhase(server);
@@ -1664,14 +1802,26 @@ public final class SeasonStartSystem {
 	}
 
 	private static void restoreSeasonStartDifficulty(MinecraftServer server) {
-		if (server == null || difficultyBeforeSeasonStart == null) {
+		if (server == null) {
 			return;
 		}
-		if (server.overworld() != null && server.overworld().getDifficulty() != difficultyBeforeSeasonStart) {
-			server.setDifficulty(difficultyBeforeSeasonStart, true);
+		Difficulty configuredDifficulty = resolveConfiguredDifficulty(server);
+		Difficulty targetDifficulty = configuredDifficulty == null ? difficultyBeforeSeasonStart : configuredDifficulty;
+		if (targetDifficulty != null && server.overworld() != null && server.overworld().getDifficulty() != targetDifficulty) {
+			server.setDifficulty(targetDifficulty, true);
 		}
 		difficultyBeforeSeasonStart = null;
 		stateDirty = true;
+	}
+
+	private static Difficulty resolveConfiguredDifficulty(MinecraftServer server) {
+		if (server instanceof DedicatedServer dedicatedServer && dedicatedServer.getProperties() != null) {
+			Object configured = dedicatedServer.getProperties().difficulty.get();
+			if (configured instanceof Difficulty difficulty) {
+				return difficulty;
+			}
+		}
+		return null;
 	}
 
 	private static void rebuildActiveScene(MinecraftServer server) {
@@ -1747,6 +1897,8 @@ public final class SeasonStartSystem {
 		WORLD_REVEAL_REQUIRED_POSITIONS.clear();
 		WORLD_REVEAL_DEFERRED_POSITIONS.clear();
 		WORLD_REVEAL_REVEALED_POSITIONS.clear();
+		WORLD_REVEAL_PLAYER_MINED_POSITIONS.clear();
+		WORLD_REVEAL_PLAYER_PHYSICS_POSITIONS.clear();
 		worldRevealPlanFuture = null;
 		worldRevealSnapshotLoadFuture = null;
 		worldRevealSnapshotLoadTask = null;
@@ -1773,6 +1925,8 @@ public final class SeasonStartSystem {
 		}
 		active = false;
 		completed = false;
+		// Reveal placement must not trigger terrain physics. Player breaks explicitly
+		// open a local physics chain through the guarded methods above.
 		sceneBoundaryPhysicsFrozen = true;
 		shellDissolving = false;
 		worldRevealActive = true;
@@ -1814,6 +1968,8 @@ public final class SeasonStartSystem {
 			WORLD_REVEAL_REQUIRED_POSITIONS.clear();
 			WORLD_REVEAL_DEFERRED_POSITIONS.clear();
 			WORLD_REVEAL_REVEALED_POSITIONS.clear();
+			WORLD_REVEAL_PLAYER_MINED_POSITIONS.clear();
+			WORLD_REVEAL_PLAYER_PHYSICS_POSITIONS.clear();
 			worldRevealPlanReady = false;
 			WORLD_REVEAL_SAFE_TARGETS.clear();
 			for (ServerPlayer player : server.getPlayerList().getPlayers()) {
@@ -1861,15 +2017,24 @@ public final class SeasonStartSystem {
 			ensureWaitingStartPlayerState(player, state, slot);
 		} else if (state.phase == PlayerPhase.ISOLATED || state.phase == PlayerPhase.GUIDED_TO_SERVER) {
 			ensureIntroPlayerState(player, state, slot);
+			if (state.phase == PlayerPhase.GUIDED_TO_SERVER) {
+				restoreGuidedBitcoinAfterReconnect(player, state);
+			}
 		} else if (state.phase == PlayerPhase.RESTORING) {
 			ensureRestoringPlayerState(player, state);
 		} else {
 			applyStateForPhase(player, state);
 		}
 		primeObservationState(player, state);
-		if ((state.phase == PlayerPhase.ISOLATED || state.phase == PlayerPhase.GUIDED_TO_SERVER) && !state.minedIntroBitcoin) {
+		// The private ore is materialised only when the server actually starts guiding
+		// this player to it. Clearing stale blocks here also prevents another player's
+		// unfinished scene from becoming interactable after a reconnect.
+		if (!state.introOreRevealed || state.minedIntroBitcoin) {
+			clearIntroOre(overworld, slot);
+		} else if (state.phase == PlayerPhase.ISOLATED) {
 			placeIntroOre(overworld, slot);
 		}
+		syncBitcoinVisibilityForPlayer(overworld, player, state);
 		if ((created || announceIntro) && state.phase == PlayerPhase.WAITING_START && state.nextStartPromptTick <= 0L) {
 			state.nextStartPromptTick = overworld.getGameTime() + WAITING_START_INITIAL_PROMPT_TICKS;
 		}
@@ -1884,9 +2049,6 @@ public final class SeasonStartSystem {
 
 		if (state.phase == PlayerPhase.ISOLATED) {
 			ensureIntroPlayerState(player, state, slot);
-			if (!state.minedIntroBitcoin) {
-				placeIntroOre(level, slot);
-			}
 			tickIsolatedPhaseReactions(server, player, state, slot);
 			tickIntroOreGuidance(server, player, state, slot);
 			return;
@@ -1927,7 +2089,7 @@ public final class SeasonStartSystem {
 		if (nowTick < state.nextStartPromptTick) {
 			return;
 		}
-		fireRoundRobinTrigger(server, player, state, WAITING_START_PROMPT_TRIGGERS, true);
+		fireRoundRobinTrigger(server, player, state, WAITING_START_PROMPT_TRIGGERS);
 		state.nextStartPromptTick = nowTick + WAITING_START_REPEAT_TICKS;
 	}
 
@@ -1936,6 +2098,7 @@ public final class SeasonStartSystem {
 			return;
 		}
 		long nowTick = player.level().getGameTime();
+		tickLockedGuidedBitcoinSlot(server, player, state, nowTick);
 		if (tickLostGuidedBitcoinRecovery(server, player, state, nowTick)) {
 			return;
 		}
@@ -1946,7 +2109,7 @@ public final class SeasonStartSystem {
 		boolean lookingAtServerStructure = isLookingAtServerStructure(player);
 		boolean seesServer = serverSnapshot.horizontalDistance <= GUIDANCE_SERVER_SIGHT_DISTANCE && lookingAtServerStructure;
 		if (serverSnapshot.horizontalDistance <= GUIDANCE_DROP_DISTANCE) {
-			if (nowTick < state.guidanceNarrationGateTick) {
+			if (!"guide_drop_coin".equals(state.lastGuidanceStateKey)) {
 				interruptAndFastForwardPlayerNarration(player, state, nowTick);
 			}
 			resetGuidanceRoute(state);
@@ -1957,6 +2120,16 @@ public final class SeasonStartSystem {
 			}
 			return;
 		}
+		// Seeing the actual objective invalidates a spoken direction immediately.
+		// Do this before the usual narration gate: a discovered server is more useful
+		// than finishing an instruction for a route the player no longer needs.
+		if ((seesServer || lookingAtServerStructure) && !state.announcedServerSight) {
+			interruptAndFastForwardPlayerNarration(player, state, nowTick);
+			fireGuidanceInstruction(server, player, state,
+					new GuidanceInstruction("guide_server_in_sight", "guide_server_in_sight", GUIDE_SERVER_IN_SIGHT_TRIGGERS, GUIDANCE_FORWARD_COOLDOWN_TICKS),
+					serverSnapshot, nowTick);
+			return;
+		}
 		if (nowTick < state.guidanceNarrationGateTick) {
 			return;
 		}
@@ -1965,11 +2138,9 @@ public final class SeasonStartSystem {
 		}
 		state.nextGuidanceTick = nowTick + GUIDANCE_EVALUATE_TICKS;
 		if (seesServer && !state.announcedServerSight) {
-			completeGuidanceRoute(state);
 			fireGuidanceInstruction(server, player, state,
 					new GuidanceInstruction("guide_server_in_sight", "guide_server_in_sight", GUIDE_SERVER_IN_SIGHT_TRIGGERS, GUIDANCE_FORWARD_COOLDOWN_TICKS),
 					serverSnapshot, nowTick);
-			return;
 		}
 		if (state.guidanceRouteFinished) {
 			tickLooseServerApproach(server, player, state, serverSnapshot, nowTick);
@@ -1979,6 +2150,26 @@ public final class SeasonStartSystem {
 		tickConfusedRoute(server, player, state, GuidanceRouteKind.SERVER, resolveServerRouteDestination(player), barrier, nowTick);
 	}
 
+	private static boolean isCloseAndLookingAtServer(ServerPlayer player, double distance) {
+		GuidanceSnapshot snapshot = resolveGuidanceSnapshot(player);
+		return snapshot != null && snapshot.horizontalDistance <= distance && isLookingAtServerStructure(player);
+	}
+
+	private static void tickLockedGuidedBitcoinSlot(MinecraftServer server, ServerPlayer player, PlayerSceneState state, long nowTick) {
+		if (server == null || player == null || state == null || state.lockedGuidedBitcoinSlot == NO_LOCKED_GUIDED_BITCOIN_SLOT) {
+			return;
+		}
+		keepLockedGuidedBitcoinInSlot(player, state, null);
+		if (!isCloseAndLookingAtServer(player, GUIDANCE_DROP_DISTANCE)) {
+			return;
+		}
+		state.lockedGuidedBitcoinSlot = NO_LOCKED_GUIDED_BITCOIN_SLOT;
+		stateDirty = true;
+		SeasonStartVoiceSystem.clearPlayerChannel(player);
+		state.guidanceNarrationGateTick = nowTick + resolveTriggerSequenceDurationTicks("intro_guided_bitcoin_slot_unlocked");
+		SeasonStartVoiceSystem.fireTrigger(server, "intro_guided_bitcoin_slot_unlocked", player);
+	}
+
 	private static void tickIntroOreGuidance(MinecraftServer server, ServerPlayer player, PlayerSceneState state, SlotDefinition slot) {
 		if (server == null || player == null || state == null || slot == null || player.level() == null || state.minedIntroBitcoin) {
 			return;
@@ -1986,6 +2177,11 @@ public final class SeasonStartSystem {
 		long nowTick = player.level().getGameTime();
 		if (nowTick < state.guidanceNarrationGateTick) {
 			return;
+		}
+		if (!state.introOreRevealed) {
+			state.introOreRevealed = true;
+			placeIntroOre((ServerLevel) player.level(), slot);
+			stateDirty = true;
 		}
 		if (nowTick < state.nextGuidanceTick) {
 			return;
@@ -1997,6 +2193,10 @@ public final class SeasonStartSystem {
 		}
 		boolean lookingAtOre = isLookingAtIntroOre(player, slot);
 		if (lookingAtOre) {
+			if (!state.introTargetLocked) {
+				interruptAndFastForwardPlayerNarration(player, state, nowTick);
+				fireIntroTargetReaction(server, player, state, nowTick);
+			}
 			completeGuidanceRoute(state);
 			return;
 		}
@@ -2071,15 +2271,11 @@ public final class SeasonStartSystem {
 		GuidanceInstruction instruction = moving
 				? resolveRouteMovementInstruction(routeKind, snapshot, state, distanceDelta, nowTick)
 				: resolveRouteStallInstruction(snapshot, state, nowTick);
+		// Direction changes are not emergencies.  Let the current, still-valid line
+		// finish instead of making the narrator talk over himself every time a player
+		// twitches the camera.
 		if (nowTick < state.nextGuidanceEarliestTick) {
-			if (isUrgentRouteCorrection(instruction) && nowTick >= state.guidanceRouteInterruptAfterTick) {
-				SeasonStartVoiceSystem.clearPlayerChannel(player);
-				state.nextGuidanceVoiceTick = nowTick;
-				state.nextGuidanceEarliestTick = nowTick;
-				state.lastGuidanceStateKey = "";
-			} else {
-				return;
-			}
+			return;
 		}
 		if (instruction != null) {
 			fireRouteGuidanceInstruction(server, player, state, instruction, snapshot, nowTick);
@@ -2110,6 +2306,7 @@ public final class SeasonStartSystem {
 		state.guidanceRouteLastDistance = Double.NaN;
 		state.guidanceRouteLastPlayerX = player.getX();
 		state.guidanceRouteLastPlayerZ = player.getZ();
+		state.guidanceRouteLastMoveTick = nowTick;
 		state.guidanceRouteLegStartedTick = nowTick;
 		resetRouteInstructionCadence(state, nowTick);
 		state.guidanceRouteStarted = true;
@@ -2243,12 +2440,9 @@ public final class SeasonStartSystem {
 		if (isTurnRecoveryInstruction(turn)) {
 			return turn;
 		}
-		// A moving player needs a usable direction before criticism. After a correction, force a
-		// fresh direction again; only sustained refusal earns another route warning.
-		if (isNormalTurnInstruction(turn) && (!state.guidanceRouteDirectionIssued
-				|| nowTick >= state.guidanceRouteNextTurnCueTick)) {
-			return turn;
-		}
+		// Do not bury route comments behind another left/right prompt. A player who keeps
+		// increasing the distance after a direction has had time to land should hear the
+		// server call it out, but never more often than once every four seconds.
 		if (distanceDelta >= ROUTE_PROGRESS_AWAY
 				&& nowTick >= state.guidanceRouteNextWrongWayTick
 				&& ((state.guidanceRouteDirectionIssued
@@ -2258,6 +2452,12 @@ public final class SeasonStartSystem {
 			return routeKind == GuidanceRouteKind.INTRO_ORE
 					? new GuidanceInstruction("intro_guide_wrong_way", "intro_guide_wrong_way", INTRO_GUIDE_WRONG_WAY_TRIGGERS, GUIDANCE_CATEGORY_COOLDOWN_TICKS)
 					: new GuidanceInstruction("guide_wrong_way", "guide_wrong_way", GUIDE_WRONG_WAY_TRIGGERS, GUIDANCE_CATEGORY_COOLDOWN_TICKS);
+		}
+		// A moving player needs a usable direction before criticism. After a correction, force a
+		// fresh direction again; only sustained refusal earns another route warning.
+		if (isNormalTurnInstruction(turn) && (!state.guidanceRouteDirectionIssued
+				|| nowTick >= state.guidanceRouteNextTurnCueTick)) {
+			return turn;
 		}
 		if (distanceDelta <= ROUTE_PROGRESS_TOWARD && nowTick >= state.guidanceRouteNextProgressCueTick) {
 			if (state.guidanceRouteLegIndex == 1) {
@@ -2414,10 +2614,19 @@ public final class SeasonStartSystem {
 					snapshot, nowTick);
 			return;
 		}
-		GuidanceInstruction turn = resolveThrottledRouteTurnInstruction(snapshot, state, nowTick);
-		if (turn != null) {
-			fireRouteGuidanceInstruction(server, player, state, turn, snapshot, nowTick);
+		boolean moving = updateRouteMovementState(player, state, nowTick);
+		if (!moving && nowTick - state.guidanceRouteLastMoveTick >= ROUTE_STALL_AFTER_TICKS) {
+			GuidanceInstruction stall = resolveRouteStallInstruction(snapshot, state, nowTick);
+			if (stall != null) {
+				fireRouteGuidanceInstruction(server, player, state, stall, snapshot, nowTick);
+			}
+			return;
 		}
+		GuidanceInstruction turn = resolveThrottledRouteTurnInstruction(snapshot, state, nowTick);
+		if (turn == null) {
+			turn = resolveRouteForwardInstruction(snapshot);
+		}
+		fireRouteGuidanceInstruction(server, player, state, turn, snapshot, nowTick);
 	}
 
 	private static GuidanceInstruction resolveThrottledRouteTurnInstruction(
@@ -2463,6 +2672,10 @@ public final class SeasonStartSystem {
 				|| (instruction.stateKey.equals(state.lastGuidanceStateKey) && nowTick < state.nextGuidanceVoiceTick)) {
 			return false;
 		}
+		String semanticKey = resolveGuidanceSemanticKey(instruction);
+		if (nowTick < state.guidanceSemanticNextAllowedTicks.getOrDefault(semanticKey, Long.MIN_VALUE)) {
+			return false;
+		}
 		fireTriggerCycle(server, player, state, instruction.groupKey, instruction.triggers);
 		state.lastGuidanceStateKey = instruction.stateKey;
 		state.lastGuidanceDistanceBucket = snapshot.distanceBucket;
@@ -2477,7 +2690,52 @@ public final class SeasonStartSystem {
 		state.nextGuidanceVoiceTick = nowTick + Math.max(instruction.cooldownTicks, narrationLockTicks);
 		state.nextGuidanceEarliestTick = nowTick + narrationLockTicks;
 		state.guidanceRouteInterruptAfterTick = nowTick + Math.max(20L, narrationLockTicks / 2L);
+		state.guidanceSemanticNextAllowedTicks.put(
+				semanticKey,
+				nowTick + Math.max(narrationLockTicks, resolveGuidanceSemanticCooldownTicks(semanticKey))
+		);
 		return true;
+	}
+
+	/**
+	 * Several mechanical states describe the same thought (for example, a soft and
+	 * hard left turn).  Keeping their cooldown together makes the voice react to
+	 * meaningful changes in play instead of narrating every sensor fluctuation.
+	 */
+	private static String resolveGuidanceSemanticKey(GuidanceInstruction instruction) {
+		String key = instruction == null || instruction.stateKey == null ? "guidance" : instruction.stateKey;
+		if (key.startsWith("guide_stall_") || key.startsWith("intro_target_look_")) {
+			return "stall";
+		}
+		if (key.contains("wrong_way") || key.contains("passed_server") || key.contains("route_reverse")) {
+			return "course_correction";
+		}
+		if (key.contains("turn_left") || key.contains("resume_left")) {
+			return "turn_left";
+		}
+		if (key.contains("turn_right") || key.contains("resume_right")) {
+			return "turn_right";
+		}
+		if (key.contains("turn_around")) {
+			return "turn_around";
+		}
+		if (key.startsWith("guide_forward_") || key.contains("route_return_progress") || key.contains("resume_forward")) {
+			return "forward_progress";
+		}
+		if (key.equals("guide_locked_on") || key.equals("guide_heading_lost")) {
+			return "heading_status";
+		}
+		return key;
+	}
+
+	private static long resolveGuidanceSemanticCooldownTicks(String semanticKey) {
+		return switch (semanticKey) {
+			case "stall" -> GUIDANCE_STALL_SEMANTIC_COOLDOWN_TICKS;
+			case "course_correction" -> GUIDANCE_CORRECTION_SEMANTIC_COOLDOWN_TICKS;
+			case "turn_left", "turn_right", "turn_around", "heading_status" -> GUIDANCE_DIRECTION_SEMANTIC_COOLDOWN_TICKS;
+			case "forward_progress" -> GUIDANCE_PROGRESS_SEMANTIC_COOLDOWN_TICKS;
+			default -> GUIDANCE_MIN_VOICE_GAP_TICKS;
+		};
 	}
 
 	private static void completeGuidanceRoute(PlayerSceneState state) {
@@ -2526,6 +2784,7 @@ public final class SeasonStartSystem {
 				interruptAndFastForwardPlayerNarration(player, state, nowTick);
 				fireIntroTargetReaction(server, player, state, nowTick);
 			}
+			announceServerBeforeIntroBitcoin(server, player, state, slot, nowTick);
 			updateObservationBaseline(player, state);
 			return;
 		}
@@ -2542,8 +2801,12 @@ public final class SeasonStartSystem {
 		}
 
 		if (lookingAtOre && shouldFireIntroTargetReaction(state, nowTick)) {
+			if (!state.introTargetLocked) {
+				interruptAndFastForwardPlayerNarration(player, state, nowTick);
+			}
 			fireIntroTargetReaction(server, player, state, nowTick);
 		}
+		announceServerBeforeIntroBitcoin(server, player, state, slot, nowTick);
 
 		state.spinScore = Math.max(
 				0.0D,
@@ -2563,10 +2826,14 @@ public final class SeasonStartSystem {
 
 		double leaveDistanceSqr = horizontalDistanceSqr(player.position(), slot.spawnPos);
 		double oreDistanceSqr = horizontalDistanceSqr(player.position(), centerOf(slot.orePos));
-		if (leaveDistanceSqr >= 12.0D * 12.0D && oreDistanceSqr >= 7.0D * 7.0D && nowTick >= state.nextLeaveReactionTick) {
-			state.nextLeaveReactionTick = nowTick + INTRO_LEAVE_REPEAT_TICKS;
+		boolean leftIntroTaskArea = leaveDistanceSqr >= 12.0D * 12.0D && oreDistanceSqr >= 7.0D * 7.0D;
+		// This is an edge-triggered reaction: standing at the far wall is not a new
+		// escape attempt every few seconds. Once the player stops, the idle cue owns
+		// the conversation and has its deliberate ten-second cadence.
+		if (leftIntroTaskArea && !state.leftIntroTaskArea) {
 			SeasonStartVoiceSystem.fireTrigger(server, "intro_phase1_leave_attempt", player);
 		}
+		state.leftIntroTaskArea = leftIntroTaskArea;
 
 		if (nowTick - state.lastActivityTick >= INTRO_IDLE_TRIGGER_TICKS && nowTick >= state.nextIdleReactionTick) {
 			state.nextIdleReactionTick = nowTick + INTRO_IDLE_REPEAT_TICKS;
@@ -2574,6 +2841,35 @@ public final class SeasonStartSystem {
 		}
 
 		updateObservationBaseline(player, state);
+	}
+
+	private static void announceServerBeforeIntroBitcoin(
+			MinecraftServer server,
+			ServerPlayer player,
+			PlayerSceneState state,
+			SlotDefinition slot,
+			long nowTick
+	) {
+		if (server == null || player == null || state == null || slot == null
+				|| state.announcedServerBeforeBitcoin
+				|| !isCloseAndLookingAtServer(player, GUIDANCE_SERVER_SIGHT_DISTANCE)) {
+			return;
+		}
+		state.announcedServerBeforeBitcoin = true;
+		// The player has already found the wrong objective. Do not leave the ore
+		// hidden behind the remainder of narration that was just cancelled.
+		state.guidanceNarrationGateTick = nowTick;
+		state.nextGuidanceTick = nowTick;
+		state.nextGuidanceVoiceTick = nowTick;
+		state.nextGuidanceEarliestTick = nowTick;
+		if (!state.introOreRevealed && player.level() instanceof ServerLevel level) {
+			state.introOreRevealed = true;
+			placeIntroOre(level, slot);
+		}
+		resetGuidanceRoute(state);
+		stateDirty = true;
+		SeasonStartVoiceSystem.clearPlayerChannel(player);
+		SeasonStartVoiceSystem.fireTrigger(server, "intro_server_before_bitcoin", player);
 	}
 
 	private static GuidanceSnapshot resolveGuidanceSnapshot(ServerPlayer player) {
@@ -3088,6 +3384,7 @@ public final class SeasonStartSystem {
 			giveOrDrop(player, new ItemStack(ModItems.BITCOIN));
 		}
 		state.minedIntroBitcoin = true;
+		state.introOreRevealed = false;
 		state.phase = PlayerPhase.GUIDED_TO_SERVER;
 		state.nextGuidanceTick = 0L;
 		state.nextGuidanceVoiceTick = level.getGameTime() + 28L;
@@ -3110,8 +3407,19 @@ public final class SeasonStartSystem {
 		state.turnRecoveryAllowedTick = Long.MIN_VALUE;
 		state.lastGuidanceTurnRecoverUsed = false;
 		state.announcedServerSight = false;
+		state.announcedServerBeforeBitcoin = false;
+		state.announcedServerWithoutBitcoin = false;
+		state.wasAtServerWithoutBitcoin = false;
+		state.leftServerWhileRecoveringBitcoin = false;
+		state.serverWithoutBitcoinVisitCount = 0;
+		state.guidedBitcoinEscapeCount = 0;
+		state.lockedGuidedBitcoinSlot = NO_LOCKED_GUIDED_BITCOIN_SLOT;
 		state.guidanceQuietZoneActive = false;
 		state.guidanceCueCycles.clear();
+		state.guidanceCueBags.clear();
+		state.lastGuidanceTriggerByGroup.clear();
+		state.guidanceSemanticNextAllowedTicks.clear();
+		state.leftIntroTaskArea = false;
 		resetGuidanceRoute(state);
 		state.spinScore = 0.0D;
 		state.introTargetLocked = false;
@@ -3134,6 +3442,7 @@ public final class SeasonStartSystem {
 		state.restoreVisionTick = Long.MAX_VALUE;
 		stateDirty = true;
 		applySharedPlayerState(player);
+		syncBitcoinVisibilityForPlayer(player.level() instanceof ServerLevel level ? level : null, player, state);
 		syncPrivatePlayerProfiles(server);
 		refreshSharedPlayerEntityTracking(server);
 		spawnLightOnlineParticles(server.overworld());
@@ -4569,7 +4878,10 @@ public final class SeasonStartSystem {
 			return;
 		}
 		long musicDurationTicks = ServerStabilitySystem.getStartupFeedMusicDurationTicks();
-		long startOffset = Math.max(0L, WORLD_REVEAL_CRACKING_DURATION_TICKS - musicDurationTicks);
+		// The music is the final clock of the reveal: its last beat coincides with
+		// the Darkness zero-crossing, rather than leaving the player in a silent
+		// dark screen after Bitcoin Millionaire has already ended.
+		long startOffset = Math.max(0L, WORLD_REVEAL_DARKNESS_CLEAR_OFFSET_TICKS - musicDurationTicks);
 		if (elapsedTicks < startOffset) {
 			return;
 		}
@@ -4626,6 +4938,11 @@ public final class SeasonStartSystem {
 			return true;
 		}
 		long key = pos.asLong();
+		if (WORLD_REVEAL_PLAYER_MINED_POSITIONS.contains(key)) {
+			WORLD_REVEAL_REVEALED_POSITIONS.add(key);
+			WORLD_REVEAL_DEFERRED_POSITIONS.remove(key);
+			return true;
+		}
 		if (WORLD_REVEAL_REVEALED_POSITIONS.contains(key)) {
 			WORLD_REVEAL_DEFERRED_POSITIONS.remove(key);
 			return true;
@@ -4852,12 +5169,6 @@ public final class SeasonStartSystem {
 		tickWorldRevealDarknessPulse(server, level, nowTick);
 		revealWorldRevealEpisodeBatch(level, WORLD_REVEAL_BLACKOUT_REVEAL_EPISODES_PER_TICK, false);
 		revealWorldRevealDeferredBatch(level, WORLD_REVEAL_RELOCATE_DEFERRED_BATCH, false);
-		refreshWorldRevealTargets(level);
-		if (!worldRevealDarknessRepositioned && nowTick - worldRevealPhaseStartTick >= WORLD_REVEAL_BLACKOUT_REPOSITION_TICKS) {
-			teleportWorldRevealPlayersToSafeTargets(server, level);
-			worldRevealDarknessRepositioned = true;
-			stateDirty = true;
-		}
 		if (nowTick - worldRevealPhaseStartTick < WORLD_REVEAL_BLACKOUT_DURATION_TICKS) {
 			return;
 		}
@@ -5161,6 +5472,8 @@ public final class SeasonStartSystem {
 		WORLD_REVEAL_REQUIRED_POSITIONS.clear();
 		WORLD_REVEAL_DEFERRED_POSITIONS.clear();
 		WORLD_REVEAL_REVEALED_POSITIONS.clear();
+		WORLD_REVEAL_PLAYER_MINED_POSITIONS.clear();
+		WORLD_REVEAL_PLAYER_PHYSICS_POSITIONS.clear();
 		worldRevealPlanFuture = null;
 		worldRevealPlanReady = false;
 		deleteWorldRevealSnapshot(server);
@@ -5203,7 +5516,9 @@ public final class SeasonStartSystem {
 		clearStartupWorldgenDisplay(level);
 		removeSceneShellNow(level);
 		for (TerrainPlacement placement : WORLD_REVEAL_TERRAIN) {
-			if (placement == null || placement.pos() == null || placement.state() == null || isServerStructureFootprint(placement.pos())) {
+			if (placement == null || placement.pos() == null || placement.state() == null
+					|| isServerStructureFootprint(placement.pos())
+					|| WORLD_REVEAL_PLAYER_MINED_POSITIONS.contains(placement.pos().asLong())) {
 				continue;
 			}
 			setSceneBlockSilently(level, placement.pos(), placement.state());
@@ -5231,7 +5546,7 @@ public final class SeasonStartSystem {
 		}
 		for (Map.Entry<Long, BlockState> entry : WORLD_REVEAL_BOUNDARY_TARGET_STATES.entrySet()) {
 			BlockState state = entry.getValue();
-			if (state == null || state.isAir()) {
+			if (state == null || state.isAir() || WORLD_REVEAL_PLAYER_MINED_POSITIONS.contains(entry.getKey())) {
 				continue;
 			}
 			BlockPos pos = BlockPos.of(entry.getKey());
@@ -5318,9 +5633,15 @@ public final class SeasonStartSystem {
 		level.setThunderLevel(0.0F);
 	}
 
-	private static void enforceStartupClearWeather(ServerLevel level) {
+	/** Keeps the sealed start scene in a stable clear morning until the reveal ends. */
+	private static void enforceStartupEnvironment(ServerLevel level) {
 		if (level == null) {
 			return;
+		}
+		long currentDayTime = Math.max(0L, level.getDayTime());
+		long lockedMorning = (currentDayTime / 24000L) * 24000L + WORLD_REVEAL_POST_START_MORNING_TIME;
+		if (level.getDayTime() != lockedMorning) {
+			level.setDayTime(lockedMorning);
 		}
 		if (level.isRaining() || level.isThundering()
 				|| level.getRainLevel(1.0F) > 0.0F || level.getThunderLevel(1.0F) > 0.0F) {
@@ -5709,12 +6030,12 @@ public final class SeasonStartSystem {
 		clearSharedBitcoins(level, true);
 		for (Map.Entry<UUID, PlayerSceneState> entry : PLAYER_STATES.entrySet()) {
 			PlayerSceneState state = entry.getValue();
-			if (state == null || state.phase == PlayerPhase.WAITING_START || state.phase == PlayerPhase.SHARED || state.phase == PlayerPhase.RESTORING) {
+			if (state == null) {
 				continue;
 			}
 			SlotDefinition slot = resolveSlotDefinition(task.barrier, state.slotIndex);
 			if (slot != null) {
-				placeIntroOre(level, slot);
+				clearIntroOre(level, slot);
 			}
 		}
 		ServerRaceSystem.beginSeasonStartRaces(server, get().startupRaceId);
@@ -5991,10 +6312,7 @@ public final class SeasonStartSystem {
 		}
 	}
 
-	/**
-	 * A missed first payment stays a private, real item. Instead of silently returning, it escapes
-	 * to a distant point in the room and temporarily becomes the player's navigation target.
-	 */
+	/** A missed payment stays real, but takes a long smooth flight away from the server. */
 	private static void tickGuidedBitcoinOfferings(MinecraftServer server, ServerLevel level, ServerStructureBounds bounds) {
 		if (server == null || level == null || bounds == null || serverAnchor == null) {
 			return;
@@ -6015,9 +6333,30 @@ public final class SeasonStartSystem {
 			if (owner == null) {
 				continue;
 			}
+			PlayerSceneState ownerState = PLAYER_STATES.get(owner.getUUID());
+			if (ownerState == null) {
+				continue;
+			}
+			if (ownerState.guidedBitcoinEscapeCount >= GUIDED_OFFERING_MAX_ESCAPES
+					&& ownerState.escapedGuidedOfferingId == null) {
+				// The slot was deliberately unlocked at the server. From here the coin is a
+				// normal vanilla drop: no third scripted escape, but a toss into the server
+				// still gets accepted across the full close-and-looking interaction range.
+				if (distanceToServerStructureSqr(itemEntity.position(), bounds)
+						<= GUIDED_FINAL_OFFERING_RADIUS * GUIDED_FINAL_OFFERING_RADIUS) {
+					GUIDED_OFFERING_VISIBLE_SINCE_TICKS.remove(offeringId);
+					consumeOffering(itemEntity, 1);
+					spawnLaunchFeedParticles(level, itemEntity.position());
+					transitionPlayerAfterFirstPayment(server, owner);
+				}
+				continue;
+			}
+			// Until that point, a tutorial coin is progression state, not ordinary loot.
+			// It must survive even if its owner gets distracted for longer than vanilla's timeout.
+			itemEntity.setUnlimitedLifetime();
 			if (distanceToServerStructureSqr(itemEntity.position(), bounds) <= SHARED_FEED_RADIUS * SHARED_FEED_RADIUS) {
 				GUIDED_OFFERING_VISIBLE_SINCE_TICKS.remove(offeringId);
-				clearEscapedGuidedBitcoinState(PLAYER_STATES.get(owner.getUUID()));
+				clearEscapedGuidedBitcoinState(ownerState);
 				consumeOffering(itemEntity, 1);
 				spawnLaunchFeedParticles(level, itemEntity.position());
 				transitionPlayerAfterFirstPayment(server, owner);
@@ -6025,11 +6364,12 @@ public final class SeasonStartSystem {
 			}
 
 			long visibleSince = GUIDED_OFFERING_VISIBLE_SINCE_TICKS.computeIfAbsent(offeringId, ignored -> nowTick);
-			PlayerSceneState ownerState = PLAYER_STATES.get(owner.getUUID());
-			if (ownerState == null) {
-				continue;
-			}
 			if (ownerState.escapedGuidedOfferingId == null) {
+				if (ownerState.guidedBitcoinEscapeCount >= GUIDED_OFFERING_MAX_ESCAPES) {
+					// Kept as a defensive guard for an in-flight state loaded from an older save.
+					// Do not animate or delete the drop: after two recoveries it stays vanilla.
+					continue;
+				}
 				if (nowTick - visibleSince < GUIDED_OFFERING_ESCAPE_DELAY_TICKS) {
 					continue;
 				}
@@ -6057,30 +6397,149 @@ public final class SeasonStartSystem {
 			return;
 		}
 		Vec3 target = chooseGuidedBitcoinEscapeTarget(owner, itemEntity, scene, bounds);
+		state.guidedBitcoinEscapeCount++;
 		state.escapedGuidedOfferingId = itemEntity.getUUID();
 		state.escapedGuidedOfferingTarget = target;
 		state.escapedGuidedOfferingLanded = false;
+		state.wasAtServerWithoutBitcoin = false;
+		state.leftServerWhileRecoveringBitcoin = false;
+		state.serverWithoutBitcoinVisitCount = 0;
+		stateDirty = true;
 		GUIDED_OFFERING_VISIBLE_SINCE_TICKS.remove(itemEntity.getUUID());
 		resetGuidanceRoute(state);
 		SeasonStartVoiceSystem.clearPlayerChannel(owner);
-		long narrationLock = resolveGuidanceNarrationLockTicks(INTRO_GUIDED_BITCOIN_LOST_TRIGGERS);
+		String[] lostTriggers = state.guidedBitcoinEscapeCount == 1
+				? INTRO_GUIDED_BITCOIN_LOST_TRIGGERS
+				: INTRO_GUIDED_BITCOIN_LOST_AGAIN_TRIGGERS;
+		long narrationLock = resolveGuidanceNarrationLockTicks(lostTriggers);
 		state.guidanceNarrationGateTick = nowTick + narrationLock;
 		state.nextGuidanceTick = nowTick;
 		state.nextGuidanceVoiceTick = nowTick + narrationLock;
 		state.nextGuidanceEarliestTick = nowTick + narrationLock;
 		state.lastGuidanceStateKey = "";
-		fireTriggerCycle(server, owner, state, "intro_guided_bitcoin_lost", INTRO_GUIDED_BITCOIN_LOST_TRIGGERS);
+		fireTriggerCycle(
+				server,
+				owner,
+				state,
+				state.guidedBitcoinEscapeCount == 1 ? "intro_guided_bitcoin_lost" : "intro_guided_bitcoin_lost_again",
+				lostTriggers
+		);
 
 		itemEntity.setPickUpDelay((int) narrationLock);
+		itemEntity.setUnlimitedLifetime();
 		itemEntity.setNoGravity(true);
 		Vec3 offset = target.subtract(itemEntity.position());
 		double distance = offset.length();
 		if (distance > 1.0E-4D) {
-			itemEntity.setDeltaMovement(offset.scale(Math.min(GUIDED_OFFERING_ESCAPE_SPEED_MAX, 0.38D) / distance));
+			itemEntity.setDeltaMovement(offset.scale(GUIDED_OFFERING_ESCAPE_SPEED_MAX / distance));
 		}
 	}
 
 	private static Vec3 chooseGuidedBitcoinEscapeTarget(
+			ServerPlayer owner,
+			ItemEntity itemEntity,
+			BoxGeometry scene,
+			ServerStructureBounds bounds
+	) {
+		Vec3 thrownTarget = chooseGuidedBitcoinLookTarget(owner, itemEntity, scene, bounds);
+		if (thrownTarget != null) {
+			return thrownTarget;
+		}
+		return chooseGuidedBitcoinEscapeFallbackTarget(owner, itemEntity, scene, bounds);
+	}
+
+	/**
+	 * The coin follows the throw where that points away from the server.  A throw aimed at the
+	 * server is reflected outward instead: the missed payment must never pass through or stop at
+	 * the server just because the player was standing a few blocks away.
+	 */
+	private static Vec3 chooseGuidedBitcoinLookTarget(
+			ServerPlayer owner,
+			ItemEntity itemEntity,
+			BoxGeometry scene,
+			ServerStructureBounds bounds
+	) {
+		Vec3 start = itemEntity.position();
+		double centerX = (bounds.minX + bounds.maxX) * 0.5D;
+		double centerZ = (bounds.minZ + bounds.maxZ) * 0.5D;
+		Vec3 away = new Vec3(start.x - centerX, 0.0D, start.z - centerZ);
+		if (away.lengthSqr() < 1.0E-4D) {
+			away = new Vec3(owner.getX() - centerX, 0.0D, owner.getZ() - centerZ);
+		}
+		if (away.lengthSqr() < 1.0E-4D) {
+			return null;
+		}
+		away = away.normalize();
+
+		Vec3 look = owner.getLookAngle();
+		Vec3 horizontalLook = new Vec3(look.x, 0.0D, look.z);
+		Vec3 direction = horizontalLook.lengthSqr() < 1.0E-4D ? away : horizontalLook.normalize();
+		// Preserve the player's throw direction when it already points outward. Otherwise,
+		// turn it decisively away from the server rather than letting it cross the model.
+		if (direction.dot(away) < 0.20D) {
+			direction = away;
+		} else {
+			direction = direction.scale(0.72D).add(away.scale(0.28D)).normalize();
+		}
+
+		double boundaryDistance = distanceToGuidedOfferingBoundary(start, direction, scene);
+		double throwDistance = Math.min(GUIDED_OFFERING_ESCAPE_THROW_DISTANCE, Math.max(0.0D, boundaryDistance - 0.35D));
+		if (throwDistance < 2.0D) {
+			return null;
+		}
+
+		double targetY = Mth.clamp(
+				start.y + 0.75D + look.y * throwDistance * 0.55D,
+				scene.floorY + 0.4D,
+				scene.roofY - 1.0D
+		);
+		Vec3 target = new Vec3(
+				start.x + direction.x * throwDistance,
+				targetY,
+				start.z + direction.z * throwDistance
+		);
+		double minimumServerDistance = SHARED_FEED_RADIUS + 2.5D;
+		return distanceToServerStructureSqr(target, bounds) >= minimumServerDistance * minimumServerDistance ? target : null;
+	}
+
+	private static double distanceToGuidedOfferingBoundary(Vec3 start, Vec3 direction, BoxGeometry scene) {
+		double minX = scene.minX + GUIDED_OFFERING_ESCAPE_BOUNDARY_MARGIN;
+		double maxX = scene.maxX - GUIDED_OFFERING_ESCAPE_BOUNDARY_MARGIN;
+		double minZ = scene.minZ + GUIDED_OFFERING_ESCAPE_BOUNDARY_MARGIN;
+		double maxZ = scene.maxZ - GUIDED_OFFERING_ESCAPE_BOUNDARY_MARGIN;
+		double distance = Double.POSITIVE_INFINITY;
+		if (direction.x > 1.0E-4D) {
+			distance = Math.min(distance, (maxX - start.x) / direction.x);
+		} else if (direction.x < -1.0E-4D) {
+			distance = Math.min(distance, (minX - start.x) / direction.x);
+		}
+		if (direction.z > 1.0E-4D) {
+			distance = Math.min(distance, (maxZ - start.z) / direction.z);
+		} else if (direction.z < -1.0E-4D) {
+			distance = Math.min(distance, (minZ - start.z) / direction.z);
+		}
+		return Double.isFinite(distance) ? Math.max(0.0D, distance) : 0.0D;
+	}
+
+	private static boolean guidedOfferingThrowCrossesServer(
+			Vec3 start,
+			Vec3 direction,
+			double throwDistance,
+			ServerStructureBounds bounds
+	) {
+		double centerX = (bounds.minX + bounds.maxX) * 0.5D;
+		double centerZ = (bounds.minZ + bounds.maxZ) * 0.5D;
+		double toServerX = centerX - start.x;
+		double toServerZ = centerZ - start.z;
+		double forwardDistance = toServerX * direction.x + toServerZ * direction.z;
+		if (forwardDistance < 0.0D || forwardDistance > throwDistance) {
+			return false;
+		}
+		double sideDistance = Math.abs(toServerX * direction.z - toServerZ * direction.x);
+		return sideDistance < SHARED_FEED_RADIUS + 1.25D;
+	}
+
+	private static Vec3 chooseGuidedBitcoinEscapeFallbackTarget(
 			ServerPlayer owner,
 			ItemEntity itemEntity,
 			BoxGeometry scene,
@@ -6103,7 +6562,7 @@ public final class SeasonStartSystem {
 		awayZ /= awayLength;
 		double interiorWidth = Math.max(2.0D, scene.maxX - scene.minX - 2.0D);
 		double interiorDepth = Math.max(2.0D, scene.maxZ - scene.minZ - 2.0D);
-		double targetDistance = Math.min(10.0D, Math.max(5.0D, Math.min(interiorWidth, interiorDepth) * 0.42D));
+		double targetDistance = Math.min(GUIDED_OFFERING_ESCAPE_THROW_DISTANCE, Math.max(5.0D, Math.min(interiorWidth, interiorDepth) * 0.42D));
 		double minimumServerDistance = SHARED_FEED_RADIUS + 2.5D;
 		for (int attempt = 0; attempt < 18; attempt++) {
 			double angleOffset = (random.nextDouble() - 0.5D) * 1.7D;
@@ -6153,7 +6612,7 @@ public final class SeasonStartSystem {
 				GUIDED_OFFERING_ESCAPE_SPEED_MAX
 		);
 		Vec3 desiredVelocity = offset.scale(speed / distance);
-		itemEntity.setDeltaMovement(itemEntity.getDeltaMovement().scale(0.35D).add(desiredVelocity.scale(0.65D)));
+		itemEntity.setDeltaMovement(itemEntity.getDeltaMovement().scale(0.18D).add(desiredVelocity.scale(0.82D)));
 	}
 
 	private static boolean tickLostGuidedBitcoinRecovery(MinecraftServer server, ServerPlayer player, PlayerSceneState state, long nowTick) {
@@ -6169,6 +6628,23 @@ public final class SeasonStartSystem {
 			resetGuidanceRoute(state);
 			return true;
 		}
+		ServerStructureBounds serverBounds = resolveServerStructureBounds();
+		if (serverBounds != null && !state.leftServerWhileRecoveringBitcoin
+				&& distanceToServerStructureSqr(player.position(), serverBounds)
+				>= GUIDANCE_SERVER_RETURN_ARM_DISTANCE * GUIDANCE_SERVER_RETURN_ARM_DISTANCE) {
+			state.leftServerWhileRecoveringBitcoin = true;
+			stateDirty = true;
+		}
+		boolean backAtServer = isCloseAndLookingAtServer(player, GUIDANCE_SERVER_SIGHT_DISTANCE);
+		if (state.leftServerWhileRecoveringBitcoin && backAtServer && !state.wasAtServerWithoutBitcoin) {
+			state.announcedServerWithoutBitcoin = true;
+			String trigger = state.serverWithoutBitcoinVisitCount++ == 0
+					? "intro_server_without_bitcoin"
+					: "intro_server_without_bitcoin_again";
+			SeasonStartVoiceSystem.clearPlayerChannel(player);
+			SeasonStartVoiceSystem.fireTrigger(server, trigger, player);
+		}
+		state.wasAtServerWithoutBitcoin = backAtServer;
 		if (!state.escapedGuidedOfferingLanded) {
 			return true;
 		}
@@ -6182,13 +6658,20 @@ public final class SeasonStartSystem {
 				clearEscapedGuidedBitcoinState(state);
 				resetGuidanceRoute(state);
 				SeasonStartVoiceSystem.clearPlayerChannel(player);
-				long narrationLock = resolveGuidanceNarrationLockTicks(INTRO_GUIDED_BITCOIN_RECOVERED_TRIGGERS);
+				String recoveredTrigger = "intro_guided_bitcoin_recovered";
+				if (state.guidedBitcoinEscapeCount >= GUIDED_OFFERING_MAX_ESCAPES) {
+					state.lockedGuidedBitcoinSlot = findBitcoinSlot(player);
+					recoveredTrigger = "intro_guided_bitcoin_recovered_locked";
+					keepLockedGuidedBitcoinInSlot(player, state, null);
+				}
+				long narrationLock = resolveTriggerSequenceDurationTicks(recoveredTrigger);
 				state.guidanceNarrationGateTick = nowTick + narrationLock;
 				state.nextGuidanceTick = nowTick;
 				state.nextGuidanceVoiceTick = nowTick + narrationLock;
 				state.nextGuidanceEarliestTick = nowTick + narrationLock;
 				state.lastGuidanceStateKey = "";
-				fireTriggerCycle(server, player, state, "intro_guided_bitcoin_recovered", INTRO_GUIDED_BITCOIN_RECOVERED_TRIGGERS);
+				SeasonStartVoiceSystem.fireTrigger(server, recoveredTrigger, player);
+				stateDirty = true;
 			}
 			return true;
 		}
@@ -6232,6 +6715,7 @@ public final class SeasonStartSystem {
 		state.escapedGuidedOfferingId = null;
 		state.escapedGuidedOfferingTarget = null;
 		state.escapedGuidedOfferingLanded = false;
+		stateDirty = true;
 	}
 
 	private static boolean isGuidedBitcoinOffering(ItemEntity itemEntity) {
@@ -6409,7 +6893,10 @@ public final class SeasonStartSystem {
 				16.0F,
 				Math.min(outerGeometry.maxX - outerGeometry.minX, outerGeometry.maxZ - outerGeometry.minZ) - STARTUP_WORLDGEN_MARGIN_BLOCKS
 		);
-		display.setPos(serverAnchor.getX() + 0.5D, outerGeometry.floorY + STARTUP_WORLDGEN_Y_OFFSET_FROM_OUTER_FLOOR, serverAnchor.getZ() + 0.5D);
+		// Keep the projection just above the animated outer floor.  The floor can
+		// move independently of the barrier room, so this must not be based on the
+		// player/barrier-floor height.
+		display.setPos(serverAnchor.getX() + 0.5D, startupWorldgenDisplayY(outerGeometry), serverAnchor.getZ() + 0.5D);
 		display.setYRot(0.0F);
 		display.setXRot(0.0F);
 		display.setYHeadRot(0.0F);
@@ -6468,6 +6955,10 @@ public final class SeasonStartSystem {
 				outerGeometry.roofY + 2.0D,
 				outerGeometry.maxZ + 2.0D
 		);
+	}
+
+	private static double startupWorldgenDisplayY(BoxGeometry outerGeometry) {
+		return outerGeometry.floorY + STARTUP_WORLDGEN_Y_OFFSET_FROM_OUTER_FLOOR;
 	}
 
 	private static Display.ItemDisplay resolveStartupWorldgenDisplay(ServerLevel level, AABB box) {
@@ -6981,11 +7472,10 @@ public final class SeasonStartSystem {
 		if (player == null || state == null || slot == null || serverAnchor == null) {
 			return;
 		}
-		Vec3 target = slot.spawnPos;
-		if (!player.level().dimension().equals(Level.OVERWORLD) || player.distanceToSqr(target.x, target.y, target.z) > 225.0D) {
+		if (!player.level().dimension().equals(Level.OVERWORLD)) {
 			MinecraftServer server = player.level().getServer();
 			ServerLevel overworld = server == null ? null : server.overworld();
-			teleportPlayer(player, overworld, target, slot.yaw);
+			teleportPlayer(player, overworld, slot.spawnPos, slot.yaw);
 		}
 		player.setSilent(true);
 		setSeasonStartGameMode(player, GameType.SURVIVAL);
@@ -7012,6 +7502,85 @@ public final class SeasonStartSystem {
 		INTRO_BLINDNESS.ensure(player, 0);
 		clearLegacyIntroInvisibility(player);
 		removeLegacyIntroTool(player);
+	}
+
+	/** Restores the same escaped tutorial coin after reconnecting, never a duplicate. */
+	private static void restoreGuidedBitcoinAfterReconnect(ServerPlayer player, PlayerSceneState state) {
+		if (player == null || state == null || state.phase != PlayerPhase.GUIDED_TO_SERVER || hasBitcoin(player)) {
+			return;
+		}
+		ServerLevel level = player.level() instanceof ServerLevel serverLevel ? serverLevel : null;
+		if (level == null || serverAnchor == null) {
+			return;
+		}
+		if (state.escapedGuidedOfferingId != null) {
+			ItemEntity escapedCoin = findEscapedGuidedBitcoin(level, state.escapedGuidedOfferingId);
+			if (escapedCoin != null) {
+				restoreEscapedGuidedBitcoinRoute(state, escapedCoin);
+				stateDirty = true;
+				return;
+			}
+			clearEscapedGuidedBitcoinState(state);
+		}
+
+		BoxGeometry scene = computeBarrierGeometry(serverAnchor);
+		AABB sceneBounds = new AABB(
+				scene.minX,
+				scene.floorY,
+				scene.minZ,
+				scene.maxX + 1.0D,
+				scene.roofY + 1.0D,
+				scene.maxZ + 1.0D
+		);
+		ItemEntity droppedCoin = level.getEntitiesOfClass(ItemEntity.class, sceneBounds, itemEntity ->
+				itemEntity != null
+						&& itemEntity.isAlive()
+						&& !itemEntity.isRemoved()
+						&& itemEntity.getOwner() instanceof ServerPlayer owner
+						&& owner.getUUID().equals(player.getUUID())
+						&& itemEntity.getItem().is(ModItems.BITCOIN)
+		).stream().findFirst().orElse(null);
+		if (droppedCoin != null) {
+			// After two recoveries this is an ordinary vanilla throw. Leave it alone:
+			// the offering loop will absorb a successful throw, or the owner can pick it up.
+			if (state.guidedBitcoinEscapeCount >= GUIDED_OFFERING_MAX_ESCAPES
+					&& state.lockedGuidedBitcoinSlot == NO_LOCKED_GUIDED_BITCOIN_SLOT) {
+				return;
+			}
+			state.escapedGuidedOfferingId = droppedCoin.getUUID();
+			restoreEscapedGuidedBitcoinRoute(state, droppedCoin);
+			stateDirty = true;
+			return;
+		}
+		giveOrDrop(player, new ItemStack(ModItems.BITCOIN));
+		resetGuidanceRoute(state);
+		state.guidanceNarrationGateTick = 0L;
+		state.nextGuidanceTick = 0L;
+		state.nextGuidanceVoiceTick = 0L;
+		state.nextGuidanceEarliestTick = 0L;
+		state.lastGuidanceStateKey = "";
+		if (state.lockedGuidedBitcoinSlot != NO_LOCKED_GUIDED_BITCOIN_SLOT) {
+			keepLockedGuidedBitcoinInSlot(player, state, null);
+		}
+		stateDirty = true;
+	}
+
+	private static void restoreEscapedGuidedBitcoinRoute(PlayerSceneState state, ItemEntity itemEntity) {
+		if (state == null || itemEntity == null) {
+			return;
+		}
+		itemEntity.setUnlimitedLifetime();
+		itemEntity.setNoGravity(false);
+		itemEntity.setDeltaMovement(Vec3.ZERO);
+		state.escapedGuidedOfferingId = itemEntity.getUUID();
+		state.escapedGuidedOfferingTarget = itemEntity.position();
+		state.escapedGuidedOfferingLanded = true;
+		state.guidanceNarrationGateTick = 0L;
+		state.nextGuidanceTick = 0L;
+		state.nextGuidanceVoiceTick = 0L;
+		state.nextGuidanceEarliestTick = 0L;
+		state.lastGuidanceStateKey = "";
+		resetGuidanceRoute(state);
 	}
 
 	private static void ensureWaitingStartPlayerState(ServerPlayer player, PlayerSceneState state, SlotDefinition slot) {
@@ -7245,6 +7814,50 @@ public final class SeasonStartSystem {
 			}
 		}
 		return false;
+	}
+
+	private static int findBitcoinSlot(ServerPlayer player) {
+		Inventory inventory = player == null ? null : player.getInventory();
+		if (inventory == null) {
+			return NO_LOCKED_GUIDED_BITCOIN_SLOT;
+		}
+		for (int slot = 0; slot < inventory.getContainerSize(); slot++) {
+			if (inventory.getItem(slot).is(ModItems.BITCOIN)) {
+				return slot;
+			}
+		}
+		return NO_LOCKED_GUIDED_BITCOIN_SLOT;
+	}
+
+	private static void keepLockedGuidedBitcoinInSlot(ServerPlayer player, PlayerSceneState state, ItemStack returningStack) {
+		if (player == null || state == null || state.lockedGuidedBitcoinSlot == NO_LOCKED_GUIDED_BITCOIN_SLOT) {
+			return;
+		}
+		Inventory inventory = player.getInventory();
+		int lockedSlot = state.lockedGuidedBitcoinSlot;
+		if (lockedSlot < 0 || lockedSlot >= inventory.getContainerSize()) {
+			state.lockedGuidedBitcoinSlot = NO_LOCKED_GUIDED_BITCOIN_SLOT;
+			return;
+		}
+		ItemStack lockedStack = inventory.getItem(lockedSlot);
+		if (!lockedStack.is(ModItems.BITCOIN)) {
+			int bitcoinSlot = findBitcoinSlot(player);
+			if (bitcoinSlot != NO_LOCKED_GUIDED_BITCOIN_SLOT && bitcoinSlot != lockedSlot) {
+				ItemStack displaced = inventory.getItem(lockedSlot);
+				inventory.setItem(lockedSlot, inventory.getItem(bitcoinSlot));
+				inventory.setItem(bitcoinSlot, displaced);
+				lockedStack = inventory.getItem(lockedSlot);
+			}
+		}
+		if (!lockedStack.is(ModItems.BITCOIN) && returningStack != null && returningStack.is(ModItems.BITCOIN)) {
+			inventory.setItem(lockedSlot, returningStack.copy());
+		}
+		inventory.setChanged();
+		player.inventoryMenu.broadcastFullState();
+		player.inventoryMenu.sendAllDataToRemote();
+		if (player.containerMenu != player.inventoryMenu) {
+			player.containerMenu.broadcastFullState();
+		}
 	}
 
 	private static void giveOrDrop(ServerPlayer player, ItemStack stack) {
@@ -7534,9 +8147,12 @@ public final class SeasonStartSystem {
 	private static BoxGeometry computeOuterBoxGeometry(BlockPos anchor) {
 		int halfExtent = Math.max(get().boxHalfWidth, get().boxHalfDepth);
 		int barrierFloorY = anchor.getY() - 1;
-		int sideLength = halfExtent * 2 + 1;
-		int roofY = barrierFloorY + get().boxHeight;
-		int floorY = roofY - sideLength + 1;
+		// The visible world-generation projection needs its own floor below the
+		// barrier-room floor.  Keeping it just below the barrier's five-block base
+		// makes the animation visible again without restoring the former 71-block
+		// deep outer cube.  boxHeight remains the headroom above the room floor.
+		int floorY = barrierFloorY - BARRIER_FLOOR_DEPTH - 1;
+		int roofY = barrierFloorY + get().boxHeight - 1;
 		return new BoxGeometry(
 				anchor.getX() - halfExtent,
 				anchor.getX() + halfExtent,
@@ -7848,7 +8464,11 @@ public final class SeasonStartSystem {
 					PlayerSceneState runtime = new PlayerSceneState();
 					runtime.slotIndex = persisted.slotIndex;
 					runtime.minedIntroBitcoin = persisted.minedIntroBitcoin;
+					runtime.introOreRevealed = persisted.introOreRevealed;
 					runtime.poweredServer = persisted.poweredServer;
+					runtime.guidedBitcoinEscapeCount = Math.max(0, persisted.guidedBitcoinEscapeCount);
+					runtime.lockedGuidedBitcoinSlot = persisted.lockedGuidedBitcoinSlot;
+					runtime.escapedGuidedOfferingId = parseUuid(persisted.escapedGuidedOfferingId);
 					runtime.phase = PlayerPhase.byId(persisted.phase);
 					if (runtime.poweredServer) {
 						runtime.phase = PlayerPhase.SHARED;
@@ -7900,7 +8520,11 @@ public final class SeasonStartSystem {
 			persisted.slotIndex = runtime.slotIndex;
 			persisted.phase = runtime.phase.id;
 			persisted.minedIntroBitcoin = runtime.minedIntroBitcoin;
+			persisted.introOreRevealed = runtime.introOreRevealed;
 			persisted.poweredServer = runtime.poweredServer;
+			persisted.guidedBitcoinEscapeCount = runtime.guidedBitcoinEscapeCount;
+			persisted.lockedGuidedBitcoinSlot = runtime.lockedGuidedBitcoinSlot;
+			persisted.escapedGuidedOfferingId = runtime.escapedGuidedOfferingId == null ? "" : runtime.escapedGuidedOfferingId.toString();
 			persisted.menuOpened = runtime.menuOpened;
 			persisted.menuNarrationMuted = runtime.menuNarrationMuted;
 			persisted.raceMenuReached = runtime.raceMenuReached;
@@ -7995,6 +8619,10 @@ public final class SeasonStartSystem {
 		state.lastGuidanceTurnRecoverUsed = false;
 		state.announcedServerSight = false;
 		state.guidanceCueCycles.clear();
+		state.guidanceCueBags.clear();
+		state.lastGuidanceTriggerByGroup.clear();
+		state.guidanceSemanticNextAllowedTicks.clear();
+		state.leftIntroTaskArea = false;
 		resetGuidanceRoute(state);
 		if (state.phase == PlayerPhase.WAITING_START && state.nextStartPromptTick <= 0L && player.level() != null) {
 			state.nextStartPromptTick = player.level().getGameTime() + WAITING_START_INITIAL_PROMPT_TICKS;
@@ -8011,6 +8639,7 @@ public final class SeasonStartSystem {
 		long nowTick = player.level() == null ? 0L : player.level().getGameTime();
 		SeasonStartVoiceSystem.clearPlayerChannel(player);
 		state.phase = PlayerPhase.ISOLATED;
+		state.introOreRevealed = false;
 		state.nextStartPromptTick = Long.MAX_VALUE;
 		state.guidanceNarrationGateTick = nowTick + resolveTriggerSequenceDurationTicks("player_intro_assigned");
 		stateDirty = true;
@@ -8068,18 +8697,12 @@ public final class SeasonStartSystem {
 			MinecraftServer server,
 			ServerPlayer player,
 			PlayerSceneState state,
-			String[] triggers,
-			boolean promptCycle
+			String[] triggers
 	) {
 		if (server == null || player == null || state == null || triggers == null || triggers.length == 0) {
 			return;
 		}
-		int index;
-		if (promptCycle) {
-			index = Math.floorMod(state.startPromptVariantIndex++, triggers.length);
-		} else {
-			index = Math.floorMod(state.wrongStartVariantIndex++, triggers.length);
-		}
+		int index = Math.floorMod(state.startPromptVariantIndex++, triggers.length);
 		SeasonStartVoiceSystem.fireTrigger(server, triggers[index], player);
 	}
 
@@ -8093,30 +8716,33 @@ public final class SeasonStartSystem {
 		if (server == null || player == null || state == null || cycleKey == null || cycleKey.isBlank() || triggers == null || triggers.length == 0) {
 			return;
 		}
-		int initialIndex = Math.floorMod(player.getUUID().hashCode() ^ cycleKey.hashCode(), triggers.length);
-		int nextIndex = Math.floorMod(state.guidanceCueCycles.getOrDefault(cycleKey, initialIndex), triggers.length);
-		state.guidanceCueCycles.put(cycleKey, nextIndex + 1);
-		SeasonStartVoiceSystem.fireTrigger(server, triggers[nextIndex], player);
-	}
-
-	private static boolean matchesStartWord(String content) {
-		if (content == null) {
-			return false;
-		}
-		String normalized = content.trim();
-		return START_WORD_EN.equalsIgnoreCase(normalized) || START_WORD_RU.equalsIgnoreCase(normalized);
-	}
-
-	private static boolean shouldUseLatinReplacement(String content) {
-		if (content == null || content.isBlank()) {
-			return false;
-		}
-		for (int index = 0; index < content.length(); index++) {
-			if (Character.UnicodeScript.of(content.charAt(index)) == Character.UnicodeScript.LATIN) {
-				return true;
+		List<String> bag = state.guidanceCueBags.computeIfAbsent(cycleKey, ignored -> new ArrayList<>());
+		if (bag.isEmpty()) {
+			int refill = state.guidanceCueCycles.merge(cycleKey, 1, Integer::sum);
+			for (String trigger : triggers) {
+				if (trigger != null && !trigger.isBlank()) {
+					bag.add(trigger);
+				}
+			}
+			Collections.shuffle(bag, new Random(player.getUUID().hashCode() ^ cycleKey.hashCode() ^ refill));
+			// Never end one shuffled round and immediately start the next with the
+			// exact same line. Every variation gets heard before the bag refills.
+			String previous = state.lastGuidanceTriggerByGroup.get(cycleKey);
+			if (bag.size() > 1 && previous != null && previous.equals(bag.get(0))) {
+				for (int index = 1; index < bag.size(); index++) {
+					if (!previous.equals(bag.get(index))) {
+						Collections.swap(bag, 0, index);
+						break;
+					}
+				}
 			}
 		}
-		return false;
+		if (bag.isEmpty()) {
+			return;
+		}
+		String trigger = bag.remove(0);
+		state.lastGuidanceTriggerByGroup.put(cycleKey, trigger);
+		SeasonStartVoiceSystem.fireTrigger(server, trigger, player);
 	}
 
 	private static void updateObservationBaseline(ServerPlayer player, PlayerSceneState state) {
@@ -8268,7 +8894,10 @@ public final class SeasonStartSystem {
 		private int slotIndex;
 		private PlayerPhase phase = PlayerPhase.ISOLATED;
 		private boolean minedIntroBitcoin;
+		private boolean introOreRevealed;
 		private boolean poweredServer;
+		private int guidedBitcoinEscapeCount;
+		private int lockedGuidedBitcoinSlot = NO_LOCKED_GUIDED_BITCOIN_SLOT;
 		private long restoreVisionTick = Long.MAX_VALUE;
 		private boolean sharedVisionRestored = false;
 		private boolean pendingSharedPeersLine = false;
@@ -8295,6 +8924,9 @@ public final class SeasonStartSystem {
 		private long turnRecoveryAllowedTick = Long.MIN_VALUE;
 		private boolean lastGuidanceTurnRecoverUsed = false;
 		private final Map<String, Integer> guidanceCueCycles = new LinkedHashMap<>();
+		private final Map<String, List<String>> guidanceCueBags = new HashMap<>();
+		private final Map<String, String> lastGuidanceTriggerByGroup = new HashMap<>();
+		private final Map<String, Long> guidanceSemanticNextAllowedTicks = new HashMap<>();
 		private GuidanceRouteKind guidanceRouteKind = GuidanceRouteKind.NONE;
 		private int guidanceRouteLegIndex = 0;
 		private boolean guidanceRouteLegAnnounced = false;
@@ -8319,9 +8951,15 @@ public final class SeasonStartSystem {
 		private UUID escapedGuidedOfferingId;
 		private Vec3 escapedGuidedOfferingTarget;
 		private boolean escapedGuidedOfferingLanded = false;
+		private boolean announcedServerBeforeBitcoin = false;
+		private boolean announcedServerWithoutBitcoin = false;
+		private boolean wasAtServerWithoutBitcoin = false;
+		private boolean leftServerWhileRecoveringBitcoin = false;
+		private int serverWithoutBitcoinVisitCount = 0;
 		private long lastActivityTick = 0L;
 		private long nextIdleReactionTick = 0L;
 		private long nextLeaveReactionTick = 0L;
+		private boolean leftIntroTaskArea = false;
 		private long nextSpinReactionTick = 0L;
 		private long nextJumpReactionTick = 0L;
 		private long nextAirPunchReactionTick = 0L;
@@ -8337,7 +8975,6 @@ public final class SeasonStartSystem {
 		private double spinScore = 0.0D;
 		private long nextStartPromptTick = 0L;
 		private int startPromptVariantIndex = 0;
-		private int wrongStartVariantIndex = 0;
 		private boolean menuOpened;
 		private boolean menuNarrationMuted;
 		private boolean raceMenuReached;
@@ -8694,7 +9331,11 @@ public final class SeasonStartSystem {
 		private int slotIndex;
 		private String phase;
 		private boolean minedIntroBitcoin;
+		private boolean introOreRevealed;
 		private boolean poweredServer;
+		private int guidedBitcoinEscapeCount;
+		private int lockedGuidedBitcoinSlot = NO_LOCKED_GUIDED_BITCOIN_SLOT;
+		private String escapedGuidedOfferingId;
 		private boolean menuOpened;
 		private boolean menuNarrationMuted;
 		private boolean raceMenuReached;
