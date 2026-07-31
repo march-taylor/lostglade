@@ -161,7 +161,7 @@ public final class SeasonStartSystem {
 	);
 	private static final long INTRO_IDLE_TRIGGER_TICKS = 20L * 9L;
 	private static final long INTRO_IDLE_REPEAT_TICKS = 20L * 10L;
-	private static final long INTRO_SPIN_REPEAT_TICKS = 20L * 6L;
+	private static final long INTRO_SPIN_REPEAT_TICKS = 20L * 10L;
 	private static final long INTRO_JUMP_REPEAT_TICKS = 20L * 4L;
 	private static final long INTRO_AIR_PUNCH_REPEAT_TICKS = 20L * 5L;
 	private static final long INTRO_TARGET_REACTION_REPEAT_TICKS = 20L * 9L;
@@ -191,7 +191,10 @@ public final class SeasonStartSystem {
 	private static final double ROUTE_PROGRESS_TOWARD = -0.09D;
 	private static final int BARRIER_FLOOR_DEPTH = 5;
 	private static final double INTRO_ACTIVITY_MOVE_SQR = 0.04D * 0.04D;
-	private static final double INTRO_SPIN_TRIGGER_SCORE = 200.0D;
+	// The score decays every tick, so 200 could only be reached by an almost
+	// instantaneous 180-degree snap. A normal fast look-around now reaches this
+	// threshold too, while the ten-second cooldown keeps it from becoming noise.
+	private static final double INTRO_SPIN_TRIGGER_SCORE = 45.0D;
 	private static final double INTRO_PICK_REACH = 5.0D;
 	private static final double INTRO_TARGET_VERTICAL_GUIDANCE_DISTANCE = 4.8D;
 	private static final double INTRO_TARGET_VERTICAL_YAW_WINDOW = 14.0D;
@@ -208,6 +211,12 @@ public final class SeasonStartSystem {
 	private static final double GUIDANCE_QUIET_DISTANCE = 2.05D;
 	private static final double GUIDANCE_DROP_DISTANCE = 1.35D;
 	private static final double GUIDANCE_SERVER_SIGHT_DISTANCE = 4.0D;
+	// Once a target is close enough to be plainly visible in the startup room,
+	// directions are no longer useful. The player needs a contextual nudge, not
+	// another left/right command while the ore or server is already nearby.
+	private static final double GUIDANCE_TARGET_VISIBLE_DISTANCE = 7.5D;
+	private static final double GUIDANCE_SERVER_VISIBLE_DISTANCE = 9.5D;
+	private static final double GUIDANCE_TARGET_VISIBLE_VERTICAL_DISTANCE = 6.0D;
 	// A "returned without the coin" line only makes sense after the player has
 	// actually gone out to search for it, not in the moment the coin is thrown.
 	private static final double GUIDANCE_SERVER_RETURN_ARM_DISTANCE = 7.0D;
@@ -2120,6 +2129,20 @@ public final class SeasonStartSystem {
 			}
 			return;
 		}
+		if (isServerWithinGuidanceVisibility(serverSnapshot)) {
+			beginVisibleGuidanceTarget(player, state, "server", nowTick);
+			if (lookingAtServerStructure && !state.announcedServerSight) {
+				fireGuidanceInstruction(server, player, state,
+						new GuidanceInstruction("guide_server_in_sight", "guide_server_in_sight", GUIDE_SERVER_IN_SIGHT_TRIGGERS, GUIDANCE_FORWARD_COOLDOWN_TICKS),
+						serverSnapshot, nowTick);
+			} else if (hasVisibleGuidanceTargetStalled(player, state, nowTick)) {
+				fireGuidanceInstruction(server, player, state,
+						new GuidanceInstruction("guide_close_presence", "guide_close_presence", GUIDE_CLOSE_PRESENCE_TRIGGERS, GUIDANCE_STALL_COOLDOWN_TICKS),
+						serverSnapshot, nowTick);
+			}
+			return;
+		}
+		clearVisibleGuidanceTarget(state);
 		// Seeing the actual objective invalidates a spoken direction immediately.
 		// Do this before the usual narration gate: a discovered server is more useful
 		// than finishing an instruction for a route the player no longer needs.
@@ -2153,6 +2176,62 @@ public final class SeasonStartSystem {
 	private static boolean isCloseAndLookingAtServer(ServerPlayer player, double distance) {
 		GuidanceSnapshot snapshot = resolveGuidanceSnapshot(player);
 		return snapshot != null && snapshot.horizontalDistance <= distance && isLookingAtServerStructure(player);
+	}
+
+	private static boolean isServerWithinGuidanceVisibility(GuidanceSnapshot snapshot) {
+		return snapshot != null && snapshot.horizontalDistance <= GUIDANCE_SERVER_VISIBLE_DISTANCE;
+	}
+
+	private static boolean isIntroOreWithinGuidanceVisibility(ServerPlayer player, SlotDefinition slot, GuidanceSnapshot snapshot) {
+		if (player == null || slot == null || snapshot == null || snapshot.horizontalDistance > GUIDANCE_TARGET_VISIBLE_DISTANCE) {
+			return false;
+		}
+		return Math.abs(player.getEyeY() - centerOf(slot.orePos).y) <= GUIDANCE_TARGET_VISIBLE_VERTICAL_DISTANCE;
+	}
+
+	/**
+	 * Target proximity is a separate conversational state from navigation. Entering
+	 * it cancels an obsolete direction once; keeping it active must not repeatedly
+	 * reset the voice cooldown on every four-tick guidance pass.
+	 */
+	private static void beginVisibleGuidanceTarget(ServerPlayer player, PlayerSceneState state, String targetKey, long nowTick) {
+		if (player == null || state == null || targetKey == null || targetKey.isBlank()) {
+			return;
+		}
+		if (targetKey.equals(state.visibleGuidanceTargetKey)) {
+			return;
+		}
+		state.visibleGuidanceTargetKey = targetKey;
+		state.visibleGuidanceLastPlayerX = player.getX();
+		state.visibleGuidanceLastPlayerZ = player.getZ();
+		state.visibleGuidanceLastMoveTick = nowTick;
+		resetGuidanceRoute(state);
+		// A route line becomes factually wrong as soon as the objective is in the
+		// player's immediate vicinity. Do not make them wait for it to finish.
+		interruptAndFastForwardPlayerNarration(player, state, nowTick);
+	}
+
+	private static void clearVisibleGuidanceTarget(PlayerSceneState state) {
+		if (state == null || state.visibleGuidanceTargetKey.isBlank()) {
+			return;
+		}
+		state.visibleGuidanceTargetKey = "";
+		state.visibleGuidanceLastMoveTick = Long.MIN_VALUE;
+	}
+
+	private static boolean hasVisibleGuidanceTargetStalled(ServerPlayer player, PlayerSceneState state, long nowTick) {
+		if (player == null || state == null || state.visibleGuidanceTargetKey.isBlank()) {
+			return false;
+		}
+		double dx = player.getX() - state.visibleGuidanceLastPlayerX;
+		double dz = player.getZ() - state.visibleGuidanceLastPlayerZ;
+		if (dx * dx + dz * dz >= ROUTE_MOVEMENT_SQR) {
+			state.visibleGuidanceLastPlayerX = player.getX();
+			state.visibleGuidanceLastPlayerZ = player.getZ();
+			state.visibleGuidanceLastMoveTick = nowTick;
+			return false;
+		}
+		return nowTick - state.visibleGuidanceLastMoveTick >= ROUTE_STALL_AFTER_TICKS;
 	}
 
 	private static void tickLockedGuidedBitcoinSlot(MinecraftServer server, ServerPlayer player, PlayerSceneState state, long nowTick) {
@@ -2192,6 +2271,27 @@ public final class SeasonStartSystem {
 			return;
 		}
 		boolean lookingAtOre = isLookingAtIntroOre(player, slot);
+		if (isIntroOreWithinGuidanceVisibility(player, slot, snapshot)) {
+			beginVisibleGuidanceTarget(player, state, "intro_ore", nowTick);
+			if (lookingAtOre) {
+				if (!state.introTargetLocked) {
+					fireIntroTargetReaction(server, player, state, nowTick);
+				}
+				completeGuidanceRoute(state);
+				return;
+			}
+			if (hasVisibleGuidanceTargetStalled(player, state, nowTick)) {
+				VerticalAimHint visibleAimHint = resolveIntroVerticalAimHint(player, slot, snapshot, false);
+				GuidanceInstruction visibleTargetInstruction = visibleAimHint == VerticalAimHint.UP
+						? new GuidanceInstruction("intro_target_look_up", "intro_target_look_up", INTRO_TARGET_LOOK_UP_TRIGGERS, GUIDANCE_STALL_COOLDOWN_TICKS)
+						: visibleAimHint == VerticalAimHint.DOWN
+						? new GuidanceInstruction("intro_target_look_down", "intro_target_look_down", INTRO_TARGET_LOOK_DOWN_TRIGGERS, GUIDANCE_STALL_COOLDOWN_TICKS)
+						: new GuidanceInstruction("intro_target_stare", "intro_target_stare", INTRO_TARGET_STARE_TRIGGERS, GUIDANCE_STALL_COOLDOWN_TICKS);
+				fireGuidanceInstruction(server, player, state, visibleTargetInstruction, snapshot, nowTick);
+			}
+			return;
+		}
+		clearVisibleGuidanceTarget(state);
 		if (lookingAtOre) {
 			if (!state.introTargetLocked) {
 				interruptAndFastForwardPlayerNarration(player, state, nowTick);
@@ -2704,7 +2804,7 @@ public final class SeasonStartSystem {
 	 */
 	private static String resolveGuidanceSemanticKey(GuidanceInstruction instruction) {
 		String key = instruction == null || instruction.stateKey == null ? "guidance" : instruction.stateKey;
-		if (key.startsWith("guide_stall_") || key.startsWith("intro_target_look_")) {
+		if (key.startsWith("guide_stall_") || key.startsWith("intro_target_") || key.equals("guide_close_presence")) {
 			return "stall";
 		}
 		if (key.contains("wrong_way") || key.contains("passed_server") || key.contains("route_reverse")) {
@@ -3419,6 +3519,10 @@ public final class SeasonStartSystem {
 		state.guidanceCueBags.clear();
 		state.lastGuidanceTriggerByGroup.clear();
 		state.guidanceSemanticNextAllowedTicks.clear();
+		state.visibleGuidanceTargetKey = "";
+		state.visibleGuidanceLastPlayerX = player.getX();
+		state.visibleGuidanceLastPlayerZ = player.getZ();
+		state.visibleGuidanceLastMoveTick = player.level().getGameTime();
 		state.leftIntroTaskArea = false;
 		resetGuidanceRoute(state);
 		state.spinScore = 0.0D;
@@ -8624,6 +8728,10 @@ public final class SeasonStartSystem {
 		state.guidanceSemanticNextAllowedTicks.clear();
 		state.leftIntroTaskArea = false;
 		resetGuidanceRoute(state);
+		state.visibleGuidanceTargetKey = "";
+		state.visibleGuidanceLastPlayerX = player.getX();
+		state.visibleGuidanceLastPlayerZ = player.getZ();
+		state.visibleGuidanceLastMoveTick = nowTick;
 		if (state.phase == PlayerPhase.WAITING_START && state.nextStartPromptTick <= 0L && player.level() != null) {
 			state.nextStartPromptTick = player.level().getGameTime() + WAITING_START_INITIAL_PROMPT_TICKS;
 		}
@@ -8948,6 +9056,10 @@ public final class SeasonStartSystem {
 		private long guidanceRouteNextProgressCueTick = 0L;
 		private long guidanceRouteNextWrongWayTick = 0L;
 		private boolean guidanceRouteDirectionIssued = false;
+		private String visibleGuidanceTargetKey = "";
+		private double visibleGuidanceLastPlayerX = 0.0D;
+		private double visibleGuidanceLastPlayerZ = 0.0D;
+		private long visibleGuidanceLastMoveTick = Long.MIN_VALUE;
 		private UUID escapedGuidedOfferingId;
 		private Vec3 escapedGuidedOfferingTarget;
 		private boolean escapedGuidedOfferingLanded = false;

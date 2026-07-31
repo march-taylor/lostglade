@@ -46,6 +46,11 @@
 /scripts/.deps/
 /scripts/__pycache__/
 
+# Local Qwen TTS weights.  The generator scripts in /scripts stay versioned;
+# only the downloaded model checkout and optional local model drop folders do not.
+/.qwen3-tts-base/
+/.tts-models/
+
 # IDE / OS
 /.idea/
 /.vscode/
