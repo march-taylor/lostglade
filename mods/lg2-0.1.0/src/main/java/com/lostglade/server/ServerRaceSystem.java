@@ -142,6 +142,7 @@ import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.Interaction;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
+
 import net.minecraft.world.entity.MobCategory;
 import net.minecraft.world.entity.NeutralMob;
 import net.minecraft.world.entity.Pose;
@@ -312,11 +313,38 @@ public final class ServerRaceSystem {
 	private static final String MILK_OLIGARCH_RACE_ID = "milk_oligarch";
 	private static final String LITTLE_DICTATOR_RACE_ID = "little_dictator";
 	private static final String KILKA_RACE_ID = "kilka";
+	private static final String PURO_SAN_RACE_ID = "puro_san";
+		private static final double PURO_SAN_ATTACK_DEFAULT_BACK_JUMP_BLOCKS = 5.0D;
+	private static final double PURO_SAN_ATTACK_DEFAULT_WAVE_RADIUS_BLOCKS = 3.0D;
+	private static final double PURO_SAN_ATTACK_DEFAULT_DAMAGE = 4.0D;
+	private static final double PURO_SAN_ATTACK_DEFAULT_DEBUFF_SECONDS = 1.5D;
+	private static final double PURO_SAN_DEFENSE_DEFAULT_JUMP_BLOCKS = 10.0D;
+	private static final double PURO_SAN_UNIQUE_DEFAULT_DASH_BLOCKS = 3.0D;
+	private static final double PURO_SAN_UNIQUE_BASE_IMPULSE = 0.345D;
+	private static final double PURO_SAN_SHNYAGA_DEFAULT_CHARGE_SECONDS = 5.0D;
+	private static final double PURO_SAN_SHNYAGA_DEFAULT_SPEED_BONUS_RATIO = 0.2D;
+	private static final double PURO_SAN_SHNYAGA_DEFAULT_SHIELD_HEALTH_RATIO = 0.5D;
+	private static final double PURO_SAN_WALL_SLIDE_MAX_FALL_SPEED = -0.025D;
+	private static final double PURO_SAN_WALL_SLIDE_GRAVITY = Math.abs(PURO_SAN_WALL_SLIDE_MAX_FALL_SPEED) / 49.0D;
+	private static final Identifier PURO_SAN_WALL_SLIDE_GRAVITY_MODIFIER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "puro_san_wall_slide_gravity");
+	private static final double PURO_SAN_WALL_PROBE_DISTANCE = 0.08D;
+	private static final double PURO_SAN_WALL_PROBE_SLICE_HEIGHT = 0.35D;
+	private static final int PURO_SAN_RUN_SPEED_SAMPLE_TICKS = 5;
+
+	private static final long PURO_SAN_DEFENSE_FALL_PROTECTION_TICKS = 300L;
+	private static final double PURO_SAN_ATTACK_WAVE_ANGLE_DEGREES = 150.0D;
+	private static final double PURO_SAN_ATTACK_JUMP_ANGLE_DEGREES = 45.0D;
+	private static final double PURO_SAN_ATTACK_KNOCKBACK_ANGLE_DEGREES = 30.0D;
+	private static final double PURO_SAN_ATTACK_BLOCKS_TO_VELOCITY = 0.115D;
+	private static final Identifier PURO_SAN_ATTACK_MOVEMENT_SLOW_MODIFIER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "puro_san_attack_movement_slow");
+	private static final Identifier PURO_SAN_ATTACK_SPEED_SLOW_MODIFIER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "puro_san_attack_speed_slow");
+	private static final Identifier PURO_SAN_SHNYAGA_SPEED_MODIFIER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "puro_san_shnyaga_speed");
+	private static final Identifier PURO_SAN_VANILLA_SPRINT_SPEED_MODIFIER_ID = Identifier.withDefaultNamespace("sprinting");
 	private static final String KILKA_DEFENSE_SINKING_PROJECTILE_TAG = "lg2_kilka_defense_sinking";
 	private static final double KILKA_DEFENSE_DEFAULT_RADIUS_BLOCKS = 3.0D;
 	private static final double KILKA_DEFENSE_DEFAULT_DURATION_SECONDS = 20.0D;
 	private static final double KILKA_DEFENSE_DEFAULT_COOLDOWN_SECONDS = 600.0D;
-	private static final double KILKA_DEFENSE_PROJECTILE_WATER_HORIZONTAL_DRAG = 0.32D;
+	private static final double KILKA_DEFENSE_PROJECTILE_AIR_INERTIA = 0.99D;
 	private static final double KILKA_DEFENSE_PROJECTILE_WATER_VERTICAL_DRAG = 0.96D;
 	private static final double KILKA_DEFENSE_PROJECTILE_WATER_DOWN_ACCELERATION = 0.025D;
 	private static final double KILKA_DEFENSE_PROJECTILE_MAX_DOWN_SPEED = -0.42D;
@@ -900,6 +928,8 @@ public final class ServerRaceSystem {
 	private static final long WOMAN_SHNYAGA_WHITELIST_CHECK_INTERVAL_TICKS = 100L;
 	private static final int WOMAN_SHNYAGA_EFFECT_DURATION_TICKS = 60;
 	private static final String WOMAN_SHNYAGA_STATE_FILE_NAME = "lg2_woman_shnyaga_links.json";
+	private static final String KILKA_SALMON_FORM_STATE_FILE_NAME = "lg2_kilka_salmon_forms.json";
+	private static final String MARK_RAGE_STATE_FILE_NAME = "lg2_mark_rage.json";
 	private static final String LITTLE_DICTATOR_TAX_CHESTS_STATE_FILE_NAME = "lg2_little_dictator_tax_chests.json";
 	private static final String KILKA_SEA_BEACONS_STATE_FILE_NAME = "lg2_kilka_sea_beacons.json";
 	private static final String LONG_PASSIVE_EFFECTS_STATE_FILE_NAME = "lg2_long_passive_effects.json";
@@ -1058,6 +1088,15 @@ public final class ServerRaceSystem {
 	private static final Map<UUID, KilkaAttackFlashSession> KILKA_ATTACK_FLASHES = new LinkedHashMap<>();
 	private static final Map<UUID, Long> KILKA_IRRADIATION_END_TICKS = new LinkedHashMap<>();
 	private static final Map<UUID, KilkaDefenseSession> KILKA_DEFENSE_SESSIONS = new LinkedHashMap<>();
+	private static final Map<UUID, KilkaDefenseProjectileDiversion> KILKA_DEFENSE_PROJECTILE_DIVERSIONS = new HashMap<>();
+	private static final Map<UUID, PuroSanAttackDebuffSession> PURO_SAN_ATTACK_DEBUFFS = new HashMap<>();
+	private static final Map<UUID, Long> PURO_SAN_DEFENSE_FALL_PROTECTION_END_TICKS = new HashMap<>();
+	private static final Map<UUID, PuroSanJumpTrailSession> PURO_SAN_JUMP_TRAIL_END_TICKS = new HashMap<>();
+	private static final Map<UUID, PuroSanOverdriveSession> PURO_SAN_OVERDRIVE_SESSIONS = new HashMap<>();
+	private static final Map<UUID, ServerBossEvent> PURO_SAN_OVERDRIVE_BOSS_BARS = new HashMap<>();
+	private static final Set<UUID> PURO_SAN_OVERDRIVE_HEALTH_DAMAGE_PENDING = new HashSet<>();
+
+
 	private static final Map<UUID, KilkaSalmonFormSession> KILKA_SALMON_FORMS = new LinkedHashMap<>();
 	private static final Map<UUID, Float> KILKA_STOCK_CLIENT_WALKING_SPEEDS = new HashMap<>();
 	private static final Map<UUID, List<KilkaSeaBeaconLink>> KILKA_SEA_BEACONS = new LinkedHashMap<>();
@@ -1066,6 +1105,8 @@ public final class ServerRaceSystem {
 	private static final List<MarkThrownAxeSession> MARK_THROWN_AXES = new ArrayList<>();
 	private static final Map<UUID, MarkBleedingSession> MARK_BLEEDING_SESSIONS = new LinkedHashMap<>();
 	private static final Map<UUID, Double> MARK_RAGE_POINTS = new LinkedHashMap<>();
+	private static final Set<UUID> KILKA_SALMON_FORM_PLAYERS = new LinkedHashSet<>();
+	private static final Map<UUID, Long> KILKA_SALMON_FORM_RESTORE_TICKS = new HashMap<>();
 	private static final Map<UUID, MarkRageSession> MARK_RAGE_SESSIONS = new LinkedHashMap<>();
 	private static final Map<UUID, ServerBossEvent> MARK_RAGE_BOSS_BARS = new LinkedHashMap<>();
 	private static final Set<UUID> MARK_RAGE_BAR_HIDDEN = new HashSet<>();
@@ -1490,6 +1531,8 @@ public final class ServerRaceSystem {
 			RaceConfig.load();
 			rebuildCache();
 			loadWomanShnyagaLinks(server);
+			loadKilkaSalmonFormPlayers(server);
+			loadMarkRageState(server);
 			loadLittleDictatorTaxChests(server);
 			loadKilkaSeaBeacons(server);
 			loadLongPassiveEffects(server);
@@ -1505,6 +1548,8 @@ public final class ServerRaceSystem {
 			clearAllKilkaStockNightVision(server);
 			SEASON_START_RACES.clear();
 			saveWomanShnyagaLinks(server);
+			saveKilkaSalmonFormPlayers(server);
+			saveMarkRageState(server);
 			saveLittleDictatorTaxChests(server);
 			saveKilkaSeaBeacons(server);
 			saveLongPassiveEffects(server);
@@ -1587,6 +1632,7 @@ public final class ServerRaceSystem {
 			MILK_DEFENSE_SESSIONS.clear();
 			cleanupAllMilkMouseSessions(server, true);
 			cleanupAllKilkaSalmonForms(server, true);
+			KILKA_SALMON_FORM_RESTORE_TICKS.clear();
 			KILKA_ATTACK_FLASHES.clear();
 			clearAllKilkaSeaBeacons(server);
 			KILKA_SHNYAGA_BUFFED_PLAYERS.clear();
@@ -1640,6 +1686,7 @@ public final class ServerRaceSystem {
 					prewarmCopperManDefenseTint(server, handler.player);
 					restoreLongPassiveEffectsForPlayer(server, handler.player);
 					clearStaleKilkaSalmonInvisibility(handler.player);
+					queueKilkaSalmonFormRestore(server, handler.player);
 					refreshKilkaSalmonFormsForJoiningViewer(server, handler.player);
 					server.getCommands().sendCommands(handler.player);
 				})
@@ -1676,6 +1723,7 @@ public final class ServerRaceSystem {
 			clearWomanAttackState(handler.player.getUUID());
 			clearWomanShnyagaPendingState(handler.player.getUUID());
 			clearGennadiyDefense(handler.player);
+			clearPuroSanOverdrive(handler.player);
 			cleanupGennadiyHookSession(server, GENNADIY_HOOK_SESSIONS.remove(handler.player.getUUID()));
 			GENNADIY_REPORT_PENDING.remove(handler.player.getUUID());
 			releaseMarkDefenseField(server, MARK_DEFENSE_SESSIONS.remove(handler.player.getUUID()), false, null);
@@ -1702,6 +1750,7 @@ public final class ServerRaceSystem {
 			KILKA_STOCK_CLIENT_WALKING_SPEEDS.remove(handler.player.getUUID());
 			clearKilkaSeaBeaconClientDisplays(handler.player);
 			KILKA_ATTACK_FLASHES.remove(handler.player.getUUID());
+			KILKA_SALMON_FORM_RESTORE_TICKS.remove(handler.player.getUUID());
 			cleanupKilkaSalmonForm(server, handler.player.getUUID(), KILKA_SALMON_FORMS.remove(handler.player.getUUID()), false);
 			cleanupLittleDictatorUniqueSession(server, handler.player.getUUID(), LITTLE_DICTATOR_UNIQUE_SESSIONS.remove(handler.player.getUUID()), false);
 			recallGennadiyDonkey(server, handler.player.getUUID(), false);
@@ -1710,6 +1759,7 @@ public final class ServerRaceSystem {
 		ServerPlayerEvents.AFTER_RESPAWN.register((oldPlayer, newPlayer, alive) -> {
 			if (!alive) {
 				clearGennadiyDefense(newPlayer);
+				clearPuroSanOverdrive(newPlayer);
 				cleanupGennadiyHookSession(newPlayer.level().getServer(), GENNADIY_HOOK_SESSIONS.remove(newPlayer.getUUID()));
 				releaseMarkDefenseField(newPlayer.level().getServer(), MARK_DEFENSE_SESSIONS.remove(newPlayer.getUUID()), false, null);
 				stopMarkRage(newPlayer.level().getServer(), newPlayer, false);
@@ -1724,7 +1774,9 @@ public final class ServerRaceSystem {
 				removeKilkaStockMiningModifiers(newPlayer);
 				clearKilkaSeaBeaconClientDisplays(newPlayer);
 				KILKA_ATTACK_FLASHES.remove(newPlayer.getUUID());
+				KILKA_SALMON_FORM_RESTORE_TICKS.remove(newPlayer.getUUID());
 				cleanupKilkaSalmonForm(newPlayer.level().getServer(), newPlayer.getUUID(), KILKA_SALMON_FORMS.remove(newPlayer.getUUID()), true);
+				forgetKilkaSalmonForm(newPlayer.level().getServer(), newPlayer.getUUID());
 				cleanupMilkMouseSession(newPlayer.level().getServer(), newPlayer.getUUID(), MILK_MOUSE_SESSIONS.remove(newPlayer.getUUID()), true, true);
 				clearLittleDictatorUniqueTargetState(newPlayer);
 				cleanupLittleDictatorUniqueSession(newPlayer.level().getServer(), newPlayer.getUUID(), LITTLE_DICTATOR_UNIQUE_SESSIONS.remove(newPlayer.getUUID()), false);
@@ -1768,6 +1820,7 @@ public final class ServerRaceSystem {
 			}
 			return onUseEntity(serverPlayer, hand, entity, hitResult == null ? null : hitResult.getLocation());
 		});
+		ServerTickEvents.START_SERVER_TICK.register(ServerRaceSystem::tickKilkaDefenseProjectileDeflection);
 		ServerTickEvents.END_SERVER_TICK.register(server -> {
 			long nowTick = server.overworld().getGameTime();
 			for (ServerPlayer player : server.getPlayerList().getPlayers()) {
@@ -1803,7 +1856,12 @@ public final class ServerRaceSystem {
 			tickMilkOligarchStock(server);
 			tickLittleDictatorStock(server);
 			tickKilkaStock(server);
+			tickPendingKilkaSalmonFormRestores(server);
 			tickKilkaSalmonForm(server);
+			tickPuroSanAttackDebuffs(server);
+			tickPuroSanDefenseLandings(server);
+			tickPuroSanJumpTrails(server);
+			tickPuroSanOverdrive(server);
 			tickKilkaAttack(server);
 			tickKilkaDefense(server);
 			tickKilkaShnyaga(server);
@@ -2052,6 +2110,10 @@ public final class ServerRaceSystem {
 		GENNADIY_REPORT_PENDING.remove(playerId);
 		releaseMarkDefenseField(server, MARK_DEFENSE_SESSIONS.remove(playerId), false, null);
 		stopMarkRage(server, player, false);
+		MARK_RAGE_POINTS.remove(playerId);
+		saveMarkRageState(server);
+		cleanupKilkaSalmonForm(server, playerId, KILKA_SALMON_FORMS.remove(playerId), true);
+		forgetKilkaSalmonForm(server, playerId);
 		MARK_STOCK_FOOD_SNAPSHOTS.remove(playerId);
 		MARK_STOCK_LAST_MELEE_HIT_TICKS.remove(playerId);
 		removeMarkStockSpeedPenalty(player);
@@ -2343,6 +2405,19 @@ public final class ServerRaceSystem {
 		if (slot == RaceAbilitySlot.SHNYAGA && LITTLE_DICTATOR_RACE_ID.equals(raceId)) {
 			return useLittleDictatorShnyaga(player, race, ability);
 		}
+		if (slot == RaceAbilitySlot.ATTACK && PURO_SAN_RACE_ID.equals(raceId)) {
+			return usePuroSanAttack(player, race, ability);
+		}
+		if (slot == RaceAbilitySlot.DEFENSE && PURO_SAN_RACE_ID.equals(raceId)) {
+			return usePuroSanDefense(player, race, ability);
+		}
+		if (slot == RaceAbilitySlot.UNIQUE_ABILITY && PURO_SAN_RACE_ID.equals(raceId)) {
+			return usePuroSanUnique(player, race, ability);
+		}
+		if (slot == RaceAbilitySlot.SHNYAGA && PURO_SAN_RACE_ID.equals(raceId)) {
+			return 0;
+		}
+
 		if (slot == RaceAbilitySlot.ATTACK && KILKA_RACE_ID.equals(raceId)) {
 			return useKilkaAttack(player, race, ability);
 		}
@@ -2589,6 +2664,12 @@ public final class ServerRaceSystem {
 					|| slot == RaceAbilitySlot.SHNYAGA;
 		}
 		if (LITTLE_DICTATOR_RACE_ID.equals(raceId)) {
+			return slot == RaceAbilitySlot.ATTACK
+					|| slot == RaceAbilitySlot.DEFENSE
+					|| slot == RaceAbilitySlot.UNIQUE_ABILITY
+					|| slot == RaceAbilitySlot.SHNYAGA;
+		}
+		if (PURO_SAN_RACE_ID.equals(raceId)) {
 			return slot == RaceAbilitySlot.ATTACK
 					|| slot == RaceAbilitySlot.DEFENSE
 					|| slot == RaceAbilitySlot.UNIQUE_ABILITY
@@ -4149,6 +4230,14 @@ public final class ServerRaceSystem {
 		}
 	}
 
+	private static final class KilkaSalmonFormPersistedState {
+		private Set<UUID> players = new LinkedHashSet<>();
+	}
+
+	private static final class MarkRagePersistedState {
+		private Map<UUID, Double> points = new LinkedHashMap<>();
+	}
+
 	private static final class LittleDictatorTaxChestPersistedState {
 		private final Map<String, List<LittleDictatorTaxChestPersistedRef>> chests = new LinkedHashMap<>();
 	}
@@ -4393,7 +4482,7 @@ public final class ServerRaceSystem {
 		NETHERITE
 	}
 
-	private record MarkShieldBashSelection(MarkShieldBashProfile profile, ItemStack stack) {
+	private record MarkShieldBashSelection(MarkShieldBashProfile profile, ItemStack stack, EquipmentSlot slot) {
 	}
 
 	private static final class MarkShieldBashDashSession {
@@ -4407,6 +4496,8 @@ public final class ServerRaceSystem {
 		private final double angleDegrees;
 		private final double knockbackBlocks;
 		private final Identifier shieldCooldownGroup;
+		private final ItemStack shieldStack;
+		private final EquipmentSlot shieldSlot;
 
 		private MarkShieldBashDashSession(
 				ResourceKey<Level> dimension,
@@ -4418,7 +4509,9 @@ public final class ServerRaceSystem {
 				double range,
 				double angleDegrees,
 				double knockbackBlocks,
-				Identifier shieldCooldownGroup
+				Identifier shieldCooldownGroup,
+				ItemStack shieldStack,
+				EquipmentSlot shieldSlot
 		) {
 			this.dimension = dimension;
 			this.direction = direction == null || direction.lengthSqr() <= 1.0E-6D ? Vec3.ZERO : direction.normalize();
@@ -4430,6 +4523,8 @@ public final class ServerRaceSystem {
 			this.angleDegrees = Math.max(0.0D, Math.min(180.0D, angleDegrees));
 			this.knockbackBlocks = Math.max(0.0D, knockbackBlocks);
 			this.shieldCooldownGroup = shieldCooldownGroup;
+			this.shieldStack = shieldStack;
+			this.shieldSlot = shieldSlot;
 		}
 	}
 
@@ -4556,6 +4651,42 @@ public final class ServerRaceSystem {
 		}
 	}
 
+		private static final class PuroSanJumpTrailSession {
+		private final long startTick;
+		private final long endTick;
+		private Vec3 lastTrailPosition;
+
+		private PuroSanJumpTrailSession(long startTick, long endTick, Vec3 lastTrailPosition) {
+			this.startTick = startTick;
+			this.endTick = endTick;
+			this.lastTrailPosition = lastTrailPosition;
+		}
+	}
+
+
+
+	private record PuroSanAttackDebuffSession(LivingEntity target, long endTick) {
+	}
+	private static final class PuroSanOverdriveSession {
+		private long chargeTicks;
+		private boolean active;
+		private double shieldHealth;
+		private double shieldMaxHealth;
+		private boolean jumpPressed;
+		private boolean sprintingLastTick;
+		private int wallSlideSuppressionTicks;
+		private final double[] horizontalSpeedSamples = new double[PURO_SAN_RUN_SPEED_SAMPLE_TICKS];
+		private int horizontalSpeedSampleIndex;
+		private int horizontalSpeedSampleCount;
+		private double horizontalSpeedSampleTotal;
+		private Vec3 lastPosition;
+
+		private PuroSanOverdriveSession(Vec3 lastPosition) {
+			this.lastPosition = lastPosition;
+		}
+	}
+private record KilkaDefenseProjectileDiversion(Vec3 forward, Vec3 bypassSide) {
+	}
 	private static final class KilkaSalmonFormSession {
 		private ResourceKey<Level> dimension;
 		private UUID visualSalmonId;
@@ -11157,6 +11288,98 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		return server.getWorldPath(LevelResource.ROOT).resolve("data").resolve(WOMAN_SHNYAGA_STATE_FILE_NAME);
 	}
 
+	private static void saveKilkaSalmonFormPlayers(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+		KilkaSalmonFormPersistedState state = new KilkaSalmonFormPersistedState();
+		state.players.addAll(KILKA_SALMON_FORM_PLAYERS);
+		writePersistedState(getKilkaSalmonFormStatePath(server), state, "kilka salmon forms");
+	}
+
+	private static void loadKilkaSalmonFormPlayers(MinecraftServer server) {
+		KILKA_SALMON_FORM_PLAYERS.clear();
+		if (server == null) {
+			return;
+		}
+		Path path = getKilkaSalmonFormStatePath(server);
+		if (!Files.exists(path)) {
+			return;
+		}
+		try (Reader reader = Files.newBufferedReader(path)) {
+			KilkaSalmonFormPersistedState state = GSON.fromJson(reader, KilkaSalmonFormPersistedState.class);
+			if (state != null && state.players != null) {
+				for (UUID playerId : state.players) {
+					if (playerId != null) {
+						KILKA_SALMON_FORM_PLAYERS.add(playerId);
+					}
+				}
+			}
+		} catch (Exception exception) {
+			Lg2.LOGGER.error("Failed to load kilka salmon forms from {}", path, exception);
+		}
+	}
+
+	private static void forgetKilkaSalmonForm(MinecraftServer server, UUID playerId) {
+		if (playerId != null && KILKA_SALMON_FORM_PLAYERS.remove(playerId)) {
+			saveKilkaSalmonFormPlayers(server);
+		}
+	}
+
+	private static Path getKilkaSalmonFormStatePath(MinecraftServer server) {
+		return server.getWorldPath(LevelResource.ROOT).resolve("data").resolve(KILKA_SALMON_FORM_STATE_FILE_NAME);
+	}
+
+	private static void saveMarkRageState(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+		MarkRagePersistedState state = new MarkRagePersistedState();
+		for (Map.Entry<UUID, Double> entry : MARK_RAGE_POINTS.entrySet()) {
+			if (entry.getKey() != null && entry.getValue() != null && entry.getValue() > 0.0D) {
+				state.points.put(entry.getKey(), entry.getValue());
+			}
+		}
+		writePersistedState(getMarkRageStatePath(server), state, "mark rage");
+	}
+
+	private static void loadMarkRageState(MinecraftServer server) {
+		MARK_RAGE_POINTS.clear();
+		if (server == null) {
+			return;
+		}
+		Path path = getMarkRageStatePath(server);
+		if (!Files.exists(path)) {
+			return;
+		}
+		try (Reader reader = Files.newBufferedReader(path)) {
+			MarkRagePersistedState state = GSON.fromJson(reader, MarkRagePersistedState.class);
+			if (state != null && state.points != null) {
+				for (Map.Entry<UUID, Double> entry : state.points.entrySet()) {
+					if (entry.getKey() != null && entry.getValue() != null && Double.isFinite(entry.getValue()) && entry.getValue() > 0.0D) {
+						MARK_RAGE_POINTS.put(entry.getKey(), entry.getValue());
+					}
+				}
+			}
+		} catch (Exception exception) {
+			Lg2.LOGGER.error("Failed to load mark rage from {}", path, exception);
+		}
+	}
+
+	private static Path getMarkRageStatePath(MinecraftServer server) {
+		return server.getWorldPath(LevelResource.ROOT).resolve("data").resolve(MARK_RAGE_STATE_FILE_NAME);
+	}
+
+	private static void writePersistedState(Path path, Object state, String stateName) {
+		try {
+			Files.createDirectories(path.getParent());
+			try (Writer writer = Files.newBufferedWriter(path)) {
+				GSON.toJson(state, writer);
+			}
+		} catch (IOException exception) {
+			Lg2.LOGGER.error("Failed to save {} state to {}", stateName, path, exception);
+		}
+	}
 	private static void tickLongPassiveEffectsPersistence(MinecraftServer server) {
 		if (server == null) {
 			return;
@@ -13051,7 +13274,7 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 
 		Identifier shieldCooldownGroup = ensureMarkShieldBashCooldownGroup(shield.stack());
 		freezeMarkShieldBashItemCooldown(player, shieldCooldownGroup);
-		performMarkShieldBash(level, player, ability, shield.profile(), shieldCooldownGroup);
+		performMarkShieldBash(level, player, ability, shield, shieldCooldownGroup);
 		Lg2.LOGGER.info("Player {} used mark shield bash '{}' from race '{}'", player.getGameProfile().name(), ability.abilityId, race.id);
 		return 1;
 	}
@@ -13105,10 +13328,10 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		}
 		MarkShieldBashProfile mainHand = getMarkShieldBashProfile(player.getMainHandItem());
 		if (mainHand != null) {
-			return new MarkShieldBashSelection(mainHand, player.getMainHandItem());
+			return new MarkShieldBashSelection(mainHand, player.getMainHandItem(), EquipmentSlot.MAINHAND);
 		}
 		MarkShieldBashProfile offHand = getMarkShieldBashProfile(player.getOffhandItem());
-		return offHand == null ? null : new MarkShieldBashSelection(offHand, player.getOffhandItem());
+		return offHand == null ? null : new MarkShieldBashSelection(offHand, player.getOffhandItem(), EquipmentSlot.OFFHAND);
 	}
 
 	private static MarkShieldBashProfile getMarkShieldBashProfile(ItemStack stack) {
@@ -13131,7 +13354,7 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		return null;
 	}
 
-	private static void performMarkShieldBash(ServerLevel level, ServerPlayer player, RaceAbilityConfig ability, MarkShieldBashProfile shield, Identifier shieldCooldownGroup) {
+	private static void performMarkShieldBash(ServerLevel level, ServerPlayer player, RaceAbilityConfig ability, MarkShieldBashSelection shield, Identifier shieldCooldownGroup) {
 		if (level == null || player == null || shield == null) {
 			return;
 		}
@@ -13146,22 +13369,22 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		}
 		double range = getMarkShieldBashRange(ability);
 		double angleDegrees = Math.max(0.0D, Math.min(180.0D, getMarkShieldBashAngleDegrees(ability)));
-		double knockbackBlocks = getMarkShieldBashKnockbackBlocks(ability, shield);
+		double knockbackBlocks = getMarkShieldBashKnockbackBlocks(ability, shield.profile());
 		if (horizontalLook.lengthSqr() > 1.0E-6D) {
 			horizontalLook = horizontalLook.normalize();
-			dashMarkShieldBashPlayer(level, player, horizontalLook, ability, range, angleDegrees, knockbackBlocks, shieldCooldownGroup);
+			dashMarkShieldBashPlayer(level, player, horizontalLook, ability, range, angleDegrees, knockbackBlocks, shield, shieldCooldownGroup);
 			spawnMarkShieldBashDashParticles(level, player, horizontalLook);
 		}
 	}
 
-	private static void dashMarkShieldBashPlayer(ServerLevel level, ServerPlayer player, Vec3 horizontalLook, RaceAbilityConfig ability, double range, double angleDegrees, double knockbackBlocks, Identifier shieldCooldownGroup) {
+	private static void dashMarkShieldBashPlayer(ServerLevel level, ServerPlayer player, Vec3 horizontalLook, RaceAbilityConfig ability, double range, double angleDegrees, double knockbackBlocks, MarkShieldBashSelection shield, Identifier shieldCooldownGroup) {
 		if (level == null || player == null || horizontalLook == null || horizontalLook.lengthSqr() <= 1.0E-6D) {
 			return;
 		}
 		Vec3 direction = horizontalLook.normalize();
 		double distance = Math.min(MARK_SHIELD_BASH_MAX_DASH_BLOCKS, Math.max(0.0D, getMarkShieldBashForwardImpulse(ability)));
 		if (distance <= 1.0E-6D) {
-			applyMarkShieldBashImpact(level, player, direction, range, angleDegrees, knockbackBlocks);
+			applyMarkShieldBashImpact(level, player, direction, range, angleDegrees, knockbackBlocks, shield.stack(), shield.slot());
 			startMarkShieldBashItemCooldown(player, shieldCooldownGroup);
 			return;
 		}
@@ -13177,7 +13400,9 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 				range,
 				angleDegrees,
 				knockbackBlocks,
-				shieldCooldownGroup
+				shieldCooldownGroup,
+				shield.stack(),
+				shield.slot()
 		));
 		Vec3 current = player.getDeltaMovement();
 		player.setDeltaMovement(
@@ -13226,7 +13451,7 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 				if (targetReached) {
 					stopMarkShieldBashNaturalImpulse(player, session.direction, session.naturalSpeed);
 				}
-				applyMarkShieldBashImpact(level, player, session.direction, session.range, session.angleDegrees, session.knockbackBlocks);
+				applyMarkShieldBashImpact(level, player, session.direction, session.range, session.angleDegrees, session.knockbackBlocks, session.shieldStack, session.shieldSlot);
 				startMarkShieldBashItemCooldown(player, session.shieldCooldownGroup);
 				iterator.remove();
 			}
@@ -13268,7 +13493,7 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		player.connection.send(new ClientboundSetEntityMotionPacket(player));
 	}
 
-	private static void applyMarkShieldBashImpact(ServerLevel level, ServerPlayer player, Vec3 horizontalLook, double range, double angleDegrees, double knockbackBlocks) {
+	private static void applyMarkShieldBashImpact(ServerLevel level, ServerPlayer player, Vec3 horizontalLook, double range, double angleDegrees, double knockbackBlocks, ItemStack shieldStack, EquipmentSlot shieldSlot) {
 		if (level == null || player == null || horizontalLook == null || horizontalLook.lengthSqr() <= 1.0E-6D || range <= 0.0D || knockbackBlocks <= 0.0D) {
 			return;
 		}
@@ -13277,13 +13502,37 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		AABB searchBox = player.getBoundingBox().inflate(range + 0.5D);
 		playMarkShieldBashImpactSound(level, player);
 		spawnMarkShieldBashImpactArcParticles(level, player, look);
+		double strongestBlockedAttackDamage = 0.0D;
+		boolean hitAnyTarget = false;
 		for (LivingEntity target : level.getEntitiesOfClass(LivingEntity.class, searchBox, target -> canMarkShieldBashHit(player, target))) {
 			if (!isMarkShieldBashTargetInSector(player, target, look, range, minDot)) {
 				continue;
 			}
 			knockMarkShieldBashTarget(player, target, knockbackBlocks, look);
 			spawnMarkShieldBashImpactParticles(level, target);
+			hitAnyTarget = true;
+			strongestBlockedAttackDamage = Math.max(strongestBlockedAttackDamage, getMarkShieldBashTargetAttackDamage(target));
 		}
+		if (hitAnyTarget) {
+			damageMarkShieldBashShield(player, shieldStack, shieldSlot, strongestBlockedAttackDamage);
+		}
+	}
+
+	private static double getMarkShieldBashTargetAttackDamage(LivingEntity target) {
+		if (target == null) {
+			return 0.0D;
+		}
+		AttributeInstance attackDamage = target.getAttribute(Attributes.ATTACK_DAMAGE);
+		return attackDamage == null ? 0.0D : Math.max(0.0D, attackDamage.getValue());
+	}
+
+	private static void damageMarkShieldBashShield(ServerPlayer player, ItemStack shieldStack, EquipmentSlot shieldSlot, double blockedAttackDamage) {
+		if (player == null || shieldStack == null || shieldStack.isEmpty() || shieldSlot == null || blockedAttackDamage < 3.0D) {
+			return;
+		}
+		// Vanilla shield blocking uses one durability point plus the whole blocked hit damage.
+		int durabilityDamage = 1 + Mth.floor(blockedAttackDamage);
+		shieldStack.hurtAndBreak(durabilityDamage, player, shieldSlot);
 	}
 
 	private static boolean isMarkShieldBashTargetInSector(ServerPlayer player, LivingEntity target, Vec3 look, double range, double minDot) {
@@ -14594,29 +14843,11 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		player.setAirSupply(air);
 	}
 
-	private static int useKilkaUnique(ServerPlayer player, PlayerRaceConfig race, RaceAbilityConfig ability) {
-		if (player == null || ability == null || !(player.level() instanceof ServerLevel level) || player.isSpectator() || !player.isAlive()) {
-			return 0;
+	private static boolean startKilkaSalmonForm(ServerPlayer player, RaceAbilityConfig ability, boolean playTransition) {
+		if (player == null || ability == null || !(player.level() instanceof ServerLevel level) || KILKA_SALMON_FORMS.containsKey(player.getUUID())) {
+			return false;
 		}
-		long remainingCooldownTicks = getRemainingGenericAbilityCooldownTicks(player, RaceAbilitySlot.UNIQUE_ABILITY);
-		if (displayRemainingCooldown(player, remainingCooldownTicks)) {
-			return 0;
-		}
-
 		UUID playerId = player.getUUID();
-		KilkaSalmonFormSession existing = KILKA_SALMON_FORMS.remove(playerId);
-		if (existing != null) {
-			cleanupKilkaSalmonForm(level.getServer(), playerId, existing, true);
-			startGenericAbilityCooldownSeconds(player, RaceAbilitySlot.UNIQUE_ABILITY, positiveOrDefault(ability.cooldownSeconds, KILKA_UNIQUE_DEFAULT_COOLDOWN_SECONDS));
-			return 1;
-		}
-
-		KilkaAttackChargeSession interruptedCharge = KILKA_ATTACK_CHARGES.remove(playerId);
-		if (interruptedCharge != null) {
-			cleanupKilkaAttackCharge(player);
-		}
-		KILKA_DEFENSE_SESSIONS.remove(playerId);
-
 		PlayerTeam originalCollisionTeam = player.getTeam();
 		KilkaSalmonFormSession session = new KilkaSalmonFormSession(
 				level.dimension(),
@@ -14635,9 +14866,76 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 			sendKilkaSalmonOwnerPassengerAttachment(player, visual);
 		}
 		KILKA_SALMON_FORMS.put(playerId, session);
+		KILKA_SALMON_FORM_PLAYERS.add(playerId);
+		saveKilkaSalmonFormPlayers(level.getServer());
 		applyKilkaSalmonScale(player, true);
 		hideKilkaSalmonPlayerFromOthers(player);
-		spawnMilkMousePoof(level, player.position(), 4);
+		if (playTransition) {
+			spawnMilkMousePoof(level, player.position(), 4);
+		}
+		return true;
+	}
+
+		private static void queueKilkaSalmonFormRestore(MinecraftServer server, ServerPlayer player) {
+		if (server == null || player == null || !KILKA_SALMON_FORM_PLAYERS.contains(player.getUUID())) {
+			return;
+		}
+		KILKA_SALMON_FORM_RESTORE_TICKS.put(player.getUUID(), server.overworld().getGameTime() + 2L);
+	}
+
+	private static void tickPendingKilkaSalmonFormRestores(MinecraftServer server) {
+		if (server == null || KILKA_SALMON_FORM_RESTORE_TICKS.isEmpty()) {
+			return;
+		}
+		long nowTick = server.overworld().getGameTime();
+		Iterator<Map.Entry<UUID, Long>> iterator = KILKA_SALMON_FORM_RESTORE_TICKS.entrySet().iterator();
+		while (iterator.hasNext()) {
+			Map.Entry<UUID, Long> entry = iterator.next();
+			if (entry.getValue() == null || nowTick < entry.getValue()) {
+				continue;
+			}
+			ServerPlayer player = server.getPlayerList().getPlayer(entry.getKey());
+			if (player != null) {
+				restoreKilkaSalmonFormAfterJoin(server, player);
+				refreshKilkaSalmonFormsForJoiningViewer(server, player);
+			}
+			iterator.remove();
+		}
+	}
+private static void restoreKilkaSalmonFormAfterJoin(MinecraftServer server, ServerPlayer player) {
+		if (server == null || player == null || !KILKA_SALMON_FORM_PLAYERS.contains(player.getUUID()) || KILKA_SALMON_FORMS.containsKey(player.getUUID())) {
+			return;
+		}
+		if (!canUseKilkaSalmonForm(player)) {
+			forgetKilkaSalmonForm(server, player.getUUID());
+			return;
+		}
+		getRace(player).ifPresent(race -> startKilkaSalmonForm(player, race.uniqueAbility, false));
+	}
+	private static int useKilkaUnique(ServerPlayer player, PlayerRaceConfig race, RaceAbilityConfig ability) {
+		if (player == null || ability == null || !(player.level() instanceof ServerLevel level) || player.isSpectator() || !player.isAlive()) {
+			return 0;
+		}
+		long remainingCooldownTicks = getRemainingGenericAbilityCooldownTicks(player, RaceAbilitySlot.UNIQUE_ABILITY);
+		if (displayRemainingCooldown(player, remainingCooldownTicks)) {
+			return 0;
+		}
+
+		UUID playerId = player.getUUID();
+		KilkaSalmonFormSession existing = KILKA_SALMON_FORMS.remove(playerId);
+		if (existing != null) {
+			cleanupKilkaSalmonForm(level.getServer(), playerId, existing, true);
+			forgetKilkaSalmonForm(level.getServer(), playerId);
+			startGenericAbilityCooldownSeconds(player, RaceAbilitySlot.UNIQUE_ABILITY, positiveOrDefault(ability.cooldownSeconds, KILKA_UNIQUE_DEFAULT_COOLDOWN_SECONDS));
+			return 1;
+		}
+
+		KilkaAttackChargeSession interruptedCharge = KILKA_ATTACK_CHARGES.remove(playerId);
+		if (interruptedCharge != null) {
+			cleanupKilkaAttackCharge(player);
+		}
+		KILKA_DEFENSE_SESSIONS.remove(playerId);
+		startKilkaSalmonForm(player, ability, true);
 		startGenericAbilityCooldownSeconds(player, RaceAbilitySlot.UNIQUE_ABILITY, positiveOrDefault(ability.cooldownSeconds, KILKA_UNIQUE_DEFAULT_COOLDOWN_SECONDS));
 		Lg2.LOGGER.info("Player {} toggled kilka unique '{}' from race '{}' into salmon form", player.getGameProfile().name(), ability.abilityId, race.id);
 		return 1;
@@ -14665,6 +14963,7 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 			}
 			if (!canUseKilkaSalmonForm(player)) {
 				cleanupKilkaSalmonForm(server, playerId, session, true);
+				forgetKilkaSalmonForm(server, playerId);
 				iterator.remove();
 				continue;
 			}
@@ -16415,6 +16714,749 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		}
 	}
 
+	private static void tickPuroSanOverdrive(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			Optional<PlayerRaceConfig> raceOptional = getRace(player);
+			if (raceOptional.isEmpty() || !PURO_SAN_RACE_ID.equals(sanitizePath(raceOptional.get().id))) {
+				clearPuroSanOverdrive(player);
+				continue;
+			}
+			PlayerRaceConfig race = raceOptional.get();
+			RaceAbilityConfig ability = getAbility(race, RaceAbilitySlot.SHNYAGA);
+			if (ability == null || !hasUnlockedAbility(player, race, RaceAbilitySlot.SHNYAGA)) {
+				clearPuroSanOverdrive(player);
+				continue;
+			}
+
+			PuroSanOverdriveSession session = PURO_SAN_OVERDRIVE_SESSIONS.computeIfAbsent(
+					player.getUUID(),
+					ignored -> new PuroSanOverdriveSession(player.position())
+			);
+			net.minecraft.world.entity.player.Input input = player.getLastClientInput();
+			boolean directionalInput = input.forward() || input.backward() || input.left() || input.right();
+			boolean dryRunningState = !player.isSwimming() && !player.isInWater() && !player.isPassenger();
+			boolean sprinting = player.isSprinting() || input.sprint();
+			Vec3 currentPosition = player.position();
+			if (sprinting != session.sprintingLastTick) {
+				resetPuroSanRunSpeedSamples(session);
+			}
+			double horizontalSpeed = samplePuroSanHorizontalSpeed(session, currentPosition);
+			boolean runningFasterThanWalk = horizontalSpeed > getPuroSanBaseWalkSpeedBlocksPerTick(player);
+			if (player.onGround()) {
+				session.wallSlideSuppressionTicks = 0;
+			} else if (session.wallSlideSuppressionTicks > 0) {
+				session.wallSlideSuppressionTicks--;
+			}
+			Vec3 wallJumpNormal = findPuroSanWallNormal(player, false);
+			Vec3 wallSlideNormal = findPuroSanWallNormal(player, true);
+			boolean wallSliding = session.active
+					&& session.wallSlideSuppressionTicks <= 0
+					&& !player.onGround()
+					&& directionalInput
+					&& wallSlideNormal.lengthSqr() > 1.0E-8D;
+			boolean maintainsRun = dryRunningState && directionalInput && runningFasterThanWalk;
+			boolean chargingRun = maintainsRun && sprinting;
+			syncPuroSanWallSlideGravity(player, wallSliding);
+
+			if (session.active) {
+				if (!player.isAlive() || !maintainsRun) {
+					stopPuroSanOverdrive(player);
+				} else {
+					syncPuroSanOverdriveSpeed(player, ability, session);
+					updatePuroSanOverdriveBossBar(player, session, false);
+					handlePuroSanWallMovement(player, session, input.jump(), wallSliding, wallJumpNormal);
+				}
+			} else {
+				boolean charging = player.isAlive() && chargingRun;
+				if (charging) {
+					session.chargeTicks++;
+				} else {
+					session.chargeTicks = 0L;
+				}
+				long requiredTicks = Math.max(1L, asTicks(positiveOrDefault(
+						ability.puroSanShnyagaChargeSeconds,
+						PURO_SAN_SHNYAGA_DEFAULT_CHARGE_SECONDS
+				)));
+				if (session.chargeTicks >= requiredTicks) {
+					startPuroSanOverdrive(player, ability, session);
+				}
+			}
+			session.lastPosition = currentPosition;
+			session.jumpPressed = input.jump();
+			session.sprintingLastTick = sprinting;
+		}
+	}
+
+	private static void startPuroSanOverdrive(ServerPlayer player, RaceAbilityConfig ability, PuroSanOverdriveSession session) {
+		PURO_SAN_OVERDRIVE_HEALTH_DAMAGE_PENDING.remove(player.getUUID());
+		session.active = true;
+		session.chargeTicks = 0L;
+		session.shieldMaxHealth = Math.max(0.0D, player.getMaxHealth() * positiveOrDefault(
+				ability.puroSanShnyagaShieldHealthRatio,
+				PURO_SAN_SHNYAGA_DEFAULT_SHIELD_HEALTH_RATIO
+		));
+		session.shieldHealth = session.shieldMaxHealth;
+		syncPuroSanOverdriveSpeed(player, ability, session);
+		updatePuroSanOverdriveBossBar(player, session, true);
+	}
+
+	private static void syncPuroSanOverdriveSpeed(ServerPlayer player, RaceAbilityConfig ability, PuroSanOverdriveSession session) {
+		if (!session.active) {
+			removeAttributeModifier(player.getAttribute(Attributes.MOVEMENT_SPEED), PURO_SAN_SHNYAGA_SPEED_MODIFIER_ID);
+			removeAttributeModifier(player.getAttribute(Attributes.GRAVITY), PURO_SAN_WALL_SLIDE_GRAVITY_MODIFIER_ID);
+			return;
+		}
+		double speedBonus = positiveOrDefault(
+				ability.puroSanShnyagaSpeedBonusRatio,
+				PURO_SAN_SHNYAGA_DEFAULT_SPEED_BONUS_RATIO
+		);
+		syncKilkaStockAttributeModifier(
+				player.getAttribute(Attributes.MOVEMENT_SPEED),
+				PURO_SAN_SHNYAGA_SPEED_MODIFIER_ID,
+				speedBonus,
+				AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL
+		);
+	}
+
+	private static double samplePuroSanHorizontalSpeed(PuroSanOverdriveSession session, Vec3 currentPosition) {
+		if (session == null || currentPosition == null) {
+			return 0.0D;
+		}
+		Vec3 previousPosition = session.lastPosition == null ? currentPosition : session.lastPosition;
+		double dx = currentPosition.x - previousPosition.x;
+		double dz = currentPosition.z - previousPosition.z;
+		double distance = Math.sqrt(dx * dx + dz * dz);
+		if (session.horizontalSpeedSampleCount == session.horizontalSpeedSamples.length) {
+			session.horizontalSpeedSampleTotal -= session.horizontalSpeedSamples[session.horizontalSpeedSampleIndex];
+		} else {
+			session.horizontalSpeedSampleCount++;
+		}
+		session.horizontalSpeedSamples[session.horizontalSpeedSampleIndex] = distance;
+		session.horizontalSpeedSampleTotal += distance;
+		session.horizontalSpeedSampleIndex = (session.horizontalSpeedSampleIndex + 1) % session.horizontalSpeedSamples.length;
+		return session.horizontalSpeedSampleTotal / Math.max(1, session.horizontalSpeedSampleCount);
+	}
+
+	private static void resetPuroSanRunSpeedSamples(PuroSanOverdriveSession session) {
+		if (session == null) {
+			return;
+		}
+		java.util.Arrays.fill(session.horizontalSpeedSamples, 0.0D);
+		session.horizontalSpeedSampleIndex = 0;
+		session.horizontalSpeedSampleCount = 0;
+		session.horizontalSpeedSampleTotal = 0.0D;
+	}
+	private static double getPuroSanBaseWalkSpeedBlocksPerTick(ServerPlayer player) {
+		AttributeInstance movementSpeed = player == null ? null : player.getAttribute(Attributes.MOVEMENT_SPEED);
+		if (movementSpeed == null) {
+			return 0.0D;
+		}
+		double basePuroSpeed = movementSpeed.getValue();
+		basePuroSpeed = removeTotalAttributeModifierFactor(
+				basePuroSpeed,
+				movementSpeed.getModifier(PURO_SAN_SHNYAGA_SPEED_MODIFIER_ID)
+		);
+		basePuroSpeed = removeTotalAttributeModifierFactor(
+				basePuroSpeed,
+				movementSpeed.getModifier(PURO_SAN_VANILLA_SPRINT_SPEED_MODIFIER_ID)
+		);
+		return Math.max(0.0D, basePuroSpeed);
+	}
+
+	private static double removeTotalAttributeModifierFactor(double value, AttributeModifier modifier) {
+		if (modifier == null || modifier.operation() != AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL) {
+			return value;
+		}
+		double factor = 1.0D + modifier.amount();
+		return Math.abs(factor) <= 1.0E-8D ? value : value / factor;
+	}
+	private static void handlePuroSanWallMovement(
+			ServerPlayer player,
+			PuroSanOverdriveSession session,
+			boolean jumpPressed,
+			boolean wallSliding,
+			Vec3 wallJumpNormal
+	) {
+		if (player.onGround()) {
+			return;
+		}
+		if (jumpPressed && !session.jumpPressed && wallJumpNormal.lengthSqr() > 1.0E-8D) {
+			Vec3 look = player.getLookAngle();
+			Vec3 jumpDirection = new Vec3(look.x, 0.0D, look.z);
+			if (jumpDirection.lengthSqr() > 1.0E-8D) {
+				jumpDirection = jumpDirection.normalize();
+				if (jumpDirection.dot(wallJumpNormal.normalize()) > 0.0D) {
+					removeAttributeModifier(player.getAttribute(Attributes.GRAVITY), PURO_SAN_WALL_SLIDE_GRAVITY_MODIFIER_ID);
+					session.wallSlideSuppressionTicks = 4;
+					boolean sprinting = player.isSprinting();
+					player.jumpFromGround();
+					if (!sprinting) {
+						player.addDeltaMovement(jumpDirection.scale(0.2D));
+					}
+					player.resetFallDistance();
+					player.hurtMarked = true;
+					player.connection.send(new ClientboundSetEntityMotionPacket(player));
+					return;
+				}
+			}
+		}
+		if (wallSliding) {
+			Vec3 movement = player.getDeltaMovement();
+			if (movement.y != PURO_SAN_WALL_SLIDE_MAX_FALL_SPEED) {
+				player.setDeltaMovement(movement.x, PURO_SAN_WALL_SLIDE_MAX_FALL_SPEED, movement.z);
+				player.hurtMarked = true;
+				player.connection.send(new ClientboundSetEntityMotionPacket(player));
+			}
+			player.resetFallDistance();
+		}
+	}
+
+	private static void syncPuroSanWallSlideGravity(ServerPlayer player, boolean wallSliding) {
+		AttributeInstance gravity = player == null ? null : player.getAttribute(Attributes.GRAVITY);
+		if (gravity == null) {
+			return;
+		}
+		if (!wallSliding) {
+			removeAttributeModifier(gravity, PURO_SAN_WALL_SLIDE_GRAVITY_MODIFIER_ID);
+			return;
+		}
+		AttributeModifier current = gravity.getModifier(PURO_SAN_WALL_SLIDE_GRAVITY_MODIFIER_ID);
+		double externalGravity = removeTotalAttributeModifierFactor(gravity.getValue(), current);
+		if (externalGravity <= 1.0E-8D) {
+			removeAttributeModifier(gravity, PURO_SAN_WALL_SLIDE_GRAVITY_MODIFIER_ID);
+			return;
+		}
+		syncKilkaStockAttributeModifier(
+				gravity,
+				PURO_SAN_WALL_SLIDE_GRAVITY_MODIFIER_ID,
+				PURO_SAN_WALL_SLIDE_GRAVITY / externalGravity - 1.0D,
+				AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL
+		);
+	}
+	private static Vec3 findPuroSanWallNormal(ServerPlayer player, boolean headLevel) {
+		if (player == null || !(player.level() instanceof ServerLevel level)) {
+			return Vec3.ZERO;
+		}
+		AABB box = player.getBoundingBox();
+		double sliceHeight = Math.min(PURO_SAN_WALL_PROBE_SLICE_HEIGHT, Math.max(0.1D, box.getYsize() * 0.25D));
+		double minY = headLevel ? box.maxY - sliceHeight : box.minY + 0.02D;
+		double maxY = headLevel ? box.maxY - 0.02D : box.minY + sliceHeight;
+		AABB probe = new AABB(box.minX, minY, box.minZ, box.maxX, maxY, box.maxZ);
+		double x = 0.0D;
+		double z = 0.0D;
+		if (!level.noBlockCollision(player, probe.move(PURO_SAN_WALL_PROBE_DISTANCE, 0.0D, 0.0D))) {
+			x -= 1.0D;
+		}
+		if (!level.noBlockCollision(player, probe.move(-PURO_SAN_WALL_PROBE_DISTANCE, 0.0D, 0.0D))) {
+			x += 1.0D;
+		}
+		if (!level.noBlockCollision(player, probe.move(0.0D, 0.0D, PURO_SAN_WALL_PROBE_DISTANCE))) {
+			z -= 1.0D;
+		}
+		if (!level.noBlockCollision(player, probe.move(0.0D, 0.0D, -PURO_SAN_WALL_PROBE_DISTANCE))) {
+			z += 1.0D;
+		}
+		return new Vec3(x, 0.0D, z);
+	}
+
+	private static void stopPuroSanOverdrive(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		PuroSanOverdriveSession session = PURO_SAN_OVERDRIVE_SESSIONS.get(player.getUUID());
+		if (session != null) {
+			session.active = false;
+			session.chargeTicks = 0L;
+			session.shieldHealth = 0.0D;
+			session.shieldMaxHealth = 0.0D;
+		}
+		removeAttributeModifier(player.getAttribute(Attributes.MOVEMENT_SPEED), PURO_SAN_SHNYAGA_SPEED_MODIFIER_ID);
+		removeAttributeModifier(player.getAttribute(Attributes.GRAVITY), PURO_SAN_WALL_SLIDE_GRAVITY_MODIFIER_ID);
+		hidePuroSanOverdriveBossBar(player);
+	}
+
+	private static void clearPuroSanOverdrive(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		PURO_SAN_OVERDRIVE_SESSIONS.remove(player.getUUID());
+		PURO_SAN_OVERDRIVE_HEALTH_DAMAGE_PENDING.remove(player.getUUID());
+		removeAttributeModifier(player.getAttribute(Attributes.MOVEMENT_SPEED), PURO_SAN_SHNYAGA_SPEED_MODIFIER_ID);
+		removeAttributeModifier(player.getAttribute(Attributes.GRAVITY), PURO_SAN_WALL_SLIDE_GRAVITY_MODIFIER_ID);
+		hidePuroSanOverdriveBossBar(player);
+	}
+
+	private static void updatePuroSanOverdriveBossBar(ServerPlayer player, PuroSanOverdriveSession session, boolean forcePriority) {
+		if (player == null || session == null || !session.active || session.shieldMaxHealth <= 0.0D) {
+			hidePuroSanOverdriveBossBar(player);
+			return;
+		}
+		ServerBossEvent bossBar = PURO_SAN_OVERDRIVE_BOSS_BARS.computeIfAbsent(
+				player.getUUID(),
+				ignored -> createPuroSanOverdriveBossBar(session.shieldMaxHealth)
+		);
+		int segments = Math.max(1, (int) Math.ceil(session.shieldMaxHealth));
+		bossBar.setName(buildPuroSanOverdriveBossBarTitle(session.shieldHealth, segments));
+		bossBar.setColor(BossEvent.BossBarColor.BLUE);
+		bossBar.setOverlay(getPuroSanOverdriveBossBarOverlay(segments));
+		bossBar.setProgress((float) Math.max(0.0D, Math.min(1.0D, session.shieldHealth / session.shieldMaxHealth)));
+		bossBar.setVisible(true);
+		boolean added = false;
+		if (!bossBar.getPlayers().contains(player)) {
+			bossBar.addPlayer(player);
+			added = true;
+		}
+		long gameTime = player.level() == null ? 0L : player.level().getGameTime();
+		if (forcePriority || added || gameTime % 20L == 0L) {
+			ServerStabilitySystem.reorderHudBelowExternalBossBar(player);
+			ServerBossBarVisibilitySystem.reorderTrackedBossBarsBelowReservedHud(player);
+		}
+	}
+
+	private static ServerBossEvent createPuroSanOverdriveBossBar(double maxShieldHealth) {
+		ServerBossEvent event = new ServerBossEvent(
+				Component.empty(),
+				BossEvent.BossBarColor.BLUE,
+				getPuroSanOverdriveBossBarOverlay(Math.max(1, (int) Math.ceil(maxShieldHealth)))
+		);
+		event.setDarkenScreen(false);
+		event.setPlayBossMusic(false);
+		event.setCreateWorldFog(false);
+		return event;
+	}
+
+	private static BossEvent.BossBarOverlay getPuroSanOverdriveBossBarOverlay(int segments) {
+		return switch (segments) {
+			case 6 -> BossEvent.BossBarOverlay.NOTCHED_6;
+			case 10 -> BossEvent.BossBarOverlay.NOTCHED_10;
+			case 12 -> BossEvent.BossBarOverlay.NOTCHED_12;
+			case 20 -> BossEvent.BossBarOverlay.NOTCHED_20;
+			default -> BossEvent.BossBarOverlay.PROGRESS;
+		};
+	}
+
+	private static Component buildPuroSanOverdriveBossBarTitle(double shieldHealth, int maxSegments) {
+		int displayedSegments = Math.min(40, Math.max(1, maxSegments));
+		MutableComponent title = Component.literal("\u0429\u0438\u0442 \u0440\u0430\u0437\u0433\u043e\u043d\u0430 ")
+				.withStyle(style -> style.withColor(0x55CCFF).withBold(true).withItalic(false));
+		for (int index = 0; index < displayedSegments; index++) {
+			double unitHealth = Math.max(0.0D, Math.min(1.0D, shieldHealth - index));
+			int color = unitHealth >= 1.0D ? 0x55CCFF : unitHealth > 0.0D ? 0x2F7F9F : 0x263A42;
+			title.append(Component.literal("|").withStyle(style -> style.withColor(color).withBold(true).withItalic(false)));
+		}
+		if (maxSegments > displayedSegments) {
+			title.append(Component.literal(" " + formatOneDecimal(shieldHealth) + "/" + maxSegments)
+					.withStyle(style -> style.withColor(0x55CCFF).withBold(false).withItalic(false)));
+		}
+		return title;
+	}
+
+	private static void hidePuroSanOverdriveBossBar(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		ServerBossEvent bossBar = PURO_SAN_OVERDRIVE_BOSS_BARS.remove(player.getUUID());
+		if (bossBar != null) {
+			bossBar.removeAllPlayers();
+		}
+	}
+
+	public static boolean isPuroSanOverdriveBossBar(ServerPlayer player, UUID bossBarId) {
+		if (player == null || bossBarId == null) {
+			return false;
+		}
+		ServerBossEvent bossBar = PURO_SAN_OVERDRIVE_BOSS_BARS.get(player.getUUID());
+		return bossBar != null && bossBar.getId().equals(bossBarId);
+	}
+	public static float absorbPuroSanOverdriveDamage(Player player, float damage) {
+		if (!(player instanceof ServerPlayer serverPlayer) || damage <= 0.0F) {
+			return damage;
+		}
+		PuroSanOverdriveSession session = PURO_SAN_OVERDRIVE_SESSIONS.get(serverPlayer.getUUID());
+		if (session == null || !session.active) {
+			return damage;
+		}
+		double absorbed = Math.min(session.shieldHealth, damage);
+		session.shieldHealth -= absorbed;
+		updatePuroSanOverdriveBossBar(serverPlayer, session, false);
+		float remaining = (float) Math.max(0.0D, damage - absorbed);
+		if (remaining > 0.0F) {
+			PURO_SAN_OVERDRIVE_HEALTH_DAMAGE_PENDING.add(serverPlayer.getUUID());
+		}
+		return remaining;
+	}
+
+	public static void copyPuroSanOverdriveHealing(LivingEntity entity, float requestedHealing) {
+		if (!(entity instanceof ServerPlayer player) || requestedHealing <= 0.0F) {
+			return;
+		}
+		PuroSanOverdriveSession session = PURO_SAN_OVERDRIVE_SESSIONS.get(player.getUUID());
+		if (session == null || !session.active || session.shieldHealth >= session.shieldMaxHealth) {
+			return;
+		}
+		double actualHealing = Math.min(requestedHealing, Math.max(0.0D, player.getMaxHealth() - player.getHealth()));
+		session.shieldHealth = Math.min(session.shieldMaxHealth, session.shieldHealth + actualHealing);
+		updatePuroSanOverdriveBossBar(player, session, false);
+	}
+
+	public static void handlePuroSanOverdriveCombatDamage(
+			ServerLevel level,
+			LivingEntity victim,
+			DamageSource source,
+			float damage,
+			boolean applied
+	) {
+		if (!applied || damage <= 0.0F) {
+			return;
+		}
+		if (victim instanceof ServerPlayer player) {
+			PuroSanOverdriveSession session = PURO_SAN_OVERDRIVE_SESSIONS.get(player.getUUID());
+			boolean healthDamagePassedShield = PURO_SAN_OVERDRIVE_HEALTH_DAMAGE_PENDING.remove(player.getUUID());
+			if (session != null && (!session.active || healthDamagePassedShield)) {
+				stopPuroSanOverdrive(player);
+			}
+		}
+		LivingEntity attacker = resolveDamageAttacker(source);
+		if (attacker instanceof ServerPlayer player && attacker != victim && PURO_SAN_OVERDRIVE_SESSIONS.containsKey(player.getUUID())) {
+			stopPuroSanOverdrive(player);
+		}
+	}
+
+	private static boolean isPuroSanOverdriveActive(ServerPlayer player) {
+		PuroSanOverdriveSession session = player == null ? null : PURO_SAN_OVERDRIVE_SESSIONS.get(player.getUUID());
+		return session != null && session.active;
+	}
+
+	public static boolean shouldPreventPuroSanOverdriveSprintExhaustion(Player player) {
+		return player instanceof ServerPlayer serverPlayer
+				&& isPuroSanOverdriveActive(serverPlayer)
+				&& serverPlayer.isSprinting()
+				&& !serverPlayer.isSwimming()
+				&& !serverPlayer.isInWater();
+	}
+
+	public static boolean shouldAllowPuroSanOverdriveSprint(Player player) {
+		return player instanceof ServerPlayer serverPlayer && isPuroSanOverdriveActive(serverPlayer);
+	}
+
+	private static int usePuroSanUnique(ServerPlayer player, PlayerRaceConfig race, RaceAbilityConfig ability) {
+		if (player == null || race == null || ability == null || !(player.level() instanceof ServerLevel level)) {
+			return 0;
+		}
+		if (displayGenericAbilityCooldown(player, RaceAbilitySlot.UNIQUE_ABILITY)) {
+			return 0;
+		}
+		Vec3 direction = player.getLookAngle();
+		if (direction.lengthSqr() <= 1.0E-8D) {
+			direction = Vec3.directionFromRotation(player.getXRot(), player.getYRot());
+		}
+		if (direction.lengthSqr() <= 1.0E-8D) {
+			return 0;
+		}
+		direction = direction.normalize();
+		double distance = positiveOrDefault(ability.puroSanUniqueDashBlocks, PURO_SAN_UNIQUE_DEFAULT_DASH_BLOCKS);
+		if (distance <= 1.0E-6D) {
+			return 0;
+		}
+		Vec3 horizontal = getPuroSanDashHorizontalDirection(player, direction);
+		stopPuroSanOverdrive(player);
+		spawnMarkShieldBashDashParticles(level, player, horizontal);
+		level.playSound(null, player.getX(), player.getY(), player.getZ(), SoundEvents.BREEZE_SHOOT, SoundSource.PLAYERS, 0.62F, 1.15F);
+		applyPuroSanUniqueDashVelocity(player, direction, PURO_SAN_UNIQUE_BASE_IMPULSE * Math.sqrt(distance));
+		PURO_SAN_JUMP_TRAIL_END_TICKS.put(player.getUUID(), new PuroSanJumpTrailSession(level.getGameTime(), level.getGameTime() + 20L, player.position()));
+		startGenericAbilityCooldown(player, RaceAbilitySlot.UNIQUE_ABILITY, ability);
+		Lg2.LOGGER.info("Player {} used puro san unique '{}' from race '{}'", player.getGameProfile().name(), ability.abilityId, race.id);
+		return 1;
+	}
+
+	private static Vec3 getPuroSanDashHorizontalDirection(ServerPlayer player, Vec3 direction) {
+		Vec3 horizontal = new Vec3(direction.x, 0.0D, direction.z);
+		if (horizontal.lengthSqr() <= 1.0E-8D) {
+			horizontal = Vec3.directionFromRotation(0.0F, player.getYRot());
+		}
+		return horizontal.normalize();
+	}
+
+	private static void applyPuroSanUniqueDashVelocity(ServerPlayer player, Vec3 direction, double speed) {
+		player.setDeltaMovement(player.getDeltaMovement().add(direction.scale(Math.max(0.0D, speed))));
+		player.hurtMarked = true;
+		player.connection.send(new ClientboundSetEntityMotionPacket(player));
+	}
+
+	private static int usePuroSanDefense(ServerPlayer player, PlayerRaceConfig race, RaceAbilityConfig ability) {
+		if (player == null || race == null || ability == null || player.level().isClientSide()) {
+			return 0;
+		}
+		if (displayGenericAbilityCooldown(player, RaceAbilitySlot.DEFENSE)) {
+			return 0;
+		}
+		ServerLevel level = (ServerLevel) player.level();
+		stopPuroSanOverdrive(player);
+		double jumpBlocks = positiveOrDefault(ability.puroSanDefenseJumpBlocks, PURO_SAN_DEFENSE_DEFAULT_JUMP_BLOCKS);
+		Vec3 horizontalLook = new Vec3(player.getLookAngle().x, 0.0D, player.getLookAngle().z);
+		if (horizontalLook.lengthSqr() <= 1.0E-8D) {
+			horizontalLook = Vec3.directionFromRotation(0.0F, player.getYRot());
+		}
+		horizontalLook = horizontalLook.normalize();
+		spawnMarkShieldBashDashParticles(level, player, horizontalLook);
+		level.playSound(null, player.getX(), player.getY(), player.getZ(), SoundEvents.WIND_CHARGE_BURST, SoundSource.PLAYERS, 1.05F, 0.72F);
+		double verticalVelocity = jumpBlocks * 0.135D;
+		player.setDeltaMovement(0.0D, verticalVelocity, 0.0D);
+		player.resetFallDistance();
+		player.hurtMarked = true;
+		player.connection.send(new ClientboundSetEntityMotionPacket(player));
+		PURO_SAN_DEFENSE_FALL_PROTECTION_END_TICKS.put(player.getUUID(), player.level().getGameTime() + PURO_SAN_DEFENSE_FALL_PROTECTION_TICKS);
+		PURO_SAN_JUMP_TRAIL_END_TICKS.put(player.getUUID(), new PuroSanJumpTrailSession(player.level().getGameTime(), player.level().getGameTime() + 100L, player.position()));
+		startGenericAbilityCooldown(player, RaceAbilitySlot.DEFENSE, ability);
+		Lg2.LOGGER.info("Player {} used puro san defense '{}' from race '{}'", player.getGameProfile().name(), ability.abilityId, race.id);
+		return 1;
+	}
+
+	public static boolean shouldCancelPuroSanDefenseFallDamage(ServerPlayer player, DamageSource damageSource) {
+		if (player == null || damageSource == null || !damageSource.is(DamageTypes.FALL)) {
+			return false;
+		}
+		Long endTick = PURO_SAN_DEFENSE_FALL_PROTECTION_END_TICKS.get(player.getUUID());
+		if (endTick == null) {
+			return false;
+		}
+		if (player.level().getGameTime() > endTick) {
+			PURO_SAN_DEFENSE_FALL_PROTECTION_END_TICKS.remove(player.getUUID());
+			return false;
+		}
+		PURO_SAN_DEFENSE_FALL_PROTECTION_END_TICKS.remove(player.getUUID());
+		player.resetFallDistance();
+		if (player.level() instanceof ServerLevel level) {
+			spawnMarkShieldBashDashParticles(level, player, getPuroSanDashHorizontalDirection(player, player.getLookAngle()));
+		}
+		return true;
+	}
+	private static int usePuroSanAttack(ServerPlayer player, PlayerRaceConfig race, RaceAbilityConfig ability) {
+		if (player == null || race == null || ability == null || player.level().isClientSide()) {
+			return 0;
+		}
+		if (displayGenericAbilityCooldown(player, RaceAbilitySlot.ATTACK)) {
+			return 0;
+		}
+		ServerLevel level = (ServerLevel) player.level();
+		stopPuroSanOverdrive(player);
+		double jumpBlocks = positiveOrDefault(ability.puroSanAttackBackJumpBlocks, PURO_SAN_ATTACK_DEFAULT_BACK_JUMP_BLOCKS);
+		double waveRadius = positiveOrDefault(ability.puroSanAttackWaveRadiusBlocks, PURO_SAN_ATTACK_DEFAULT_WAVE_RADIUS_BLOCKS);
+		double damage = positiveOrDefault(ability.puroSanAttackDamage, PURO_SAN_ATTACK_DEFAULT_DAMAGE);
+		long debuffTicks = Math.max(1L, Math.round(positiveOrDefault(ability.puroSanAttackDebuffSeconds, PURO_SAN_ATTACK_DEFAULT_DEBUFF_SECONDS) * 20.0D));
+		Vec3 origin = player.position();
+		Vec3 look = new Vec3(player.getLookAngle().x, 0.0D, player.getLookAngle().z);
+		if (look.lengthSqr() <= 1.0E-8D) {
+			look = Vec3.directionFromRotation(0.0F, player.getYRot());
+		}
+		look = look.normalize();
+		level.playSound(null, origin.x, origin.y, origin.z, SoundEvents.BREEZE_JUMP, SoundSource.PLAYERS, 1.0F, 0.9F);
+		applyPuroSanAttackWave(level, player, origin, look, waveRadius, damage, debuffTicks, jumpBlocks);
+		launchPuroSanBackward(player, look, jumpBlocks);
+		startGenericAbilityCooldown(player, RaceAbilitySlot.ATTACK, ability);
+		Lg2.LOGGER.info("Player {} used puro san attack '{}' from race '{}'", player.getGameProfile().name(), ability.abilityId, race.id);
+		return 1;
+	}
+
+	private static void launchPuroSanBackward(ServerPlayer player, Vec3 look, double distanceBlocks) {
+		if (player == null || look == null || distanceBlocks <= 0.0D) {
+			return;
+		}
+		double angle = Math.toRadians(PURO_SAN_ATTACK_JUMP_ANGLE_DEGREES);
+		double speed = distanceBlocks * PURO_SAN_ATTACK_BLOCKS_TO_VELOCITY;
+		Vec3 impulse = look.scale(-Math.cos(angle) * speed).add(0.0D, Math.sin(angle) * speed, 0.0D);
+		player.setDeltaMovement(player.getDeltaMovement().scale(0.15D).add(impulse));
+		player.hurtMarked = true;
+		player.connection.send(new ClientboundSetEntityMotionPacket(player));
+		PURO_SAN_JUMP_TRAIL_END_TICKS.put(player.getUUID(), new PuroSanJumpTrailSession(player.level().getGameTime(), player.level().getGameTime() + 40L, player.position()));
+	}
+
+	private static void applyPuroSanAttackWave(ServerLevel level, ServerPlayer player, Vec3 origin, Vec3 look, double radius, double damage, long debuffTicks, double jumpBlocks) {
+		if (level == null || player == null || origin == null || look == null || radius <= 0.0D) {
+			return;
+		}
+		spawnPuroSanAttackWaveParticles(level, origin, look, radius);
+		double reach = radius + 1.25D;
+		double minimumDot = Math.cos(Math.toRadians(PURO_SAN_ATTACK_WAVE_ANGLE_DEGREES * 0.5D));
+		for (LivingEntity target : level.getEntitiesOfClass(LivingEntity.class, new AABB(origin, origin).inflate(reach), target -> canPuroSanAttackHit(player, target, origin, look, radius, minimumDot))) {
+			if (damage > 0.0D) {
+				target.hurtServer(level, level.damageSources().magic(), (float) damage);
+			}
+			applyPuroSanAttackDebuff(target, level.getGameTime() + debuffTicks);
+			knockPuroSanAttackTarget(player, target, origin, jumpBlocks);
+		}
+	}
+
+	private static boolean canPuroSanAttackHit(ServerPlayer player, LivingEntity target, Vec3 origin, Vec3 look, double radius, double minimumDot) {
+		if (target == null || target == player || !target.isAlive() || target.isSpectator()) {
+			return false;
+		}
+		
+		// The shock wave occupies the two-block-high layer around Puro-San's body.
+		double waveBottom = origin.y;
+		double waveTop = waveBottom + 2.0D;
+		AABB targetBox = target.getBoundingBox();
+		if (targetBox.maxY < waveBottom || targetBox.minY > waveTop) {
+			return false;
+		}
+Vec3 offset = target.position().subtract(origin);
+		Vec3 horizontal = new Vec3(offset.x, 0.0D, offset.z);
+		double reach = radius + Math.max(target.getBbWidth(), 0.4D) * 0.5D;
+		if (horizontal.lengthSqr() > reach * reach) {
+			return false;
+		}
+		return horizontal.lengthSqr() <= 1.0E-8D || horizontal.normalize().dot(look) >= minimumDot;
+	}
+
+	private static void knockPuroSanAttackTarget(ServerPlayer player, LivingEntity target, Vec3 origin, double knockbackBlocks) {
+		if (player == null || target == null || origin == null || knockbackBlocks <= 0.0D) {
+			return;
+		}
+		Vec3 away = new Vec3(target.getX() - origin.x, 0.0D, target.getZ() - origin.z);
+		if (away.lengthSqr() <= 1.0E-8D) {
+			away = new Vec3(player.getLookAngle().x, 0.0D, player.getLookAngle().z);
+		}
+		if (away.lengthSqr() <= 1.0E-8D) {
+			away = Vec3.directionFromRotation(0.0F, player.getYRot());
+		}
+		double angle = Math.toRadians(PURO_SAN_ATTACK_KNOCKBACK_ANGLE_DEGREES);
+		double speed = knockbackBlocks * PURO_SAN_ATTACK_BLOCKS_TO_VELOCITY;
+		Vec3 impulse = away.normalize().scale(Math.cos(angle) * speed).add(0.0D, Math.sin(angle) * speed, 0.0D);
+		target.setDeltaMovement(impulse);
+		target.hurtMarked = true;
+		if (target instanceof ServerPlayer targetPlayer) {
+			targetPlayer.connection.send(new ClientboundSetEntityMotionPacket(targetPlayer));
+		}
+	}
+
+	private static void spawnPuroSanAttackWaveParticles(ServerLevel level, Vec3 origin, Vec3 look, double radius) {
+		if (level == null || origin == null || look == null || radius <= 0.0D) {
+			return;
+		}
+		Vec3 direction = look.normalize();
+		Vec3 side = new Vec3(-direction.z, 0.0D, direction.x);
+		DustParticleOptions bright = new DustParticleOptions(0xF1F5F8, 0.70F);
+		DustParticleOptions shadow = new DustParticleOptions(MARK_SHIELD_BASH_PARTICLE_COLOR, 0.54F);
+		double halfAngle = Math.toRadians(PURO_SAN_ATTACK_WAVE_ANGLE_DEGREES * 0.5D);
+		int bands = Math.max(4, (int) Math.ceil(radius * 1.5D));
+		int pointsPerBand = Math.max(19, (int) Math.ceil(radius * 8.0D));
+		for (int band = 1; band <= bands; band++) {
+			double distance = radius * band / (double) bands;
+			for (int point = 0; point < pointsPerBand; point++) {
+				double t = (double) point / (double) (pointsPerBand - 1);
+				double angle = -halfAngle + (2.0D * halfAngle * t);
+				Vec3 arcDirection = direction.scale(Math.cos(angle)).add(side.scale(Math.sin(angle)));
+				Vec3 pos = origin.add(arcDirection.scale(distance)).add(0.0D, 0.09D + Math.sin(Math.PI * t) * 0.11D, 0.0D);
+				level.sendParticles((band == bands || point % 3 == 0) ? bright : shadow, pos.x, pos.y, pos.z, 1, 0.006D, 0.012D, 0.006D, 0.0D);
+			}
+		}
+		for (int edge = -1; edge <= 1; edge += 2) {
+			Vec3 edgeDirection = direction.scale(Math.cos(halfAngle)).add(side.scale(Math.sin(halfAngle) * edge));
+			for (int point = 1; point <= pointsPerBand; point++) {
+				Vec3 pos = origin.add(edgeDirection.scale(radius * point / (double) pointsPerBand)).add(0.0D, 0.12D, 0.0D);
+				level.sendParticles(bright, pos.x, pos.y, pos.z, 1, 0.004D, 0.010D, 0.004D, 0.0D);
+			}
+		}
+	}
+
+	private static void applyPuroSanAttackDebuff(LivingEntity target, long endTick) {
+		if (target == null) {
+			return;
+		}
+		AttributeInstance movement = target.getAttribute(Attributes.MOVEMENT_SPEED);
+		if (movement != null) {
+			movement.removeModifier(PURO_SAN_ATTACK_MOVEMENT_SLOW_MODIFIER_ID);
+			movement.addTransientModifier(new AttributeModifier(PURO_SAN_ATTACK_MOVEMENT_SLOW_MODIFIER_ID, -0.5D, AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL));
+		}
+		AttributeInstance attackSpeed = target.getAttribute(Attributes.ATTACK_SPEED);
+		if (attackSpeed != null) {
+			attackSpeed.removeModifier(PURO_SAN_ATTACK_SPEED_SLOW_MODIFIER_ID);
+			attackSpeed.addTransientModifier(new AttributeModifier(PURO_SAN_ATTACK_SPEED_SLOW_MODIFIER_ID, -0.5D, AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL));
+		}
+		PURO_SAN_ATTACK_DEBUFFS.put(target.getUUID(), new PuroSanAttackDebuffSession(target, endTick));
+	}
+
+	private static void tickPuroSanAttackDebuffs(MinecraftServer server) {
+		if (server == null || PURO_SAN_ATTACK_DEBUFFS.isEmpty()) {
+			return;
+		}
+		long nowTick = server.overworld().getGameTime();
+		Iterator<Map.Entry<UUID, PuroSanAttackDebuffSession>> iterator = PURO_SAN_ATTACK_DEBUFFS.entrySet().iterator();
+		while (iterator.hasNext()) {
+			PuroSanAttackDebuffSession session = iterator.next().getValue();
+			if (session == null || session.target() == null || !session.target().isAlive() || nowTick >= session.endTick()) {
+				if (session != null && session.target() != null) {
+					removeAttributeModifier(session.target().getAttribute(Attributes.MOVEMENT_SPEED), PURO_SAN_ATTACK_MOVEMENT_SLOW_MODIFIER_ID);
+					removeAttributeModifier(session.target().getAttribute(Attributes.ATTACK_SPEED), PURO_SAN_ATTACK_SPEED_SLOW_MODIFIER_ID);
+				}
+				iterator.remove();
+			}
+		}
+	}
+
+
+
+	private static void tickPuroSanDefenseLandings(MinecraftServer server) {
+		if (server == null || PURO_SAN_DEFENSE_FALL_PROTECTION_END_TICKS.isEmpty()) {
+			return;
+		}
+		long nowTick = server.overworld().getGameTime();
+		Iterator<Map.Entry<UUID, Long>> iterator = PURO_SAN_DEFENSE_FALL_PROTECTION_END_TICKS.entrySet().iterator();
+		while (iterator.hasNext()) {
+			Map.Entry<UUID, Long> entry = iterator.next();
+			ServerPlayer player = server.getPlayerList().getPlayer(entry.getKey());
+			long endTick = entry.getValue() == null ? 0L : entry.getValue();
+			if (player == null || !player.isAlive() || nowTick > endTick) {
+				iterator.remove();
+				continue;
+			}
+			long activationTick = endTick - PURO_SAN_DEFENSE_FALL_PROTECTION_TICKS;
+			if (nowTick <= activationTick + 2L || !player.onGround() || !(player.level() instanceof ServerLevel level)) {
+				continue;
+			}
+			player.resetFallDistance();
+			spawnMarkShieldBashDashParticles(level, player, getPuroSanDashHorizontalDirection(player, player.getLookAngle()));
+			iterator.remove();
+		}
+	}
+
+	private static void tickPuroSanJumpTrails(MinecraftServer server) {
+		if (server == null || PURO_SAN_JUMP_TRAIL_END_TICKS.isEmpty()) {
+			return;
+		}
+		long nowTick = server.overworld().getGameTime();
+		Iterator<Map.Entry<UUID, PuroSanJumpTrailSession>> iterator = PURO_SAN_JUMP_TRAIL_END_TICKS.entrySet().iterator();
+		while (iterator.hasNext()) {
+			Map.Entry<UUID, PuroSanJumpTrailSession> entry = iterator.next();
+			PuroSanJumpTrailSession session = entry.getValue();
+			ServerPlayer player = server.getPlayerList().getPlayer(entry.getKey());
+			if (player == null || session == null || !player.isAlive() || (player.onGround() && nowTick > session.startTick + 2L) || nowTick >= session.endTick || !(player.level() instanceof ServerLevel level)) {
+				iterator.remove();
+				continue;
+			}
+			Vec3 current = player.position();
+			Vec3 delta = current.subtract(session.lastTrailPosition);
+			Vec3 horizontal = new Vec3(player.getLookAngle().x, 0.0D, player.getLookAngle().z);
+			if (horizontal.lengthSqr() > 1.0E-6D && (delta.x * delta.x + delta.z * delta.z > 1.0E-6D)) {
+				spawnMarkShieldBashTrailParticles(level, session.lastTrailPosition, current, horizontal.normalize(), player.getBbWidth());
+			} else if (Math.abs(delta.y) > 1.0E-4D) {
+				DustParticleOptions dust = new DustParticleOptions(MARK_SHIELD_BASH_PARTICLE_COLOR, 0.58F);
+				int samples = Math.max(2, Math.min(6, (int) Math.ceil(Math.abs(delta.y) / 0.24D)));
+				for (int i = 0; i < samples; i++) {
+					Vec3 pos = session.lastTrailPosition.lerp(current, (double) i / (double) (samples - 1));
+					level.sendParticles(dust, pos.x, pos.y + 0.12D, pos.z, 2, 0.12D, 0.01D, 0.12D, 0.0D);
+				}
+			}
+			session.lastTrailPosition = current;
+		}
+	}
+
+	private static void tickKilkaDefenseProjectileDeflection(MinecraftServer server) {
+		// Projectile diversion is calculated by tickKilkaDefense; no duplicate work here.
+	}
 	private static int useKilkaAttack(ServerPlayer player, PlayerRaceConfig race, RaceAbilityConfig ability) {
 		if (player == null || ability == null || !(player.level() instanceof ServerLevel level) || player.isSpectator() || !player.isAlive()) {
 			return 0;
@@ -17106,7 +18148,42 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		spawnKilkaDefenseProjectileResistanceParticles(level, projectile, movement);
 	}
 
-	private static void spawnKilkaDefenseProjectileResistanceParticles(ServerLevel level, Projectile projectile, Vec3 previousMovement) {
+	private static double getKilkaDefenseProjectileWaterInertia(Projectile projectile) {
+		// Vanilla AbstractArrow#getWaterInertia is 0.6F; throwable projectiles use 0.8F.
+		return projectile instanceof AbstractArrow ? 0.60D : 0.80D;
+	}
+	private static KilkaDefenseProjectileDiversion createKilkaDefenseProjectileDiversion(Vec3 start, Vec3 movement, Vec3 center) {
+		Vec3 forward = movement.normalize();
+		Vec3 closest = closestPointOnKilkaDefenseTrajectory(start, movement, center);
+		Vec3 bypassSide = closest.subtract(center);
+		bypassSide = bypassSide.subtract(forward.scale(bypassSide.dot(forward)));
+		if (bypassSide.lengthSqr() <= 1.0E-8D) {
+			Vec3 reference = Math.abs(forward.y) < 0.82D ? new Vec3(0.0D, 1.0D, 0.0D) : new Vec3(1.0D, 0.0D, 0.0D);
+			bypassSide = forward.cross(reference);
+		}
+		if (bypassSide.lengthSqr() <= 1.0E-8D) {
+			bypassSide = new Vec3(1.0D, 0.0D, 0.0D);
+		}
+		// A shot travelling mainly along the ground must go around the target to the
+		// left or right. Do not choose an upward/downward route that water gravity
+		// would immediately cancel.
+		if (forward.horizontalDistanceSqr() >= forward.y * forward.y) {
+			Vec3 horizontalBypass = new Vec3(bypassSide.x, 0.0D, bypassSide.z);
+			if (horizontalBypass.lengthSqr() <= 1.0E-8D) {
+				horizontalBypass = new Vec3(-forward.z, 0.0D, forward.x);
+			}
+			bypassSide = horizontalBypass;
+		}
+		return new KilkaDefenseProjectileDiversion(forward, bypassSide.normalize());
+	}
+
+	private static Vec3 closestPointOnKilkaDefenseTrajectory(Vec3 start, Vec3 movement, Vec3 center) {
+		if (start == null || movement == null || center == null || movement.lengthSqr() <= 1.0E-8D) {
+			return start == null ? Vec3.ZERO : start;
+		}
+		double progress = Mth.clamp(center.subtract(start).dot(movement) / movement.lengthSqr(), 0.0D, 1.0D);
+		return start.add(movement.scale(progress));
+	}	private static void spawnKilkaDefenseProjectileResistanceParticles(ServerLevel level, Projectile projectile, Vec3 previousMovement) {
 		if (level == null || projectile == null) {
 			return;
 		}
@@ -17268,7 +18345,14 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		if (isKilkaDefenseBypassDamage(damageSource)) {
 			return false;
 		}
-		if (damageSource.getDirectEntity() instanceof Projectile) {
+		if (damageSource.getDirectEntity() instanceof Projectile projectile) {
+			if (!(projectile instanceof ThrownTrident)) {
+				KilkaDefenseSession session = KILKA_DEFENSE_SESSIONS.get(player.getUUID());
+				if (session != null) {
+					sinkKilkaDefenseProjectile(level, projectile, getKilkaDefenseCenter(player), session.radius);
+				}
+				return true;
+			}
 			return false;
 		}
 

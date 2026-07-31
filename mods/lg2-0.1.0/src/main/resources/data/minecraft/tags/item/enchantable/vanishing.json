@@ -1,0 +1,11 @@
+{
+  "replace": false,
+  "values": [
+    "lg2:wooden_shield",
+    "lg2:stone_shield",
+    "lg2:copper_shield",
+    "lg2:golden_shield",
+    "lg2:diamond_shield",
+    "lg2:netherite_shield"
+  ]
+}

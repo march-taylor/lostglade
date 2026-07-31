@@ -2,6 +2,7 @@ package com.lostglade.mixin;
 
 import com.lostglade.item.CocaineItem;
 import com.lostglade.server.SeasonStartSystem;
+import com.lostglade.server.ServerRaceSystem;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.item.ItemEntity;
@@ -18,7 +19,7 @@ public abstract class PlayerCocaineSprintMixin {
 	@Inject(method = "canSprint", at = @At("HEAD"), cancellable = true)
 	private void lg2$allowCartelCocaineSprint(CallbackInfoReturnable<Boolean> cir) {
 		Player self = (Player) (Object) this;
-		if (CocaineItem.canCartelSprintDespiteHunger(self)) {
+		if (CocaineItem.canCartelSprintDespiteHunger(self) || ServerRaceSystem.shouldAllowPuroSanOverdriveSprint(self)) {
 			cir.setReturnValue(true);
 		}
 	}
