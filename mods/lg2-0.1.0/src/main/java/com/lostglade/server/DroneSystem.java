@@ -45,6 +45,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.Holder;
 import net.minecraft.core.particles.DustParticleOptions;
+import net.minecraft.core.particles.ParticleOptions;
 import net.minecraft.core.SectionPos;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -67,6 +68,7 @@ import net.minecraft.network.protocol.game.ClientboundSetPassengersPacket;
 import net.minecraft.network.protocol.game.ClientboundSetActionBarTextPacket;
 import net.minecraft.network.protocol.game.ClientboundContainerSetSlotPacket;
 import net.minecraft.network.protocol.game.ClientboundEntityPositionSyncPacket;
+import net.minecraft.network.protocol.game.ClientboundLevelParticlesPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEquipmentPacket;
 import net.minecraft.network.protocol.game.ClientboundSoundPacket;
@@ -228,6 +230,9 @@ public final class DroneSystem {
 	private static final double DRONE_UNCONTROLLED_SURFACE_WEAR_MULTIPLIER = 1.35D;
 	private static final double DRONE_COLLISION_SWEEP_STEP = 0.12D;
 	private static final int DRONE_SURFACE_WEAR_PARTICLE_INTERVAL_TICKS = 2;
+	private static final int DRONE_SURFACE_WEAR_PARTICLE_MULTIPLIER = 2;
+	private static final int DRONE_SUBMERGED_SURFACE_WEAR_PARTICLE_MULTIPLIER = 4;
+	private static final double VANILLA_PARTICLE_SEND_RANGE_SQR = 32.0D * 32.0D;
 	private static final float DRONE_WIDTH = DroneGeometry.WIDTH;
 	private static final float DRONE_HEIGHT = DroneGeometry.HEIGHT;
 	private static final float DRONE_CAMERA_ANCHOR_SIZE = 0.01F;
@@ -1592,6 +1597,7 @@ public final class DroneSystem {
 		root.verticalCollision = collisionState.verticalCollision();
 		root.verticalCollisionBelow = collisionState.verticalCollisionBelow();
 		root.hurtMarked = true;
+		playDroneSubmergedMotionEffects(root, actualVelocity, gameTime);
 
 		if (handleControlledServerCollision(player, root, session, intendedMovement, actualVelocity)) {
 			return;
@@ -2664,17 +2670,20 @@ public final class DroneSystem {
 		}
 		Vec3 currentPos = root.position();
 		Vec3 previousPos = currentPos.subtract(actualMovement == null ? Vec3.ZERO : actualMovement);
+		long gameTime = root.level() == null ? Long.MIN_VALUE : root.level().getGameTime();
 		if (isDroneCollisionWaterProtected(root, previousPos, intendedMovement)) {
+			// Water still protects the drone from collision damage, but a drone scraping
+			// the bottom must remain readable to its FPV operator.
+			playDroneSurfaceWearVisuals(root, intendedMovement, actualMovement, groundContact, gameTime);
 			return false;
 		}
 
 		float impactDamage = DroneImpactModel.computeImpactDamage(
 				intendedMovement,
-				actualMovement,
-				horizontalCollision,
-				verticalCollision
+			actualMovement,
+			horizontalCollision,
+			verticalCollision
 		);
-		long gameTime = root.level() == null ? Long.MIN_VALUE : root.level().getGameTime();
 		if (impactDamage > DroneImpactModel.CONTROL_IMPACT_BREAK_DAMAGE
 				|| updateControlledDroneSurfaceWear(session, root, intendedMovement, actualMovement, groundContact, gameTime)) {
 			destroyControlledDroneFromImpact(player, session, root);
@@ -3368,6 +3377,15 @@ public final class DroneSystem {
 		if (slimeBounce) {
 			actualMovement = root.getDeltaMovement();
 		}
+		if (waterProtectedImpact && !slimeBounce) {
+			playDroneSurfaceWearVisuals(
+					root,
+					velocity,
+					actualMovement,
+					hasUncontrolledSurfaceWearGroundContact(root),
+					gameTime
+			);
+		}
 
 		if (!waterProtectedImpact
 				&& !slimeBounce
@@ -3800,6 +3818,70 @@ public final class DroneSystem {
 		return root != null && (root.onGround() || root.verticalCollisionBelow || hasSupportingBlockBelow(root));
 	}
 
+	/**
+	 * Water cancels collision damage, not the visual feedback of the hull rubbing
+	 * along the bottom. Keep that feedback separate from real wear so a submerged
+	 * drone cannot be destroyed merely by showing particles.
+	 */
+	private static void playDroneSurfaceWearVisuals(
+			Entity root,
+			Vec3 intendedMovement,
+			Vec3 actualMovement,
+			boolean verifiedGroundContact,
+			long gameTime
+	) {
+		if (root == null || intendedMovement == null || actualMovement == null || !verifiedGroundContact) {
+			return;
+		}
+		DroneImpactModel.SurfaceWear surfaceWear = DroneImpactModel.computeSurfaceWear(
+				intendedMovement,
+				actualMovement,
+				true
+		);
+		if (surfaceWear.delta() <= 0.0D) {
+			return;
+		}
+		playDroneSurfaceWearEffects(
+				root,
+				actualMovement,
+				surfaceWear.speedFactor(),
+				surfaceWear.pressureFactor(),
+				surfaceWear.delta(),
+				0.0D,
+				gameTime
+		);
+	}
+
+	/**
+	 * A drone moving through water needs a continuous wake, not only the one
+	 * collision effect emitted when it first enters the fluid. This is visual
+	 * only; water continues to prevent actual surface-wear damage.
+	 */
+	private static void playDroneSubmergedMotionEffects(Entity root, Vec3 movement, long gameTime) {
+		if (root == null || movement == null || !(root.level() instanceof ServerLevel level)
+				|| !boxIntersectsFluid(level, root.getBoundingBox(), FluidTags.WATER)) {
+			return;
+		}
+		double speed = movement.length();
+		if (speed < 0.012D) {
+			return;
+		}
+		double speedFactor = net.minecraft.util.Mth.clamp(
+				speed / DroneFlightPhysics.MAX_COMBINED_SPEED,
+				0.18D,
+				1.0D
+		);
+		playDroneSurfaceWearEffects(
+				root,
+				movement,
+				speedFactor,
+				0.18D,
+				0.01D,
+				0.0D,
+				gameTime
+		);
+	}
+
 	private static void playDroneSurfaceWearEffects(
 			Entity root,
 			Vec3 actualMovement,
@@ -3831,18 +3913,25 @@ public final class DroneSystem {
 		double wearRatio = net.minecraft.util.Mth.clamp(surfaceWearLevel / DroneImpactModel.SURFACE_WEAR_BREAK_LEVEL, 0.0D, 1.0D);
 		double dangerRatio = wearRatio * wearRatio;
 		double spraySpeed = 0.012D + scrapeStrength * 0.042D;
-		int smokeCount = 1 + (int) Math.round(scrapeStrength * 2.5D + dangerRatio * 2.0D);
+		boolean submerged = boxIntersectsFluid(level, root.getBoundingBox(), FluidTags.WATER);
+		int particleMultiplier = submerged
+				? DRONE_SUBMERGED_SURFACE_WEAR_PARTICLE_MULTIPLIER
+				: DRONE_SURFACE_WEAR_PARTICLE_MULTIPLIER;
+		int smokeCount = particleMultiplier * (1 + (int) Math.round(scrapeStrength * 2.5D + dangerRatio * 2.0D));
 		int flameCount = pressureFactor > 0.12D || wearRatio > 0.30D
 				? 1 + (int) Math.floor(scrapeStrength * pressureFactor * 2.0D + dangerRatio * 1.5D)
 				: 0;
-		int dustCount = 1 + (int) Math.round(scrapeStrength * 3.0D + dangerRatio * 3.0D);
+		flameCount *= particleMultiplier;
+		int dustCount = particleMultiplier * (1 + (int) Math.round(scrapeStrength * 3.0D + dangerRatio * 3.0D));
 		DustParticleOptions dust = new DustParticleOptions(
 				resolveDroneSurfaceWearDustColor(root),
-				0.75F + (float) (scrapeStrength * 0.32D + dangerRatio * 0.18D)
+				(0.75F + (float) (scrapeStrength * 0.32D + dangerRatio * 0.18D))
+						* (submerged ? 1.12F : 1.0F)
 		);
 
-		level.sendParticles(
-				ParticleTypes.SMOKE,
+		sendDroneSurfaceWearParticles(
+				root,
+				submerged ? ParticleTypes.BUBBLE : ParticleTypes.SMOKE,
 				particleX,
 				particleY + 0.03D,
 				particleZ,
@@ -3853,8 +3942,9 @@ public final class DroneSystem {
 				spraySpeed
 		);
 		if (flameCount > 0) {
-			level.sendParticles(
-					ParticleTypes.FLAME,
+			sendDroneSurfaceWearParticles(
+					root,
+					submerged ? ParticleTypes.BUBBLE : ParticleTypes.FLAME,
 					particleX,
 					particleY + 0.02D,
 					particleZ,
@@ -3865,7 +3955,8 @@ public final class DroneSystem {
 					spraySpeed * 0.85D
 			);
 		}
-		level.sendParticles(
+		sendDroneSurfaceWearParticles(
+				root,
 				dust,
 				particleX,
 				particleY + 0.01D,
@@ -3876,6 +3967,53 @@ public final class DroneSystem {
 				0.07D + scrapeStrength * 0.07D,
 				0.004D + scrapeStrength * 0.010D
 		);
+	}
+
+	/** Sends normal local particles and explicitly mirrors them to the FPV operator.
+	 * ServerLevel's normal fan-out stops at 32 blocks from the operator's physical
+	 * body, while its camera can be hundreds of blocks away at the drone. */
+	private static <T extends ParticleOptions> void sendDroneSurfaceWearParticles(
+			Entity root,
+			T particle,
+			double x,
+			double y,
+			double z,
+			int count,
+			double xDist,
+			double yDist,
+			double zDist,
+			double maxSpeed
+	) {
+		if (root == null || particle == null || !(root.level() instanceof ServerLevel level) || count <= 0) {
+			return;
+		}
+		level.sendParticles(particle, x, y, z, count, xDist, yDist, zDist, maxSpeed);
+
+		UUID controllerId = CONTROLLERS_BY_DRONE.get(root.getUUID());
+		ServerPlayer controller = controllerId == null || level.getServer() == null
+				? null
+				: level.getServer().getPlayerList().getPlayer(controllerId);
+		if (controller == null || controller.connection == null || controller.level() != level
+				|| controller.position().distanceToSqr(x, y, z) <= VANILLA_PARTICLE_SEND_RANGE_SQR) {
+			return;
+		}
+
+		// Send directly rather than via ServerLevel#sendParticles(player, ...): that
+		// overload still imposes vanilla's 512-block cap. The controller's camera and
+		// its loaded drone view are the authoritative visibility context here.
+		controller.connection.send(new ClientboundLevelParticlesPacket(
+				particle,
+				true,
+				true,
+				x,
+				y,
+				z,
+				(float) xDist,
+				(float) yDist,
+				(float) zDist,
+				(float) maxSpeed,
+				count
+		));
 	}
 
 	private static void decayControlledDroneSurfaceWear(DroneControlSession session, long gameTime) {
@@ -5853,19 +5991,44 @@ public final class DroneSystem {
 				gameTime / DRONE_HUD_GLITCH_IDLE_FRAME_TICKS,
 				DRONE_HUD_GLITCH_IDLE_FRAME_COUNT
 		);
-		return buildDroneHudGlitchTitle(DRONE_HUD_GLITCH_IDLE_GLYPH_BASE + frame * DRONE_HUD_GLITCH_TILES_PER_FRAME);
+		int firstTileGlyph = DRONE_HUD_GLITCH_IDLE_GLYPH_BASE + frame * DRONE_HUD_GLITCH_TILES_PER_FRAME;
+		if (!isControlledDroneSubmerged(player)) {
+			return buildDroneHudGlitchTitle(firstTileGlyph);
+		}
+		// Use the exact same high-density frames as the drone-destruction burst,
+		// cycling them while submerged instead of showing the light idle noise.
+		int burstFrame = (int) Math.floorMod(gameTime, DRONE_HUD_GLITCH_BURST_FRAME_COUNT);
+		return buildDroneHudGlitchBurstTitle(burstFrame);
 	}
 
-	private static Component buildDroneHudGlitchTitle(int firstTileGlyph) {
-		StringBuilder glyphs = new StringBuilder(DRONE_HUD_GLITCH_TILES_PER_FRAME + 1);
-		for (int tile = 0; tile < DRONE_HUD_GLITCH_TILES_PER_FRAME / 2; tile++) {
-			glyphs.append((char) (firstTileGlyph + tile));
+	private static Component buildDroneHudGlitchTitle(int... firstTileGlyphs) {
+		if (firstTileGlyphs == null || firstTileGlyphs.length == 0) {
+			return Component.empty();
 		}
-		glyphs.append(DRONE_HUD_GLITCH_ROW_REWIND_GLYPH);
-		for (int tile = DRONE_HUD_GLITCH_TILES_PER_FRAME / 2; tile < DRONE_HUD_GLITCH_TILES_PER_FRAME; tile++) {
-			glyphs.append((char) (firstTileGlyph + tile));
+		StringBuilder glyphs = new StringBuilder((DRONE_HUD_GLITCH_TILES_PER_FRAME + 2) * firstTileGlyphs.length);
+		for (int frameIndex = 0; frameIndex < firstTileGlyphs.length; frameIndex++) {
+			if (frameIndex > 0) {
+				// Each tile frame ends one full screen-width to the right. Rewind before
+				// drawing the next frame so both occupy the same HUD area.
+				glyphs.append(DRONE_HUD_GLITCH_ROW_REWIND_GLYPH);
+			}
+			int firstTileGlyph = firstTileGlyphs[frameIndex];
+			for (int tile = 0; tile < DRONE_HUD_GLITCH_TILES_PER_FRAME / 2; tile++) {
+				glyphs.append((char) (firstTileGlyph + tile));
+			}
+			glyphs.append(DRONE_HUD_GLITCH_ROW_REWIND_GLYPH);
+			for (int tile = DRONE_HUD_GLITCH_TILES_PER_FRAME / 2; tile < DRONE_HUD_GLITCH_TILES_PER_FRAME; tile++) {
+				glyphs.append((char) (firstTileGlyph + tile));
+			}
 		}
 		return styleDroneHudGlitch(Component.literal(glyphs.toString()));
+	}
+
+	private static boolean isControlledDroneSubmerged(ServerPlayer player) {
+		Entity root = resolveControlledDroneRoot(player);
+		return root != null
+				&& root.level() instanceof ServerLevel level
+				&& boxIntersectsFluid(level, root.getBoundingBox(), FluidTags.WATER);
 	}
 
 	private static Component styleDroneHudOverlay(Component component) {

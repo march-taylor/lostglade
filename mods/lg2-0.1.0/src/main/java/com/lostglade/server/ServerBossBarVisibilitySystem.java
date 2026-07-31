@@ -91,14 +91,31 @@ public final class ServerBossBarVisibilitySystem {
 				|| ServerRaceSystem.isPuroSanOverdriveBossBar(receiver, update.id);
 		PlayerBossBarState state = PLAYER_STATES.computeIfAbsent(receiver.getUUID(), id -> new PlayerBossBarState());
 
+		// Reserved HUD bars used to bypass this state machine entirely. Their REMOVE
+		// and UPDATE_NAME packets can still cross during drone teardown, however, and
+		// 1.21.11 crashes the client on the resulting update-for-missing-id. Track
+		// them too; they merely skip the external-bar title composition below.
 		if (reservedHud) {
-			return packet;
+			applyPacketUpdate(state, update);
+			if (update.type.isUpdate() && !state.clientVisibleBossBars.contains(update.id)) {
+				return null;
+			}
+			return safeFullStatePacket(state, update, null, packet);
 		}
 
 		applyPacketUpdate(state, update);
+		// The vanilla client dereferences the bossbar map for every UPDATE_* packet.
+		// Unlike REMOVE, an update for an id it has not received an ADD for is a hard
+		// client crash in 1.21.11. This can happen around the drone HUD teardown: the
+		// real bar may have been removed and re-added while packets from the same tick
+		// are still being composed. Never forward such an orphaned update.
+		if (update.type.isUpdate() && !state.clientVisibleBossBars.contains(update.id)) {
+			return null;
+		}
+
 		Component overlayTitle = DroneSystem.getHudOverlayTitle(receiver);
 		if (overlayTitle == null) {
-			return packet;
+			return safeFullStatePacket(state, update, null, packet);
 		}
 
 		DroneSystem.suspendHudOverlayForExternalBossBar(receiver);
@@ -109,17 +126,32 @@ public final class ServerBossBarVisibilitySystem {
 			return packet;
 		}
 
-		if (update.type == BossBarPacketType.ADD || update.type == BossBarPacketType.UPDATE_NAME) {
-			TrackedBossBar bossBar = state.activeBossBars.get(update.id);
-			if (bossBar != null && state.clientVisibleBossBars.contains(update.id)) {
-				BossEvent rewrittenBossBar = bossBar.toBossEvent(withDroneOverlayTitle(bossBar.name, overlayTitle));
-				return update.type == BossBarPacketType.ADD
-						? ClientboundBossEventPacket.createAddPacket(rewrittenBossBar)
-						: ClientboundBossEventPacket.createUpdateNamePacket(rewrittenBossBar);
-			}
-		}
+		return safeFullStatePacket(state, update, overlayTitle, packet);
+	}
 
-		return packet;
+	/**
+	 * Re-send the complete current state for updates instead of a fragile UPDATE_*
+	 * packet. ADD is idempotent on the client (it replaces the entry by UUID), while
+	 * UPDATE_* crashes when the previous REMOVE reached the client before a delayed
+	 * re-ADD. That exact ordering is possible when a controlled drone is destroyed.
+	 */
+	private static ClientboundBossEventPacket safeFullStatePacket(
+			PlayerBossBarState state,
+			BossBarPacketUpdate update,
+			Component overlayTitle,
+			ClientboundBossEventPacket fallback
+	) {
+		if (!update.type.isUpdate()) {
+			return fallback;
+		}
+		TrackedBossBar bossBar = state.activeBossBars.get(update.id);
+		if (bossBar == null) {
+			return null;
+		}
+		Component title = overlayTitle == null
+				? bossBar.name
+				: withDroneOverlayTitle(bossBar.name, overlayTitle);
+		return ClientboundBossEventPacket.createAddPacket(bossBar.toBossEvent(title));
 	}
 
 	/**
@@ -143,7 +175,9 @@ public final class ServerBossBarVisibilitySystem {
 			if (!state.clientVisibleBossBars.contains(bossBar.id)) {
 				continue;
 			}
-			sendSyntheticPacket(player, ClientboundBossEventPacket.createUpdateNamePacket(
+			// A synthetic UPDATE_NAME can arrive after an external bar's REMOVE. Use
+			// ADD: it is safe both for a present bar and for a just-removed one.
+			sendSyntheticPacket(player, ClientboundBossEventPacket.createAddPacket(
 					bossBar.toBossEvent(withDroneOverlayTitle(bossBar.name, overlayTitle))
 			));
 		}
@@ -164,7 +198,7 @@ public final class ServerBossBarVisibilitySystem {
 			if (!state.clientVisibleBossBars.contains(bossBar.id)) {
 				continue;
 			}
-			sendSyntheticPacket(player, ClientboundBossEventPacket.createUpdateNamePacket(bossBar.toBossEvent()));
+			sendSyntheticPacket(player, ClientboundBossEventPacket.createAddPacket(bossBar.toBossEvent()));
 		}
 	}
 
@@ -339,7 +373,11 @@ public final class ServerBossBarVisibilitySystem {
 		UPDATE_PROGRESS,
 		UPDATE_NAME,
 		UPDATE_STYLE,
-		UPDATE_PROPERTIES
+		UPDATE_PROPERTIES;
+
+		private boolean isUpdate() {
+			return this != ADD && this != REMOVE;
+		}
 	}
 
 	private static final class PlayerBossBarState {
