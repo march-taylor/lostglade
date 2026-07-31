@@ -56,6 +56,7 @@ import com.lostglade.server.ServerVoicechatIntegration;
 import com.lostglade.server.ServerWebcamIntegration;
 import com.lostglade.server.YandexMapMarkerStore;
 import com.lostglade.worldgen.ModWorldGen;
+import net.fabricmc.api.EnvType;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.loader.api.FabricLoader;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
@@ -74,6 +75,11 @@ public class Lg2 implements ModInitializer {
 
 	@Override
 	public void onInitialize() {
+		// The client companion contains its own entrypoint.  Do not load server-only systems
+		// (and their server-side integrations) into a regular player client.
+		if (FabricLoader.getInstance().getEnvironmentType() == EnvType.CLIENT) {
+			return;
+		}
 		Lg2Config.load();
 		SeasonStartConfig.load();
 		CameraMediaCache.initialize(FabricLoader.getInstance().getGameDir());

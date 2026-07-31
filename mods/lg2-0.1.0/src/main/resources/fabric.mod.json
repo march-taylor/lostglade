@@ -26,9 +26,16 @@
 		]
 	},
 	"mixins": [
-		"lg2.mixins.json",
+		{
+			"config": "lg2.mixins.json",
+			"environment": "server"
+		},
 		{
 			"config": "lg2.client.mixins.json",
+			"environment": "client"
+		},
+		{
+			"config": "lg2.absolute_invisibility.client.mixins.json",
 			"environment": "client"
 		}
 	],
@@ -36,16 +43,6 @@
 		"fabricloader": ">=0.18.4",
 		"minecraft": "~1.21.11",
 		"java": ">=21",
-		"fabric-api": "*",
-		"polymer-core": "*",
-		"polymer-blocks": "*",
-		"polymer-resource-pack": "*",
-		"cardinal-components": "*",
-		"skinrestorer": "*"
-	},
-	"suggests": {
-		"tab": "*",
-		"voicechat": "*",
-		"webcam": "*"
+		"fabric-api": "*"
 	}
 }

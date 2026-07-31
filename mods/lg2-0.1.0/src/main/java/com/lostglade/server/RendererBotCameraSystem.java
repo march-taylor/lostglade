@@ -1895,18 +1895,40 @@ public final class RendererBotCameraSystem {
 			Vec3 cameraPosition = DroneSystem.isDroneCameraAnchor(target.followTarget())
 					? target.followTarget().position()
 					: target.followTarget().getEyePosition(1.0F);
+			float cameraBankRadians = DroneSystem.isDroneCameraAnchor(target.followTarget())
+					? droneCameraBankRadians(target.followTarget())
+					: 0.0F;
 			ServerPlayNetworking.send(
 					bot,
 					new RendererBotPayloads.RendererBotLiveStreamPoseS2CPayload(
 							stream.streamId(),
 							cameraPosition.x,
 							cameraPosition.y,
-							cameraPosition.z,
-							target.yaw(),
-							target.pitch()
+						cameraPosition.z,
+						target.yaw(),
+						target.pitch(),
+						cameraBankRadians
 					)
 			);
 		}
+	}
+
+	private static float droneCameraBankRadians(Entity cameraAnchor) {
+		if (cameraAnchor == null) {
+			return 0.0F;
+		}
+		Vec3 look = cameraAnchor.getLookAngle();
+		Vec3 velocity = cameraAnchor.getDeltaMovement();
+		double lookHorizontal = look.x * look.x + look.z * look.z;
+		double velocityHorizontal = velocity.x * velocity.x + velocity.z * velocity.z;
+		if (lookHorizontal <= 6.25E-6D || velocityHorizontal <= 6.25E-6D) {
+			return 0.0F;
+		}
+		double cosine = (velocity.x * look.x + velocity.z * look.z) / Math.sqrt(lookHorizontal * velocityHorizontal);
+		cosine = Mth.clamp(cosine, -1.0D, 1.0D);
+		double sign = -Math.signum(velocity.x * look.z - velocity.z * look.x);
+		double degrees = Mth.clamp(Math.atan(Math.sqrt(velocityHorizontal) * Math.acos(Math.abs(cosine)) * 1.25D) * sign * Mth.RAD_TO_DEG, -32.0D, 32.0D);
+		return (float) (degrees * Mth.DEG_TO_RAD);
 	}
 
 	private static boolean hasActiveShadowSyncWork(MinecraftServer server) {

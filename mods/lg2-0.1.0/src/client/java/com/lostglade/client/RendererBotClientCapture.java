@@ -184,9 +184,10 @@ public final class RendererBotClientCapture {
 				session.updatePose(new LiveStreamPose(
 						payload.x(),
 						payload.y(),
-						payload.z(),
-						payload.yaw(),
-						payload.pitch()
+					payload.z(),
+					payload.yaw(),
+					payload.pitch(),
+					payload.cameraBankRadians()
 				));
 			}
 		}
@@ -1389,7 +1390,8 @@ public final class RendererBotClientCapture {
 				false,
 				false,
 				0.0D,
-				0.0D
+				0.0D,
+				0.0F
 		);
 	}
 
@@ -1413,7 +1415,8 @@ public final class RendererBotClientCapture {
 				pose != null,
 				false,
 				0.0D,
-				0.0D
+				0.0D,
+				pose == null ? 0.0F : pose.cameraBankRadians()
 		);
 	}
 
@@ -1637,7 +1640,7 @@ public final class RendererBotClientCapture {
 		}
 	}
 
-	private record LiveStreamPose(double x, double y, double z, float yaw, float pitch) {
+	private record LiveStreamPose(double x, double y, double z, float yaw, float pitch, float cameraBankRadians) {
 	}
 
 	private record CapturedFrame(

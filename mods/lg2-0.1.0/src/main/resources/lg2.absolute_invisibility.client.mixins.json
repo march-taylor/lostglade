@@ -1,0 +1,12 @@
+{
+	"required": true,
+	"package": "com.lostglade.mixin",
+	"plugin": "com.lostglade.mixin.Lg2MixinPlugin",
+	"compatibilityLevel": "JAVA_21",
+	"client": [
+		"client.LocalPlayerAbsoluteInvisibilityMixin"
+	],
+	"injectors": {
+		"defaultRequire": 1
+	}
+}

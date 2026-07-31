@@ -140,9 +140,6 @@
 		"WoodlandMansionIllusionerSpawnMixin",
 		"ZombieNaturalSpawnMarkerMixin"
 	],
-	"client": [
-		"client.LocalPlayerAbsoluteInvisibilityMixin"
-	],
 	"injectors": {
 		"defaultRequire": 1
 	},

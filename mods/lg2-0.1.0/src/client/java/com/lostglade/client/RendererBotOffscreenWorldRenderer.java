@@ -84,7 +84,7 @@ public final class RendererBotOffscreenWorldRenderer {
 			mapTextureAnimationFrozen = false;
 		}
 		RendererBotTopDownMapRenderer.clearCaches();
-		RendererBotCoolElytraCompat.clearCaches();
+		DroneCameraTilt.clear();
 	}
 
 	public static void releaseSession(UUID sessionId) {
@@ -94,7 +94,6 @@ public final class RendererBotOffscreenWorldRenderer {
 		synchronized (LOCK) {
 			closeSessionState(SESSION_STATES.remove(sessionId));
 		}
-		RendererBotCoolElytraCompat.releaseSession(sessionId);
 	}
 
 	public static void onBlockChanged(ClientLevel level, BlockPos pos, BlockState oldState, BlockState newState, int flags) {
@@ -182,65 +181,59 @@ public final class RendererBotOffscreenWorldRenderer {
 			OffscreenSessionState sessionState = SESSION_STATES.computeIfAbsent(request.sessionId(), ignored -> new OffscreenSessionState());
 			TextureTarget renderTarget = ensureRenderTarget(sessionState, request.renderWidth(), request.renderHeight());
 			Entity followTarget = resolveFollowTarget(renderLevel, request.followEntityUuid());
-			RendererBotCoolElytraCompat.RollOverride rollOverride =
-					RendererBotCoolElytraCompat.beginCameraRoll(request.sessionId(), followTarget);
+			CameraState cameraState = resolveCameraState(client, renderLevel, request, sessionState, followTarget);
+			if (cameraState == null || !isWorldReady(renderLevel, cameraState, request)) {
+				sessionState.renderInProgress = false;
+				return false;
+			}
+
+			levelRenderer.resize(request.renderWidth(), request.renderHeight());
+			RenderTarget previousRenderTarget = client.getMainRenderTarget();
+			MinecraftOffscreenWorldAccessor worldAccessor = (MinecraftOffscreenWorldAccessor) client;
+			ClientLevel previousLevel = worldAccessor.lg2$getLevel();
+			LevelRenderer previousLevelRenderer = worldAccessor.lg2$getLevelRenderer();
+			ParticleEngine previousParticleEngine = worldAccessor.lg2$getParticleEngine();
+			Entity previousCameraEntity = client.getCameraEntity();
+			Camera previousMainCamera = client.gameRenderer.getMainCamera();
+			boolean previousSmartCull = client.smartCull;
+			boolean screenshotQueued = false;
+
 			try {
-				CameraState cameraState = resolveCameraState(client, renderLevel, request, sessionState, followTarget);
-				if (cameraState == null || !isWorldReady(renderLevel, cameraState, request)) {
-					sessionState.renderInProgress = false;
-					return false;
-				}
-
-				levelRenderer.resize(request.renderWidth(), request.renderHeight());
-				RenderTarget previousRenderTarget = client.getMainRenderTarget();
-				MinecraftOffscreenWorldAccessor worldAccessor = (MinecraftOffscreenWorldAccessor) client;
-				ClientLevel previousLevel = worldAccessor.lg2$getLevel();
-				LevelRenderer previousLevelRenderer = worldAccessor.lg2$getLevelRenderer();
-				ParticleEngine previousParticleEngine = worldAccessor.lg2$getParticleEngine();
-				Entity previousCameraEntity = client.getCameraEntity();
-				Camera previousMainCamera = client.gameRenderer.getMainCamera();
-				boolean previousSmartCull = client.smartCull;
-				boolean screenshotQueued = false;
-
-				try {
-					offscreenRenderActive = true;
-					RenderSystem.backupProjectionMatrix();
-					if (request.topDownMap()) {
-						client.smartCull = false;
-						if (!sessionState.topDownRendererPrimed) {
-							levelRenderer.allChanged();
-							sessionState.topDownRendererPrimed = true;
-						}
+				offscreenRenderActive = true;
+				RenderSystem.backupProjectionMatrix();
+				if (request.topDownMap()) {
+					client.smartCull = false;
+					if (!sessionState.topDownRendererPrimed) {
+						levelRenderer.allChanged();
+						sessionState.topDownRendererPrimed = true;
 					}
-					((MinecraftMainRenderTargetAccessor) client).lg2$setMainRenderTarget(renderTarget);
-					worldAccessor.lg2$setLevel(renderLevel);
-					worldAccessor.lg2$setLevelRenderer(levelRenderer);
-					worldAccessor.lg2$setParticleEngine(session.particleEngine());
-					client.setCameraEntity(cameraState.camera().entity());
-					((GameRendererRenderLevelInvoker) client.gameRenderer).lg2$setMainCamera(cameraState.camera());
-					RendererBotShadowWorldManager.updateCameraContext(request.sessionId(), cameraState.camera());
-					renderOffscreenWorld(client, renderLevel, levelRenderer, session.featureRenderDispatcher(), session.particleEngine(), request, cameraState, renderTarget);
-					renderTargetConsumer.accept(renderTarget);
-					screenshotQueued = true;
-					return true;
-				} catch (Throwable throwable) {
-					Lg2.LOGGER.warn("Renderer bot offscreen render failed for {}", request, throwable);
-					return false;
-				} finally {
-					((MinecraftMainRenderTargetAccessor) client).lg2$setMainRenderTarget(previousRenderTarget);
-					worldAccessor.lg2$setLevel(previousLevel);
-					worldAccessor.lg2$setLevelRenderer(previousLevelRenderer);
-					worldAccessor.lg2$setParticleEngine(previousParticleEngine);
-					client.setCameraEntity(previousCameraEntity);
-					((GameRendererRenderLevelInvoker) client.gameRenderer).lg2$setMainCamera(previousMainCamera);
-					client.smartCull = previousSmartCull;
-					RenderSystem.restoreProjectionMatrix();
-					RenderSystem.setShaderFog(((GameRendererRenderLevelInvoker) client.gameRenderer).lg2$getFogRenderer().getBuffer(FogRenderer.FogMode.NONE));
-					offscreenRenderActive = false;
-					sessionState.renderInProgress = false;
 				}
+				((MinecraftMainRenderTargetAccessor) client).lg2$setMainRenderTarget(renderTarget);
+				worldAccessor.lg2$setLevel(renderLevel);
+				worldAccessor.lg2$setLevelRenderer(levelRenderer);
+				worldAccessor.lg2$setParticleEngine(session.particleEngine());
+				client.setCameraEntity(cameraState.camera().entity());
+				((GameRendererRenderLevelInvoker) client.gameRenderer).lg2$setMainCamera(cameraState.camera());
+				RendererBotShadowWorldManager.updateCameraContext(request.sessionId(), cameraState.camera());
+				renderOffscreenWorld(client, renderLevel, levelRenderer, session.featureRenderDispatcher(), session.particleEngine(), request, cameraState, renderTarget);
+				renderTargetConsumer.accept(renderTarget);
+				screenshotQueued = true;
+				return true;
+			} catch (Throwable throwable) {
+				Lg2.LOGGER.warn("Renderer bot offscreen render failed for {}", request, throwable);
+				return false;
 			} finally {
-				RendererBotCoolElytraCompat.endCameraRoll(rollOverride);
+				((MinecraftMainRenderTargetAccessor) client).lg2$setMainRenderTarget(previousRenderTarget);
+				worldAccessor.lg2$setLevel(previousLevel);
+				worldAccessor.lg2$setLevelRenderer(previousLevelRenderer);
+				worldAccessor.lg2$setParticleEngine(previousParticleEngine);
+				client.setCameraEntity(previousCameraEntity);
+				((GameRendererRenderLevelInvoker) client.gameRenderer).lg2$setMainCamera(previousMainCamera);
+				client.smartCull = previousSmartCull;
+				RenderSystem.restoreProjectionMatrix();
+				RenderSystem.setShaderFog(((GameRendererRenderLevelInvoker) client.gameRenderer).lg2$getFogRenderer().getBuffer(FogRenderer.FogMode.NONE));
+				offscreenRenderActive = false;
+				sessionState.renderInProgress = false;
 			}
 		}
 	}
@@ -362,6 +355,7 @@ public final class RendererBotOffscreenWorldRenderer {
 			Camera camera = sessionState.followCamera;
 			camera.setup(renderLevel, followTarget, false, false, partialTick);
 			((CameraPositionInvoker) camera).lg2$setPosition(followTarget.getEyePosition(partialTick));
+			DroneCameraTilt.applyBank(camera, request.cameraBankRadians());
 			return new CameraState(camera);
 		}
 
@@ -381,6 +375,7 @@ public final class RendererBotOffscreenWorldRenderer {
 		anchor.setNoGravity(true);
 		Camera camera = sessionState.staticCamera;
 		camera.setup(renderLevel, anchor, false, false, partialTick);
+		DroneCameraTilt.applyBank(camera, request.cameraBankRadians());
 		return new CameraState(camera);
 	}
 
@@ -474,7 +469,8 @@ public final class RendererBotOffscreenWorldRenderer {
 			boolean absoluteCameraPosition,
 			boolean topDownMap,
 			double orthographicWidthBlocks,
-			double orthographicHeightBlocks
+			double orthographicHeightBlocks,
+			float cameraBankRadians
 	) {
 	}
 

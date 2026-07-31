@@ -6,6 +6,7 @@
 	"client": [
 		"ClientLevelMapDataAccessor",
 		"ClientInputAccessor",
+		"CameraDroneTiltMixin",
 		"CameraPositionInvoker",
 		"ClientPacketListenerShadowAccessor",
 		"ClientPacketListenerShadowMapSyncMixin",

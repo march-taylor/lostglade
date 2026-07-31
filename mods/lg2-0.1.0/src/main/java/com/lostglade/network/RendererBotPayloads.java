@@ -15,7 +15,7 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class RendererBotPayloads {
-	public static final int PROTOCOL_VERSION = 18;
+	public static final int PROTOCOL_VERSION = 19;
 	private static final int MAX_CAPTURE_PAYLOAD_BYTES = 1_048_576;
 	private static final int MAX_SHADOW_PAYLOAD_BYTES = 2_097_152;
 	private static final AtomicBoolean REGISTERED = new AtomicBoolean(false);
@@ -356,7 +356,8 @@ public final class RendererBotPayloads {
 			double y,
 			double z,
 			float yaw,
-			float pitch
+			float pitch,
+			float cameraBankRadians
 	) implements CustomPacketPayload {
 		public static final Type<RendererBotLiveStreamPoseS2CPayload> TYPE = new Type<>(id("renderer_bot_live_stream_pose"));
 		public static final StreamCodec<FriendlyByteBuf, RendererBotLiveStreamPoseS2CPayload> STREAM_CODEC =
@@ -369,6 +370,7 @@ public final class RendererBotPayloads {
 					buffer.readDouble(),
 					buffer.readDouble(),
 					buffer.readFloat(),
+					buffer.readFloat(),
 					buffer.readFloat()
 			);
 		}
@@ -380,6 +382,7 @@ public final class RendererBotPayloads {
 			buffer.writeDouble(this.z);
 			buffer.writeFloat(this.yaw);
 			buffer.writeFloat(this.pitch);
+			buffer.writeFloat(this.cameraBankRadians);
 		}
 
 		@Override
