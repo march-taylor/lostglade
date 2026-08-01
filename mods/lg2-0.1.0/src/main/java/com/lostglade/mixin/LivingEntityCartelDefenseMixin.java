@@ -2,6 +2,7 @@ package com.lostglade.mixin;
 
 import com.lostglade.server.ServerMilkPocketDimensionSystem;
 import com.lostglade.server.ServerRaceSystem;
+import com.lostglade.server.PuroSanStockSystem;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.damagesource.DamageSource;
@@ -16,8 +17,10 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 @Mixin(LivingEntity.class)
 public abstract class LivingEntityCartelDefenseMixin {
 	@ModifyVariable(method = "hurtServer", at = @At("HEAD"), argsOnly = true)
-	private float lg2$applyMarkStockFirstHitDamage(float damage, ServerLevel level, DamageSource damageSource) {
-		return ServerRaceSystem.modifyMarkStockFirstHitDamage(level, (LivingEntity) (Object) this, damageSource, damage);
+	private float lg2$applyRaceDamageModifiers(float damage, ServerLevel level, DamageSource damageSource) {
+		LivingEntity victim = (LivingEntity) (Object) this;
+		float modified = ServerRaceSystem.modifyMarkStockFirstHitDamage(level, victim, damageSource, damage);
+		return PuroSanStockSystem.modifyDamage(level, victim, damageSource, modified);
 	}
 	@Inject(method = "hurtServer", at = @At("HEAD"), cancellable = true)
 	private void lg2$blockGennadiyDefenseDamage(
@@ -26,13 +29,12 @@ public abstract class LivingEntityCartelDefenseMixin {
 			float damage,
 			CallbackInfoReturnable<Boolean> cir
 	) {
-		if ((Object) this instanceof ServerPlayer player
-				&& ServerMilkPocketDimensionSystem.shouldCancelFirstLandingFallDamage(player, damageSource)) {
+		if (PuroSanStockSystem.shouldCancelFallDamage((LivingEntity) (Object) this, damageSource)) {
 			cir.setReturnValue(false);
 			return;
 		}
 		if ((Object) this instanceof ServerPlayer player
-				&& ServerRaceSystem.shouldCancelPuroSanDefenseFallDamage(player, damageSource)) {
+				&& ServerMilkPocketDimensionSystem.shouldCancelFirstLandingFallDamage(player, damageSource)) {
 			cir.setReturnValue(false);
 			return;
 		}
