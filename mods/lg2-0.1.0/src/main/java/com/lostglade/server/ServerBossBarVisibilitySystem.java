@@ -16,7 +16,13 @@ import java.util.Map;
 import java.util.UUID;
 
 public final class ServerBossBarVisibilitySystem {
-	private static final ThreadLocal<Boolean> BYPASS_PACKET_FILTER = ThreadLocal.withInitial(() -> false);
+	/*
+	 * A synthetic packet is still sent through the same outgoing gate as a
+	 * vanilla packet.  The flag only tells the gate that its payload is a visual
+	 * replay of an already tracked *real* bossbar, so it must not overwrite the
+	 * real title/progress snapshot with the decorated HUD title.
+	 */
+	private static final ThreadLocal<Boolean> SYNTHETIC_PACKET = ThreadLocal.withInitial(() -> false);
 	private static final Map<UUID, PlayerBossBarState> PLAYER_STATES = new HashMap<>();
 
 	private ServerBossBarVisibilitySystem() {
@@ -33,10 +39,6 @@ public final class ServerBossBarVisibilitySystem {
 				PLAYER_STATES.remove(handler.player.getUUID()));
 		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) ->
 				PLAYER_STATES.remove(handler.player.getUUID()));
-	}
-
-	public static boolean shouldBypassPacketFilter() {
-		return BYPASS_PACKET_FILTER.get();
 	}
 
 	public static void setServerHudFocus(ServerPlayer player, boolean focused) {
@@ -97,6 +99,13 @@ public final class ServerBossBarVisibilitySystem {
 		// delayed ADD recreating a HUD after it was meant to disappear.
 		if (DroneSystem.isClosingHudBossBar(receiver, update.id) && update.type != BossBarPacketType.REMOVE) {
 			return null;
+		}
+
+		if (SYNTHETIC_PACKET.get()) {
+			// Synthetic replays are allowed to alter only the client-presence state.
+			// In particular, an UPDATE_NAME has no path to the socket unless this
+			// exact id is still known to have reached this client connection.
+			return applySyntheticPacketUpdate(state, reservedHud, update) ? packet : null;
 		}
 
 		// Reserved HUD bars used to bypass this state machine entirely. Their REMOVE
@@ -259,6 +268,41 @@ public final class ServerBossBarVisibilitySystem {
 		}
 	}
 
+	/**
+	 * Applies the client-visible part of an internally generated packet without
+	 * changing the authoritative snapshot of a real bossbar.  This is what makes
+	 * REMOVE -> ADD reordering safe: REMOVE hides the id, ADD may expose only an
+	 * already tracked id, and UPDATE_* is impossible while the id is hidden.
+	 */
+	private static boolean applySyntheticPacketUpdate(
+			PlayerBossBarState state,
+			boolean reservedHud,
+			BossBarPacketUpdate update
+	) {
+		if (state == null || update == null) {
+			return false;
+		}
+		Map<UUID, TrackedBossBar> trackedBossBars = reservedHud ? state.reservedBossBars : state.activeBossBars;
+		switch (update.type) {
+			case ADD -> {
+				if (!trackedBossBars.containsKey(update.id)) {
+					return false;
+				}
+				state.clientVisibleBossBars.add(update.id);
+				return true;
+			}
+			case REMOVE -> {
+				// Vanilla REMOVE is safe even if the client no longer has this id.
+				state.clientVisibleBossBars.remove(update.id);
+				return true;
+			}
+			case UPDATE_PROGRESS, UPDATE_NAME, UPDATE_STYLE, UPDATE_PROPERTIES -> {
+				return state.clientVisibleBossBars.contains(update.id);
+			}
+		}
+		return false;
+	}
+
 	private static void reorderTrackedBossBarsBelowServerHud(ServerPlayer player, PlayerBossBarState state) {
 		for (UUID bossBarId : state.activeBossBars.keySet()) {
 			sendSyntheticPacket(player, ClientboundBossEventPacket.createRemovePacket(bossBarId));
@@ -269,15 +313,16 @@ public final class ServerBossBarVisibilitySystem {
 	}
 
 	private static void sendSyntheticPacket(ServerPlayer player, ClientboundBossEventPacket packet) {
-		// Synthetic packets must bypass the filter so hidden bars stay tracked server-side.
+		// Never bypass the boss-event gate.  The gate validates this packet against
+		// the per-connection visibility ledger before it can reach the client.
 		if (player == null || packet == null) {
 			return;
 		}
-		BYPASS_PACKET_FILTER.set(true);
+		SYNTHETIC_PACKET.set(true);
 		try {
 			player.connection.send(packet);
 		} finally {
-			BYPASS_PACKET_FILTER.remove();
+			SYNTHETIC_PACKET.remove();
 		}
 	}
 

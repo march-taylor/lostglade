@@ -41,7 +41,7 @@ public abstract class ServerCommonPacketListenerAbsoluteInvisibilityMixin {
 
 	@Unique
 	private void lg2$processAbsoluteInvisibilityPacket(Packet<?> packet, ChannelFutureListener listener, CallbackInfo ci) {
-		if (LG2_ABSOLUTE_INVISIBILITY_BYPASS.get() || ServerBossBarVisibilitySystem.shouldBypassPacketFilter()) {
+		if (LG2_ABSOLUTE_INVISIBILITY_BYPASS.get()) {
 			return;
 		}
 

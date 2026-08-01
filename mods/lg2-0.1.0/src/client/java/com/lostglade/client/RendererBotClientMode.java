@@ -138,7 +138,6 @@ public final class RendererBotClientMode {
 		boolean changed = false;
 		changed |= setIfDifferent(client.options.graphicsPreset(), GraphicsPreset.FANCY);
 		changed |= setIfDifferent(client.options.cloudStatus(), CloudStatus.FANCY);
-		changed |= setMin(client.options.renderDistance(), 18);
 		changed |= setMin(client.options.simulationDistance(), 10);
 		changed |= setMin(client.options.entityDistanceScaling(), 2.5D);
 		changed |= setIfDifferent(client.options.chunkSectionFadeInTime(), 0.0D);
@@ -159,7 +158,7 @@ public final class RendererBotClientMode {
 				client.levelRenderer.needsUpdate();
 				client.levelRenderer.allChanged();
 			}
-			Lg2.LOGGER.info("Renderer bot visual profile applied: fancy graphics, clouds, full particles, extended distances, no chunk fade, no prioritized chunk updates");
+			Lg2.LOGGER.info("Renderer bot visual profile applied: fancy graphics, clouds, full particles, server-matched render distance, no chunk fade, no prioritized chunk updates");
 		}
 		visualsConfigured = true;
 	}

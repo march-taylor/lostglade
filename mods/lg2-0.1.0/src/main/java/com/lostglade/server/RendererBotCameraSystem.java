@@ -111,7 +111,6 @@ public final class RendererBotCameraSystem {
 	private static final int AUDIO_SAMPLE_RATE = 48_000;
 	private static final int AUDIO_FRAME_SAMPLES = 960;
 	private static final int CAMERA_CHUNK_TICKET_UNIQUE_FLAG = 128;
-	private static final int SHADOW_VIEW_DISTANCE_MARGIN_CHUNKS = 6;
 	private static final int SHADOW_REAR_VIEW_CHUNKS = 2;
 	private static final float MAP_TILE_TOP_DOWN_YAW = 180.0F;
 	private static final float MAP_TILE_TOP_DOWN_PITCH = 90.0F;
@@ -2134,7 +2133,11 @@ public final class RendererBotCameraSystem {
 	}
 
 	private static int resolveShadowViewDistance(ServerPlayer bot) {
-		return Mth.clamp(resolveViewDistance(bot) + SHADOW_VIEW_DISTANCE_MARGIN_CHUNKS, 2, 32);
+		// Shadow streams must have the same practical loading radius as a real
+		// player. The former +6 margin made a 10-chunk server try to prepare a
+		// 16-chunk camera window on every new drone position; most of that window
+		// was still waiting for FULL chunks while the frame was already rendered.
+		return resolveViewDistance(bot);
 	}
 
 	public static int resolveCameraShadowViewDistance(ServerPlayer viewer) {
@@ -2421,7 +2424,10 @@ public final class RendererBotCameraSystem {
 			if (target == null || target.level() != botLevel) {
 				continue;
 			}
-			appendVirtualTargetChunks(chunks, botLevel, target, viewDistance, false, false);
+			// Hand-held recording follows a player. Like a normal player client it
+			// keeps one circular chunk window while moving, rather than re-evaluating
+			// a directional static-camera frustum every frame.
+			appendVirtualTargetChunks(chunks, botLevel, target, viewDistance, true, false);
 		}
 		return chunks;
 	}
@@ -3031,7 +3037,9 @@ public final class RendererBotCameraSystem {
 				failVideoRecording(entry.getKey(), recording, "Renderer bot recording target is unavailable");
 				continue;
 			}
-			accumulateShadowDesiredState(desiredStates, botUuid, recording.renderSessionId(), target, viewDistance, Set.of(), false, false);
+			// A hand camera is a moving first-person view. Its shadow cache must
+			// slide as a radius around the player, just like the drone view.
+			accumulateShadowDesiredState(desiredStates, botUuid, recording.renderSessionId(), target, viewDistance, Set.of(), true, false);
 		}
 
 		if (server.getPlayerList() != null) {

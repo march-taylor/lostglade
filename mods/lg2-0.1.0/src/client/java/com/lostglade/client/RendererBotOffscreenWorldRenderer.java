@@ -215,7 +215,17 @@ public final class RendererBotOffscreenWorldRenderer {
 				client.setCameraEntity(cameraState.camera().entity());
 				((GameRendererRenderLevelInvoker) client.gameRenderer).lg2$setMainCamera(cameraState.camera());
 				RendererBotShadowWorldManager.updateCameraContext(request.sessionId(), cameraState.camera());
-				renderOffscreenWorld(client, renderLevel, levelRenderer, session.featureRenderDispatcher(), session.particleEngine(), request, cameraState, renderTarget);
+				renderOffscreenWorld(
+						client,
+						renderLevel,
+						levelRenderer,
+						session.featureRenderDispatcher(),
+						session.particleEngine(),
+						session.viewDistance(),
+						request,
+						cameraState,
+						renderTarget
+				);
 				renderTargetConsumer.accept(renderTarget);
 				screenshotQueued = true;
 				return true;
@@ -244,6 +254,7 @@ public final class RendererBotOffscreenWorldRenderer {
 			LevelRenderer levelRenderer,
 			net.minecraft.client.renderer.feature.FeatureRenderDispatcher featureRenderDispatcher,
 			ParticleEngine particleEngine,
+			int shadowViewDistance,
 			RenderRequest request,
 			CameraState cameraState,
 			TextureTarget renderTarget
@@ -269,7 +280,11 @@ public final class RendererBotOffscreenWorldRenderer {
 			Matrix4f viewMatrix = new Matrix4f().rotation(new Quaternionf(cameraState.camera().rotation()).conjugate());
 			Vector4f fogColor = fogRenderer.setupFog(
 					cameraState.camera(),
-					client.options.getEffectiveRenderDistance(),
+					// Each shadow session has its own server-authoritative radius.  Never
+					// use the renderer bot's global Options value here: a background map
+					// tile may have a different radius and changing that option rebuilds
+					// every active world renderer, including a live drone stream.
+					Math.max(2, shadowViewDistance) * 16,
 					client.getDeltaTracker(),
 					request.topDownMap() ? 0.0F : gameRendererAccessor.lg2$getDarkenWorldAmount(partialTick),
 					renderLevel

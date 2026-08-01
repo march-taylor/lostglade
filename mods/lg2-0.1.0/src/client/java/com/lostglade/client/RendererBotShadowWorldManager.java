@@ -129,7 +129,8 @@ public final class RendererBotShadowWorldManager {
 					session.level(),
 					session.levelRenderer(),
 					session.featureRenderDispatcher(),
-					session.particleEngine()
+					session.particleEngine(),
+					session.appliedViewDistance()
 			);
 		}
 	}
@@ -563,9 +564,20 @@ public final class RendererBotShadowWorldManager {
 		if (session == null) {
 			return;
 		}
+		int clampedViewDistance = Math.max(2, viewDistance);
 		runWithShadowSession(connection, session, () -> {
-			connection.handleSetChunkCacheRadius(new ClientboundSetChunkCacheRadiusPacket(Math.max(2, viewDistance)));
-			connection.handleSetChunkCacheCenter(new ClientboundSetChunkCacheCenterPacket(centerChunkX, centerChunkZ));
+			// handleSetChunkCacheRadius rebuilds vanilla's cache storage even when
+			// the radius is identical. A moving drone was therefore discarding every
+			// already received shadow chunk on every centre update and re-rendering the
+			// whole view. A normal client changes only its centre while travelling.
+			if (session.appliedViewDistance() != clampedViewDistance) {
+				connection.handleSetChunkCacheRadius(new ClientboundSetChunkCacheRadiusPacket(clampedViewDistance));
+				session.setAppliedViewDistance(clampedViewDistance);
+			}
+			if (session.appliedCenterChunkX() != centerChunkX || session.appliedCenterChunkZ() != centerChunkZ) {
+				connection.handleSetChunkCacheCenter(new ClientboundSetChunkCacheCenterPacket(centerChunkX, centerChunkZ));
+				session.setAppliedCenter(centerChunkX, centerChunkZ);
+			}
 		});
 	}
 
@@ -644,7 +656,8 @@ public final class RendererBotShadowWorldManager {
 			ClientLevel level,
 			LevelRenderer levelRenderer,
 			FeatureRenderDispatcher featureRenderDispatcher,
-			ParticleEngine particleEngine
+			ParticleEngine particleEngine,
+			int viewDistance
 	) {
 	}
 
@@ -658,6 +671,9 @@ public final class RendererBotShadowWorldManager {
 		private final ParticleEngine particleEngine;
 		private Camera lastCamera;
 		private BlockPos audioBlockPos;
+		private int appliedViewDistance = Integer.MIN_VALUE;
+		private int appliedCenterChunkX = Integer.MIN_VALUE;
+		private int appliedCenterChunkZ = Integer.MIN_VALUE;
 
 		private ShadowLevelSession(
 				UUID sessionId,
@@ -720,6 +736,27 @@ public final class RendererBotShadowWorldManager {
 
 		private void setAudioBlockPos(BlockPos audioBlockPos) {
 			this.audioBlockPos = audioBlockPos;
+		}
+
+		private int appliedViewDistance() {
+			return this.appliedViewDistance;
+		}
+
+		private void setAppliedViewDistance(int appliedViewDistance) {
+			this.appliedViewDistance = appliedViewDistance;
+		}
+
+		private int appliedCenterChunkX() {
+			return this.appliedCenterChunkX;
+		}
+
+		private int appliedCenterChunkZ() {
+			return this.appliedCenterChunkZ;
+		}
+
+		private void setAppliedCenter(int centerChunkX, int centerChunkZ) {
+			this.appliedCenterChunkX = centerChunkX;
+			this.appliedCenterChunkZ = centerChunkZ;
 		}
 	}
 }
