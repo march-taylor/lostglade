@@ -177,6 +177,11 @@ public abstract class ServerCommonPacketListenerAbsoluteInvisibilityMixin {
 			ClientboundBossEventPacket replacement = ServerBossBarVisibilitySystem.rewriteOutgoingBossEventPacket(receiver, bossEventPacket);
 			if (replacement != bossEventPacket) {
 				ci.cancel();
+				// A null replacement deliberately suppresses an orphaned UPDATE_* event.
+				// It must never be passed into ServerCommonPacketListenerImpl#send.
+				if (replacement == null) {
+					return;
+				}
 				LG2_ABSOLUTE_INVISIBILITY_BYPASS.set(true);
 				try {
 					if (listener == null) {

@@ -448,6 +448,10 @@ public final class DroneSystem {
 	private static final Map<UUID, ServerBossEvent> PLAYER_DRONE_GLITCH_OVERLAYS = new HashMap<>();
 	private static final Map<UUID, ServerBossEvent> PLAYER_DRONE_GLITCH_BURSTS = new HashMap<>();
 	private static final Map<UUID, Long> PLAYER_DRONE_GLITCH_BURST_START_TICKS = new HashMap<>();
+	// Once a HUD has begun closing, its UUID must never be recreated by a late
+	// ServerBossEvent update. The set lives until the player disconnects; every
+	// new HUD event has a fresh UUID.
+	private static final Map<UUID, Set<UUID>> CLOSING_DRONE_HUD_BOSS_BARS = new HashMap<>();
 	private static final Map<UUID, DroneInputState> INPUTS = new HashMap<>();
 	private static final Map<UUID, UUID> CONTROLLERS_BY_DRONE = new HashMap<>();
 	private static final Map<UUID, UUID> DISPLAYS_BY_DRONE = new HashMap<>();
@@ -588,7 +592,10 @@ public final class DroneSystem {
 		ServerTickEvents.END_SERVER_TICK.register(DroneSystem::tick);
 		ServerEntityEvents.ENTITY_LOAD.register(DroneSystem::onEntityLoad);
 		ServerEntityEvents.ENTITY_UNLOAD.register(DroneSystem::onEntityUnload);
-		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> stopControlling((ServerPlayer) handler.player, false));
+		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
+			stopControlling((ServerPlayer) handler.player, false);
+			CLOSING_DRONE_HUD_BOSS_BARS.remove(handler.player.getUUID());
+		});
 		ServerPlayerEvents.AFTER_RESPAWN.register((oldPlayer, newPlayer, alive) -> stopControlling(newPlayer, false));
 		ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
 			for (UUID playerId : new ArrayList<>(ACTIVE_SESSIONS.keySet())) {
@@ -604,6 +611,7 @@ public final class DroneSystem {
 			PLAYER_DRONE_GLITCH_OVERLAYS.clear();
 			PLAYER_DRONE_GLITCH_BURSTS.clear();
 			PLAYER_DRONE_GLITCH_BURST_START_TICKS.clear();
+			CLOSING_DRONE_HUD_BOSS_BARS.clear();
 			INPUTS.clear();
 			CONTROLLERS_BY_DRONE.clear();
 			DISPLAYS_BY_DRONE.clear();
@@ -5946,6 +5954,7 @@ public final class DroneSystem {
 		if (hud == null) {
 			return;
 		}
+		markDroneHudBossBarClosing(player, hud);
 		hud.removePlayer(player);
 		if (hud.getPlayers().isEmpty()) {
 			PLAYER_DRONE_HUDS.remove(player.getUUID());
@@ -6068,6 +6077,7 @@ public final class DroneSystem {
 		UUID playerId = player.getUUID();
 		ServerBossEvent overlay = PLAYER_DRONE_GLITCH_OVERLAYS.get(playerId);
 		if (overlay != null) {
+			markDroneHudBossBarClosing(player, overlay);
 			overlay.removePlayer(player);
 		}
 		PLAYER_DRONE_GLITCH_OVERLAYS.remove(playerId, overlay);
@@ -6113,6 +6123,7 @@ public final class DroneSystem {
 		PLAYER_DRONE_GLITCH_BURST_START_TICKS.remove(playerId);
 		ServerBossEvent burst = PLAYER_DRONE_GLITCH_BURSTS.get(playerId);
 		if (burst != null) {
+			markDroneHudBossBarClosing(player, burst);
 			burst.removePlayer(player);
 		}
 		PLAYER_DRONE_GLITCH_BURSTS.remove(playerId, burst);
@@ -6178,6 +6189,10 @@ public final class DroneSystem {
 		if (player == null || bossBarId == null) {
 			return false;
 		}
+		Set<UUID> closingBars = CLOSING_DRONE_HUD_BOSS_BARS.get(player.getUUID());
+		if (closingBars != null && closingBars.contains(bossBarId)) {
+			return true;
+		}
 		ServerBossEvent hud = PLAYER_DRONE_HUDS.get(player.getUUID());
 		if (hud != null && hud.getId().equals(bossBarId)) {
 			return true;
@@ -6188,6 +6203,27 @@ public final class DroneSystem {
 		}
 		ServerBossEvent burst = PLAYER_DRONE_GLITCH_BURSTS.get(player.getUUID());
 		return burst != null && burst.getId().equals(bossBarId);
+	}
+
+	/**
+	 * Closing is a one-way barrier. The remove packet for this exact id is still
+	 * allowed through, while any later ADD or UPDATE is stale and must be ignored.
+	 */
+	public static boolean isClosingHudBossBar(ServerPlayer player, UUID bossBarId) {
+		if (player == null || bossBarId == null) {
+			return false;
+		}
+		Set<UUID> closingBars = CLOSING_DRONE_HUD_BOSS_BARS.get(player.getUUID());
+		return closingBars != null && closingBars.contains(bossBarId);
+	}
+
+	private static void markDroneHudBossBarClosing(ServerPlayer player, ServerBossEvent bossBar) {
+		if (player == null || bossBar == null) {
+			return;
+		}
+		CLOSING_DRONE_HUD_BOSS_BARS
+				.computeIfAbsent(player.getUUID(), ignored -> new HashSet<>())
+				.add(bossBar.getId());
 	}
 
 	private static String buildDroneHudSnapshot(DroneControlSession session, Vec3 velocity, int controlSpeedSlot) {

@@ -91,19 +91,27 @@ public final class ServerBossBarVisibilitySystem {
 				|| ServerRaceSystem.isPuroSanOverdriveBossBar(receiver, update.id);
 		PlayerBossBarState state = PLAYER_STATES.computeIfAbsent(receiver.getUUID(), id -> new PlayerBossBarState());
 
+		// Drone HUD shutdown is deliberately ordered: mark the id as closed, send
+		// REMOVE, then reject every later packet for that id. This prevents both
+		// variants of the old bug: UPDATE_* for an absent client bar (crash), and a
+		// delayed ADD recreating a HUD after it was meant to disappear.
+		if (DroneSystem.isClosingHudBossBar(receiver, update.id) && update.type != BossBarPacketType.REMOVE) {
+			return null;
+		}
+
 		// Reserved HUD bars used to bypass this state machine entirely. Their REMOVE
 		// and UPDATE_NAME packets can still cross during drone teardown, however, and
 		// 1.21.11 crashes the client on the resulting update-for-missing-id. Track
 		// them too; they merely skip the external-bar title composition below.
 		if (reservedHud) {
-			applyPacketUpdate(state, update);
+			applyPacketUpdate(state.reservedBossBars, state.clientVisibleBossBars, update);
 			if (update.type.isUpdate() && !state.clientVisibleBossBars.contains(update.id)) {
 				return null;
 			}
-			return safeFullStatePacket(state, update, null, packet);
+			return packet;
 		}
 
-		applyPacketUpdate(state, update);
+		applyPacketUpdate(state.activeBossBars, state.clientVisibleBossBars, update);
 		// The vanilla client dereferences the bossbar map for every UPDATE_* packet.
 		// Unlike REMOVE, an update for an id it has not received an ADD for is a hard
 		// client crash in 1.21.11. This can happen around the drone HUD teardown: the
@@ -115,7 +123,7 @@ public final class ServerBossBarVisibilitySystem {
 
 		Component overlayTitle = DroneSystem.getHudOverlayTitle(receiver);
 		if (overlayTitle == null) {
-			return safeFullStatePacket(state, update, null, packet);
+			return packet;
 		}
 
 		DroneSystem.suspendHudOverlayForExternalBossBar(receiver);
@@ -126,32 +134,17 @@ public final class ServerBossBarVisibilitySystem {
 			return packet;
 		}
 
-		return safeFullStatePacket(state, update, overlayTitle, packet);
-	}
+		if (update.type == BossBarPacketType.ADD || update.type == BossBarPacketType.UPDATE_NAME) {
+			TrackedBossBar bossBar = state.activeBossBars.get(update.id);
+			if (bossBar != null && state.clientVisibleBossBars.contains(update.id)) {
+				BossEvent rewrittenBossBar = bossBar.toBossEvent(withDroneOverlayTitle(bossBar.name, overlayTitle));
+				return update.type == BossBarPacketType.ADD
+						? ClientboundBossEventPacket.createAddPacket(rewrittenBossBar)
+						: ClientboundBossEventPacket.createUpdateNamePacket(rewrittenBossBar);
+			}
+		}
 
-	/**
-	 * Re-send the complete current state for updates instead of a fragile UPDATE_*
-	 * packet. ADD is idempotent on the client (it replaces the entry by UUID), while
-	 * UPDATE_* crashes when the previous REMOVE reached the client before a delayed
-	 * re-ADD. That exact ordering is possible when a controlled drone is destroyed.
-	 */
-	private static ClientboundBossEventPacket safeFullStatePacket(
-			PlayerBossBarState state,
-			BossBarPacketUpdate update,
-			Component overlayTitle,
-			ClientboundBossEventPacket fallback
-	) {
-		if (!update.type.isUpdate()) {
-			return fallback;
-		}
-		TrackedBossBar bossBar = state.activeBossBars.get(update.id);
-		if (bossBar == null) {
-			return null;
-		}
-		Component title = overlayTitle == null
-				? bossBar.name
-				: withDroneOverlayTitle(bossBar.name, overlayTitle);
-		return ClientboundBossEventPacket.createAddPacket(bossBar.toBossEvent(title));
+		return packet;
 	}
 
 	/**
@@ -175,9 +168,7 @@ public final class ServerBossBarVisibilitySystem {
 			if (!state.clientVisibleBossBars.contains(bossBar.id)) {
 				continue;
 			}
-			// A synthetic UPDATE_NAME can arrive after an external bar's REMOVE. Use
-			// ADD: it is safe both for a present bar and for a just-removed one.
-			sendSyntheticPacket(player, ClientboundBossEventPacket.createAddPacket(
+			sendSyntheticPacket(player, ClientboundBossEventPacket.createUpdateNamePacket(
 					bossBar.toBossEvent(withDroneOverlayTitle(bossBar.name, overlayTitle))
 			));
 		}
@@ -198,14 +189,18 @@ public final class ServerBossBarVisibilitySystem {
 			if (!state.clientVisibleBossBars.contains(bossBar.id)) {
 				continue;
 			}
-			sendSyntheticPacket(player, ClientboundBossEventPacket.createAddPacket(bossBar.toBossEvent()));
+			sendSyntheticPacket(player, ClientboundBossEventPacket.createUpdateNamePacket(bossBar.toBossEvent()));
 		}
 	}
 
-	private static void applyPacketUpdate(PlayerBossBarState state, BossBarPacketUpdate update) {
+	private static void applyPacketUpdate(
+			Map<UUID, TrackedBossBar> trackedBossBars,
+			java.util.Set<UUID> clientVisibleBossBars,
+			BossBarPacketUpdate update
+	) {
 		switch (update.type) {
 			case ADD -> {
-				state.activeBossBars.put(
+				trackedBossBars.put(
 						update.id,
 						new TrackedBossBar(
 							update.id,
@@ -218,26 +213,26 @@ public final class ServerBossBarVisibilitySystem {
 							Boolean.TRUE.equals(update.createWorldFog)
 						)
 				);
-				state.clientVisibleBossBars.add(update.id);
+				clientVisibleBossBars.add(update.id);
 			}
 			case REMOVE -> {
-				state.activeBossBars.remove(update.id);
-				state.clientVisibleBossBars.remove(update.id);
+				trackedBossBars.remove(update.id);
+				clientVisibleBossBars.remove(update.id);
 			}
 			case UPDATE_PROGRESS -> {
-				TrackedBossBar bossBar = state.activeBossBars.get(update.id);
+				TrackedBossBar bossBar = trackedBossBars.get(update.id);
 				if (bossBar != null && update.progress != null) {
 					bossBar.progress = update.progress;
 				}
 			}
 			case UPDATE_NAME -> {
-				TrackedBossBar bossBar = state.activeBossBars.get(update.id);
+				TrackedBossBar bossBar = trackedBossBars.get(update.id);
 				if (bossBar != null && update.name != null) {
 					bossBar.name = copyComponent(update.name);
 				}
 			}
 			case UPDATE_STYLE -> {
-				TrackedBossBar bossBar = state.activeBossBars.get(update.id);
+				TrackedBossBar bossBar = trackedBossBars.get(update.id);
 				if (bossBar != null) {
 					if (update.color != null) {
 						bossBar.color = update.color;
@@ -248,7 +243,7 @@ public final class ServerBossBarVisibilitySystem {
 				}
 			}
 			case UPDATE_PROPERTIES -> {
-				TrackedBossBar bossBar = state.activeBossBars.get(update.id);
+				TrackedBossBar bossBar = trackedBossBars.get(update.id);
 				if (bossBar != null) {
 					if (update.darkenScreen != null) {
 						bossBar.darkenScreen = update.darkenScreen;
@@ -301,7 +296,9 @@ public final class ServerBossBarVisibilitySystem {
 				state.restoreDroneOverlayNextTick = false;
 				DroneSystem.restoreHudOverlayWithoutExternalBossBar(player);
 			}
-			if (!state.serverHudFocused && state.activeBossBars.isEmpty()) {
+			// Keep the reserved HUD ids for the whole animation. Otherwise the next
+			// frame is mistaken for an update of an unknown bossbar and is suppressed.
+			if (!state.serverHudFocused && state.activeBossBars.isEmpty() && state.reservedBossBars.isEmpty()) {
 				iterator.remove();
 			}
 		}
@@ -385,6 +382,7 @@ public final class ServerBossBarVisibilitySystem {
 		private boolean needsReorder;
 		private boolean restoreDroneOverlayNextTick;
 		private final Map<UUID, TrackedBossBar> activeBossBars = new LinkedHashMap<>();
+		private final Map<UUID, TrackedBossBar> reservedBossBars = new LinkedHashMap<>();
 		private final java.util.Set<UUID> clientVisibleBossBars = new java.util.HashSet<>();
 	}
 
