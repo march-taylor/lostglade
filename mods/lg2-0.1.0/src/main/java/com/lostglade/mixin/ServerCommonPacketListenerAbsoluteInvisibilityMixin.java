@@ -4,6 +4,7 @@ import com.lostglade.server.ServerAbsoluteInvisibilitySystem;
 import com.lostglade.server.ServerBossBarVisibilitySystem;
 import com.lostglade.server.ServerTabPacketSystem;
 import io.netty.channel.ChannelFutureListener;
+import net.minecraft.network.Connection;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientboundBlockUpdatePacket;
 import net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket;
@@ -11,10 +12,8 @@ import net.minecraft.network.protocol.game.ClientboundPlayerInfoRemovePacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket;
 import net.minecraft.network.protocol.game.ClientboundSetPlayerTeamPacket;
 import net.minecraft.network.protocol.game.ClientboundSectionBlocksUpdatePacket;
-import net.minecraft.network.protocol.game.ClientboundBossEventPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEquipmentPacket;
-import net.minecraft.network.protocol.game.ClientboundTrackedWaypointPacket;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.network.ServerCommonPacketListenerImpl;
 import net.minecraft.server.network.ServerGamePacketListenerImpl;
@@ -22,6 +21,7 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(ServerCommonPacketListenerImpl.class)
@@ -41,10 +41,6 @@ public abstract class ServerCommonPacketListenerAbsoluteInvisibilityMixin {
 
 	@Unique
 	private void lg2$processAbsoluteInvisibilityPacket(Packet<?> packet, ChannelFutureListener listener, CallbackInfo ci) {
-		if (LG2_ABSOLUTE_INVISIBILITY_BYPASS.get()) {
-			return;
-		}
-
 		Object self = this;
 		if (!(self instanceof ServerGamePacketListenerImpl gameListener)) {
 			return;
@@ -52,6 +48,9 @@ public abstract class ServerCommonPacketListenerAbsoluteInvisibilityMixin {
 
 		ServerPlayer receiver = gameListener.player;
 		if (receiver == null) {
+			return;
+		}
+		if (LG2_ABSOLUTE_INVISIBILITY_BYPASS.get()) {
 			return;
 		}
 
@@ -173,48 +172,38 @@ public abstract class ServerCommonPacketListenerAbsoluteInvisibilityMixin {
 				}
 		}
 
-		if (packet instanceof ClientboundBossEventPacket bossEventPacket) {
-			ClientboundBossEventPacket replacement = ServerBossBarVisibilitySystem.rewriteOutgoingBossEventPacket(receiver, bossEventPacket);
-			if (replacement != bossEventPacket) {
-				ci.cancel();
-				// A null replacement deliberately suppresses an orphaned UPDATE_* event.
-				// It must never be passed into ServerCommonPacketListenerImpl#send.
-				if (replacement == null) {
-					return;
-				}
-				LG2_ABSOLUTE_INVISIBILITY_BYPASS.set(true);
-				try {
-					if (listener == null) {
-						gameListener.send(replacement);
-					} else {
-						gameListener.send(replacement, listener);
-					}
-				} finally {
-					LG2_ABSOLUTE_INVISIBILITY_BYPASS.remove();
-				}
+		Packet<?> bossFilteredPacket = ServerBossBarVisibilitySystem.filterOutgoingPacket(receiver, packet);
+		if (bossFilteredPacket != packet) {
+			ci.cancel();
+			if (bossFilteredPacket == null) {
 				return;
 			}
-		}
-
-		if (packet instanceof ClientboundTrackedWaypointPacket waypointPacket
-				&& (com.lostglade.server.ServerRaceSystem.shouldSuppressMilkMouseWaypoint(receiver, waypointPacket)
-				|| com.lostglade.server.ServerRaceSystem.shouldSuppressKilkaSalmonWaypoint(receiver, waypointPacket))) {
-			ci.cancel();
+			LG2_ABSOLUTE_INVISIBILITY_BYPASS.set(true);
+			try {
+				if (listener == null) {
+					gameListener.send(bossFilteredPacket);
+				} else {
+					gameListener.send(bossFilteredPacket, listener);
+				}
+			} finally {
+				LG2_ABSOLUTE_INVISIBILITY_BYPASS.remove();
+			}
 			return;
 		}
 
 		Packet<?> seasonFilteredPacket = com.lostglade.server.SeasonStartSystem.filterOutgoingPacket(receiver, packet);
 		if (seasonFilteredPacket != packet) {
 			ci.cancel();
-			if (seasonFilteredPacket == null) {
+			Packet<?> visiblePacket = com.lostglade.server.ServerWaypointVisibilitySystem.filterOutgoingPacket(receiver, seasonFilteredPacket);
+			if (visiblePacket == null) {
 				return;
 			}
 			LG2_ABSOLUTE_INVISIBILITY_BYPASS.set(true);
 			try {
 				if (listener == null) {
-					gameListener.send(seasonFilteredPacket);
+					gameListener.send(visiblePacket);
 				} else {
-					gameListener.send(seasonFilteredPacket, listener);
+					gameListener.send(visiblePacket, listener);
 				}
 			} finally {
 				LG2_ABSOLUTE_INVISIBILITY_BYPASS.remove();
@@ -224,6 +213,52 @@ public abstract class ServerCommonPacketListenerAbsoluteInvisibilityMixin {
 
 		if (ServerAbsoluteInvisibilitySystem.shouldSuppressOutgoingPacket(receiver, packet)) {
 			ci.cancel();
+			return;
+		}
+
+		Packet<?> visiblePacket = com.lostglade.server.ServerWaypointVisibilitySystem.filterOutgoingPacket(receiver, packet);
+		if (visiblePacket != packet) {
+			ci.cancel();
+			if (visiblePacket == null) {
+				return;
+			}
+			LG2_ABSOLUTE_INVISIBILITY_BYPASS.set(true);
+			try {
+				if (listener == null) {
+					gameListener.send(visiblePacket);
+				} else {
+					gameListener.send(visiblePacket, listener);
+				}
+			} finally {
+				LG2_ABSOLUTE_INVISIBILITY_BYPASS.remove();
+			}
+			return;
+		}
+	}
+
+	@Redirect(
+			method = "send(Lnet/minecraft/network/protocol/Packet;Lio/netty/channel/ChannelFutureListener;)V",
+			at = @At(
+					value = "INVOKE",
+					target = "Lnet/minecraft/network/Connection;send(Lnet/minecraft/network/protocol/Packet;Lio/netty/channel/ChannelFutureListener;Z)V"
+			)
+	)
+	private void lg2$sendBossBarPacketToConnection(
+			Connection connection,
+			Packet<?> packet,
+			ChannelFutureListener listener,
+			boolean flush
+	) {
+		Object self = this;
+		if (!(self instanceof ServerGamePacketListenerImpl gameListener)) {
+			connection.send(packet, listener, flush);
+			return;
+		}
+
+		ServerPlayer receiver = gameListener.player;
+		Packet<?> deliveredPacket = ServerBossBarVisibilitySystem.filterDeliveredPacket(receiver, packet);
+		if (deliveredPacket != null) {
+			connection.send(deliveredPacket, listener, flush);
 		}
 	}
 }

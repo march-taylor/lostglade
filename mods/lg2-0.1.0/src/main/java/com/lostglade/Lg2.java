@@ -21,6 +21,7 @@ import com.lostglade.item.ModItems;
 import com.lostglade.item.ModRecipeSerializers;
 import com.lostglade.server.ServerAbsoluteInvisibilitySystem;
 import com.lostglade.server.ServerBossBarVisibilitySystem;
+import com.lostglade.server.ServerWaypointVisibilitySystem;
 import com.lostglade.server.CameraAnimatedMapPlaybackSystem;
 import com.lostglade.server.CameraCaptureSystem;
 import com.lostglade.server.CameraMediaCache;
@@ -99,6 +100,7 @@ public class Lg2 implements ModInitializer {
 		BrownBedDisplaySystem.register();
 		RainbowHarnessColorSystem.register();
 		ServerBossBarVisibilitySystem.register();
+		ServerWaypointVisibilitySystem.register();
 		MapImageRenderSystem.register();
 		CameraCaptureSystem.register();
 		CameraVideoRecordingSystem.register();

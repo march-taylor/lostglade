@@ -4,6 +4,9 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.protocol.Packet;
+import net.minecraft.network.protocol.game.ClientGamePacketListener;
+import net.minecraft.network.protocol.game.ClientboundBundlePacket;
 import net.minecraft.network.protocol.game.ClientboundBossEventPacket;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
@@ -12,7 +15,11 @@ import net.minecraft.world.BossEvent;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 public final class ServerBossBarVisibilitySystem {
@@ -24,21 +31,29 @@ public final class ServerBossBarVisibilitySystem {
 	 */
 	private static final ThreadLocal<Boolean> SYNTHETIC_PACKET = ThreadLocal.withInitial(() -> false);
 	private static final Map<UUID, PlayerBossBarState> PLAYER_STATES = new HashMap<>();
+	private static final Map<UUID, Set<UUID>> DELIVERED_BOSS_BARS = new HashMap<>();
 
 	private ServerBossBarVisibilitySystem() {
 	}
 
 	public static void register() {
 		ServerTickEvents.END_SERVER_TICK.register(ServerBossBarVisibilitySystem::tick);
-		ServerLifecycleEvents.SERVER_STOPPING.register(server -> PLAYER_STATES.clear());
+		ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
+			PLAYER_STATES.clear();
+			DELIVERED_BOSS_BARS.clear();
+		});
 		// Bossbar ids belong to a single client connection. Keeping the previous
 		// connection's tracked bars after a reconnect lets a later synthetic
 		// UPDATE_NAME target an id the new client has never received an ADD for;
 		// vanilla then throws an NPE while handling the packet.
-		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) ->
-				PLAYER_STATES.remove(handler.player.getUUID()));
-		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) ->
-				PLAYER_STATES.remove(handler.player.getUUID()));
+		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
+			PLAYER_STATES.remove(handler.player.getUUID());
+			DELIVERED_BOSS_BARS.remove(handler.player.getUUID());
+		});
+		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
+			PLAYER_STATES.remove(handler.player.getUUID());
+			DELIVERED_BOSS_BARS.remove(handler.player.getUUID());
+		});
 	}
 
 	public static void setServerHudFocus(ServerPlayer player, boolean focused) {
@@ -79,6 +94,91 @@ public final class ServerBossBarVisibilitySystem {
 		}
 		reorderTrackedBossBarsBelowServerHud(player, state);
 		state.needsReorder = false;
+	}
+
+	public static Packet<?> filterOutgoingPacket(ServerPlayer receiver, Packet<?> packet) {
+		if (receiver == null || packet == null) {
+			return packet;
+		}
+		if (packet instanceof ClientboundBundlePacket bundlePacket) {
+			return filterBundle(receiver, bundlePacket);
+		}
+		if (packet instanceof ClientboundBossEventPacket bossEventPacket) {
+			return rewriteOutgoingBossEventPacket(receiver, bossEventPacket);
+		}
+		return packet;
+	}
+
+	private static Packet<?> filterBundle(ServerPlayer receiver, ClientboundBundlePacket bundlePacket) {
+		List<Packet<? super ClientGamePacketListener>> visiblePackets = new ArrayList<>();
+		boolean changed = false;
+		for (Packet<? super ClientGamePacketListener> nestedPacket : bundlePacket.subPackets()) {
+			Packet<?> filteredPacket = filterOutgoingPacket(receiver, nestedPacket);
+			if (filteredPacket == null) {
+				changed = true;
+				continue;
+			}
+			if (filteredPacket != nestedPacket) {
+				changed = true;
+			}
+			@SuppressWarnings("unchecked")
+			Packet<? super ClientGamePacketListener> gamePacket = (Packet<? super ClientGamePacketListener>) filteredPacket;
+			visiblePackets.add(gamePacket);
+		}
+		if (!changed) {
+			return bundlePacket;
+		}
+		return visiblePackets.isEmpty() ? null : new ClientboundBundlePacket(visiblePackets);
+	}
+
+	public static Packet<?> filterDeliveredPacket(ServerPlayer receiver, Packet<?> packet) {
+		if (receiver == null || packet == null) {
+			return packet;
+		}
+		if (packet instanceof ClientboundBundlePacket bundlePacket) {
+			return filterDeliveredBundle(receiver, bundlePacket);
+		}
+		if (!(packet instanceof ClientboundBossEventPacket bossEventPacket)) {
+			return packet;
+		}
+		BossBarPacketUpdate update = BossBarPacketUpdate.from(bossEventPacket);
+		if (update == null) {
+			return packet;
+		}
+		Set<UUID> delivered = DELIVERED_BOSS_BARS.computeIfAbsent(
+				receiver.getUUID(), ignored -> new HashSet<>()
+		);
+		if (update.type == BossBarPacketType.ADD) {
+			delivered.add(update.id);
+			return packet;
+		}
+		if (update.type == BossBarPacketType.REMOVE) {
+			delivered.remove(update.id);
+			return packet;
+		}
+		return delivered.contains(update.id) ? packet : null;
+	}
+
+	private static Packet<?> filterDeliveredBundle(ServerPlayer receiver, ClientboundBundlePacket bundlePacket) {
+		List<Packet<? super ClientGamePacketListener>> visiblePackets = new ArrayList<>();
+		boolean changed = false;
+		for (Packet<? super ClientGamePacketListener> nestedPacket : bundlePacket.subPackets()) {
+			Packet<?> filteredPacket = filterDeliveredPacket(receiver, nestedPacket);
+			if (filteredPacket == null) {
+				changed = true;
+				continue;
+			}
+			if (filteredPacket != nestedPacket) {
+				changed = true;
+			}
+			@SuppressWarnings("unchecked")
+			Packet<? super ClientGamePacketListener> gamePacket = (Packet<? super ClientGamePacketListener>) filteredPacket;
+			visiblePackets.add(gamePacket);
+		}
+		if (!changed) {
+			return bundlePacket;
+		}
+		return visiblePackets.isEmpty() ? null : new ClientboundBundlePacket(visiblePackets);
 	}
 
 	public static ClientboundBossEventPacket rewriteOutgoingBossEventPacket(ServerPlayer receiver, ClientboundBossEventPacket packet) {

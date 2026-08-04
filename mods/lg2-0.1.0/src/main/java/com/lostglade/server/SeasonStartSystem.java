@@ -165,6 +165,12 @@ public final class SeasonStartSystem {
 	private static final long INTRO_JUMP_REPEAT_TICKS = 20L * 4L;
 	private static final long INTRO_AIR_PUNCH_REPEAT_TICKS = 20L * 5L;
 	private static final long INTRO_TARGET_REACTION_REPEAT_TICKS = 20L * 9L;
+	// EXIT signs are deliberately a rare bit of atmosphere in the blind private
+	// tutorial.  They are not navigation: every sign is short-lived, private to
+	// one player and faces a random direction.
+	private static final long PERSONAL_EXIT_SIGN_MIN_INTERVAL_TICKS = 20L * 18L;
+	private static final long PERSONAL_EXIT_SIGN_INTERVAL_VARIATION_TICKS = 20L * 16L;
+	private static final long PERSONAL_EXIT_SIGN_LIFETIME_TICKS = 20L * 6L;
 	private static final long GUIDANCE_EVALUATE_TICKS = 4L;
 	private static final long GUIDANCE_MIN_VOICE_GAP_TICKS = 20L;
 	private static final long GUIDANCE_CATEGORY_COOLDOWN_TICKS = 10L;
@@ -472,6 +478,8 @@ public final class SeasonStartSystem {
 	private static final int SHARED_LAUNCH_RACE_CONTROLS_PERCENT = 85;
 	private static final long MENU_EXPLANATION_DELAY_TICKS = 0L;
 	private static final String STARTUP_WORLDGEN_DISPLAY_TAG = "lg2_season_start_display";
+	private static final String PERSONAL_EXIT_SIGN_DISPLAY_TAG = "lg2_season_start_exit_sign";
+	private static final String PERSONAL_EXIT_SIGN_OWNER_TAG_PREFIX = "lg2_season_start_exit_sign_owner:";
 	private static final int STARTUP_WORLDGEN_FRAME_COUNT = 35;
 	private static final float STARTUP_WORLDGEN_VIEW_RANGE = 96.0F;
 	private static final float STARTUP_WORLDGEN_MARGIN_BLOCKS = 8.0F;
@@ -837,6 +845,9 @@ public final class SeasonStartSystem {
 		if (receiver == null || entity == null || entity == receiver || !active) {
 			return false;
 		}
+		if (entity.getTags().contains(PERSONAL_EXIT_SIGN_DISPLAY_TAG)) {
+			return !entity.getTags().contains(personalExitSignOwnerTag(receiver.getUUID()));
+		}
 		if (entity instanceof ServerPlayer subject) {
 			return shouldHidePlayerFrom(receiver, subject);
 		}
@@ -863,6 +874,9 @@ public final class SeasonStartSystem {
 	public static boolean shouldBlockEntityInteraction(ServerPlayer actor, Entity target) {
 		if (actor == null || target == null || !active) {
 			return false;
+		}
+		if (target.getTags().contains(PERSONAL_EXIT_SIGN_DISPLAY_TAG)) {
+			return true;
 		}
 		if (target instanceof ServerPlayer targetPlayer) {
 			return shouldHidePlayerFrom(actor, targetPlayer);
@@ -1417,10 +1431,6 @@ public final class SeasonStartSystem {
 		long nowTick = level.getGameTime();
 		state.lastActivityTick = nowTick;
 		if (nowTick < state.guidanceNarrationGateTick) {
-			if (isLookingAtIntroOre(player, slot) && shouldFireIntroTargetReaction(state, nowTick)) {
-				interruptAndFastForwardPlayerNarration(player, state, nowTick);
-				fireIntroTargetReaction(level.getServer(), player, state, nowTick);
-			}
 			updateObservationBaseline(player, state);
 			return;
 		}
@@ -1443,6 +1453,7 @@ public final class SeasonStartSystem {
 
 	private static void onServerStarted(MinecraftServer server) {
 		loadState(server);
+		clearPersonalExitSigns(server == null ? null : server.overworld());
 		beginWorldRevealSnapshotLoad(server);
 		sceneBoundaryPhysicsFrozen = active || worldRevealActive;
 		releaseSceneBuildFlight(server);
@@ -2021,6 +2032,10 @@ public final class SeasonStartSystem {
 		if (slot == null) {
 			return;
 		}
+		// Reconnecting is the one time a private-scene presentation must be
+		// re-applied. During normal ticks it is left alone: the tutorial does not
+		// need to keep rewriting the player's game mode and effects every 50 ms.
+		state.seasonStartPresentationApplied = false;
 		teleportPlayer(player, overworld, slot.spawnPos, slot.yaw);
 		if (state.phase == PlayerPhase.WAITING_START) {
 			ensureWaitingStartPlayerState(player, state, slot);
@@ -2055,9 +2070,13 @@ public final class SeasonStartSystem {
 		if (slot == null) {
 			return;
 		}
+		if (state.phase != PlayerPhase.ISOLATED && state.phase != PlayerPhase.GUIDED_TO_SERVER) {
+			clearPersonalExitSign(level, state);
+		}
 
 		if (state.phase == PlayerPhase.ISOLATED) {
 			ensureIntroPlayerState(player, state, slot);
+			tickPersonalExitSign(level, player, state);
 			tickIsolatedPhaseReactions(server, player, state, slot);
 			tickIntroOreGuidance(server, player, state, slot);
 			return;
@@ -2071,6 +2090,7 @@ public final class SeasonStartSystem {
 
 		if (state.phase == PlayerPhase.GUIDED_TO_SERVER) {
 			ensureGuidedPlayerState(player, state, slot);
+			tickPersonalExitSign(level, player, state);
 			tickGuidance(server, player, state);
 			return;
 		}
@@ -2081,9 +2101,8 @@ public final class SeasonStartSystem {
 			return;
 		}
 
-		if (state.phase == PlayerPhase.SHARED) {
-			ensureSharedPlayerState(player);
-		}
+		// Shared/free presentation is applied when entering the phase (and on
+		// reconnect in assignOrRestorePlayer), not continuously from this tick.
 	}
 
 	private static void tickWaitingStart(MinecraftServer server, ServerPlayer player, PlayerSceneState state) {
@@ -2102,6 +2121,92 @@ public final class SeasonStartSystem {
 		state.nextStartPromptTick = nowTick + WAITING_START_REPEAT_TICKS;
 	}
 
+	private static void tickPersonalExitSign(ServerLevel level, ServerPlayer player, PlayerSceneState state) {
+		if (level == null || player == null || state == null) {
+			return;
+		}
+		long nowTick = level.getGameTime();
+		if (!player.hasEffect(MobEffects.BLINDNESS)) {
+			clearPersonalExitSign(level, state);
+			return;
+		}
+		if (state.personalExitSignId != null && nowTick >= state.personalExitSignExpiresAtTick) {
+			clearPersonalExitSign(level, state);
+		}
+		if (state.personalExitSignId != null || nowTick < state.nextPersonalExitSignTick) {
+			return;
+		}
+
+		Random random = new Random(player.getUUID().getMostSignificantBits()
+				^ player.getUUID().getLeastSignificantBits() ^ nowTick);
+		// Keep the apparition in the current field of view, but do not derive its
+		// facing or its position from the route target. It is explicitly a false
+		// exit sign, never a second navigation system.
+		float placementYaw = player.getYRot() + (random.nextFloat() - 0.5F) * 60.0F;
+		double placementRadians = Math.toRadians(placementYaw);
+		double distance = 4.5D + random.nextDouble() * 2.5D;
+		double x = player.getX() - Math.sin(placementRadians) * distance;
+		double z = player.getZ() + Math.cos(placementRadians) * distance;
+		double y = Math.min(level.getMaxY() - 1.5D, Math.max(level.getMinY() + 1.5D, player.getEyeY() - 0.45D));
+		Display.ItemDisplay sign = new Display.ItemDisplay(EntityType.ITEM_DISPLAY, level);
+		sign.addTag(PERSONAL_EXIT_SIGN_DISPLAY_TAG);
+		sign.addTag(personalExitSignOwnerTag(player.getUUID()));
+		sign.setPos(x, y, z);
+		sign.setYRot(random.nextFloat() * 360.0F);
+		sign.setXRot(0.0F);
+		sign.setYHeadRot(sign.getYRot());
+		sign.setYBodyRot(sign.getYRot());
+		sign.setItemStack(new ItemStack(ModBlocks.EXIT_SIGN_ITEM));
+		sign.setItemTransform(ItemDisplayContext.FIXED);
+		sign.setBillboardConstraints(Display.BillboardConstraints.FIXED);
+		sign.setTransformation(new Transformation(
+				new Vector3f(), new Quaternionf(), new Vector3f(1.75F, 1.75F, 1.75F), new Quaternionf()
+		));
+		sign.setBrightnessOverride(Brightness.FULL_BRIGHT);
+		sign.setNoGravity(true);
+		sign.setInvulnerable(true);
+		sign.setSilent(true);
+		sign.setShadowRadius(0.0F);
+		sign.setShadowStrength(0.0F);
+		sign.setViewRange(1.0F);
+		ItemDisplayHitboxHelper.clear(sign);
+		level.addFreshEntity(sign);
+		state.personalExitSignId = sign.getUUID();
+		state.personalExitSignExpiresAtTick = nowTick + PERSONAL_EXIT_SIGN_LIFETIME_TICKS;
+		state.nextPersonalExitSignTick = state.personalExitSignExpiresAtTick
+				+ PERSONAL_EXIT_SIGN_MIN_INTERVAL_TICKS
+				+ random.nextInt((int) PERSONAL_EXIT_SIGN_INTERVAL_VARIATION_TICKS + 1);
+	}
+
+	private static void clearPersonalExitSign(ServerLevel level, PlayerSceneState state) {
+		if (state == null) {
+			return;
+		}
+		if (level != null && state.personalExitSignId != null) {
+			Entity existing = level.getEntity(state.personalExitSignId);
+			if (existing != null && existing.getTags().contains(PERSONAL_EXIT_SIGN_DISPLAY_TAG)) {
+				existing.discard();
+			}
+		}
+		state.personalExitSignId = null;
+		state.personalExitSignExpiresAtTick = Long.MIN_VALUE;
+	}
+
+	private static void clearPersonalExitSigns(ServerLevel level) {
+		if (level == null) {
+			return;
+		}
+		for (Entity entity : level.getAllEntities()) {
+			if (entity.getTags().contains(PERSONAL_EXIT_SIGN_DISPLAY_TAG)) {
+				entity.discard();
+			}
+		}
+	}
+
+	private static String personalExitSignOwnerTag(UUID playerId) {
+		return PERSONAL_EXIT_SIGN_OWNER_TAG_PREFIX + playerId;
+	}
+
 	private static void tickGuidance(MinecraftServer server, ServerPlayer player, PlayerSceneState state) {
 		if (server == null || player == null || state == null || player.level() == null || serverAnchor == null) {
 			return;
@@ -2109,6 +2214,12 @@ public final class SeasonStartSystem {
 		long nowTick = player.level().getGameTime();
 		tickLockedGuidedBitcoinSlot(server, player, state, nowTick);
 		if (tickLostGuidedBitcoinRecovery(server, player, state, nowTick)) {
+			return;
+		}
+		// Mining the first ore starts an explanatory sequence.  Walking, turning or
+		// reaching the server does not make that explanation obsolete, so none of
+		// the reactive navigation branches may replace it before it has finished.
+		if (nowTick < state.guidanceNarrationGateTick) {
 			return;
 		}
 		GuidanceSnapshot serverSnapshot = resolveGuidanceSnapshot(player);
@@ -2880,11 +2991,9 @@ public final class SeasonStartSystem {
 		boolean lookingAtOre = isLookingAtIntroOre(player, slot);
 		if (nowTick < state.guidanceNarrationGateTick) {
 			state.lastActivityTick = nowTick;
-			if (lookingAtOre && shouldFireIntroTargetReaction(state, nowTick)) {
-				interruptAndFastForwardPlayerNarration(player, state, nowTick);
-				fireIntroTargetReaction(server, player, state, nowTick);
-			}
-			announceServerBeforeIntroBitcoin(server, player, state, slot, nowTick);
+			// The opening script is intentionally non-interruptible. In particular,
+			// merely looking at the ore used to clear the channel just before the
+			// "break it" line was heard.
 			updateObservationBaseline(player, state);
 			return;
 		}
@@ -3458,6 +3567,7 @@ public final class SeasonStartSystem {
 		}
 		long nowTick = player.level() == null ? 0L : player.level().getGameTime();
 		state.phase = PlayerPhase.RESTORING;
+		clearPersonalExitSign(player.level() instanceof ServerLevel level ? level : null, state);
 		state.poweredServer = true;
 		state.nextGuidanceTick = Long.MAX_VALUE;
 		state.nextGuidanceVoiceTick = Long.MAX_VALUE;
@@ -3543,6 +3653,7 @@ public final class SeasonStartSystem {
 		INTRO_BLINDNESS.clear(player);
 		state.sharedVisionRestored = true;
 		state.phase = PlayerPhase.SHARED;
+		clearPersonalExitSign(player.level() instanceof ServerLevel level ? level : null, state);
 		state.restoreVisionTick = Long.MAX_VALUE;
 		stateDirty = true;
 		applySharedPlayerState(player);
@@ -7581,11 +7692,7 @@ public final class SeasonStartSystem {
 			ServerLevel overworld = server == null ? null : server.overworld();
 			teleportPlayer(player, overworld, slot.spawnPos, slot.yaw);
 		}
-		player.setSilent(true);
-		setSeasonStartGameMode(player, GameType.SURVIVAL);
-		INTRO_BLINDNESS.ensure(player, 0);
-		clearLegacyIntroInvisibility(player);
-		removeLegacyIntroTool(player);
+		applyPrivateScenePresentation(player, state, GameType.SURVIVAL);
 	}
 
 	private static void ensureGuidedPlayerState(ServerPlayer player, PlayerSceneState state, SlotDefinition slot) {
@@ -7601,11 +7708,7 @@ public final class SeasonStartSystem {
 		if (!player.level().dimension().equals(Level.OVERWORLD) || !isInsideFootprint(barrierGeometry, player.blockPosition())) {
 			teleportPlayer(player, level, target, slot.yaw);
 		}
-		player.setSilent(true);
-		setSeasonStartGameMode(player, GameType.SURVIVAL);
-		INTRO_BLINDNESS.ensure(player, 0);
-		clearLegacyIntroInvisibility(player);
-		removeLegacyIntroTool(player);
+		applyPrivateScenePresentation(player, state, GameType.SURVIVAL);
 	}
 
 	/** Restores the same escaped tutorial coin after reconnecting, never a duplicate. */
@@ -7697,32 +7800,28 @@ public final class SeasonStartSystem {
 			ServerLevel overworld = server == null ? null : server.overworld();
 			teleportPlayer(player, overworld, target, slot.yaw);
 		}
-		player.setSilent(true);
-		setSeasonStartGameMode(player, GameType.ADVENTURE);
-		INTRO_BLINDNESS.ensure(player, 0);
-		clearLegacyIntroInvisibility(player);
-		removeLegacyIntroTool(player);
-	}
-
-	private static void ensureSharedPlayerState(ServerPlayer player) {
-		if (player == null) {
-			return;
-		}
-		applySharedPlayerState(player);
+		applyPrivateScenePresentation(player, state, GameType.ADVENTURE);
 	}
 
 	private static void ensureRestoringPlayerState(ServerPlayer player, PlayerSceneState state) {
 		if (player == null || state == null) {
 			return;
 		}
-		setSeasonStartGameMode(player, GameType.SURVIVAL);
-		player.setSilent(true);
 		if (!state.sharedVisionRestored) {
-			INTRO_BLINDNESS.ensure(player, 0);
-		} else {
-			INTRO_BLINDNESS.clear(player);
+			applyPrivateScenePresentation(player, state, GameType.SURVIVAL);
 		}
+	}
+
+	private static void applyPrivateScenePresentation(ServerPlayer player, PlayerSceneState state, GameType targetMode) {
+		if (player == null || state == null || targetMode == null || state.seasonStartPresentationApplied) {
+			return;
+		}
+		player.setSilent(true);
+		setSeasonStartGameMode(player, targetMode);
+		INTRO_BLINDNESS.ensure(player, 0);
 		clearLegacyIntroInvisibility(player);
+		removeLegacyIntroTool(player);
+		state.seasonStartPresentationApplied = true;
 	}
 
 	private static void applySharedPlayerState(ServerPlayer player) {
@@ -8747,8 +8846,11 @@ public final class SeasonStartSystem {
 		long nowTick = player.level() == null ? 0L : player.level().getGameTime();
 		SeasonStartVoiceSystem.clearPlayerChannel(player);
 		state.phase = PlayerPhase.ISOLATED;
+		state.seasonStartPresentationApplied = false;
 		state.introOreRevealed = false;
 		state.nextStartPromptTick = Long.MAX_VALUE;
+		state.nextPersonalExitSignTick = nowTick + PERSONAL_EXIT_SIGN_MIN_INTERVAL_TICKS;
+		state.personalExitSignExpiresAtTick = Long.MIN_VALUE;
 		state.guidanceNarrationGateTick = nowTick + resolveTriggerSequenceDurationTicks("player_intro_assigned");
 		stateDirty = true;
 		primeObservationState(player, state);
@@ -9009,6 +9111,7 @@ public final class SeasonStartSystem {
 		private long restoreVisionTick = Long.MAX_VALUE;
 		private boolean sharedVisionRestored = false;
 		private boolean pendingSharedPeersLine = false;
+		private boolean seasonStartPresentationApplied = false;
 		private long guidanceNarrationGateTick = 0L;
 		private long nextGuidanceTick = 0L;
 		private long nextGuidanceVoiceTick = 0L;
@@ -9076,6 +9179,9 @@ public final class SeasonStartSystem {
 		private long nextJumpReactionTick = 0L;
 		private long nextAirPunchReactionTick = 0L;
 		private long nextIntroTargetReactionTick = 0L;
+		private UUID personalExitSignId;
+		private long personalExitSignExpiresAtTick = Long.MIN_VALUE;
+		private long nextPersonalExitSignTick = Long.MAX_VALUE;
 		private long lastObservationTick = Long.MIN_VALUE;
 		private double lastObservedX;
 		private double lastObservedY;

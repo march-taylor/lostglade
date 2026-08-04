@@ -1,6 +1,7 @@
 package com.lostglade.mixin;
 
 import com.lostglade.server.DroneSystem;
+import com.lostglade.server.DroneInteractionDispatcher;
 import com.lostglade.server.SeasonStartSystem;
 import net.minecraft.network.protocol.game.ServerboundAcceptTeleportationPacket;
 import net.minecraft.network.protocol.game.ServerboundInteractPacket;
@@ -11,8 +12,6 @@ import net.minecraft.network.protocol.game.ServerboundUseItemPacket;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.network.ServerGamePacketListenerImpl;
-import net.minecraft.world.InteractionHand;
-import net.minecraft.world.phys.Vec3;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
@@ -45,27 +44,7 @@ public abstract class ServerGamePacketListenerDroneControlMixin {
 			ci.cancel();
 			return;
 		}
-		final boolean[] handled = {false};
-		packet.dispatch(new ServerboundInteractPacket.Handler() {
-			@Override
-			public void onInteraction(InteractionHand hand) {
-				handled[0] = DroneSystem.handleControlledUseItem(ServerGamePacketListenerDroneControlMixin.this.player, hand);
-			}
-
-			@Override
-			public void onInteraction(InteractionHand hand, Vec3 location) {
-				handled[0] = DroneSystem.handleControlledUseItem(ServerGamePacketListenerDroneControlMixin.this.player, hand);
-			}
-
-			@Override
-			public void onAttack() {
-				handled[0] = DroneSystem.handleControlledAttackInteraction(
-						ServerGamePacketListenerDroneControlMixin.this.player,
-						packet
-				);
-			}
-		});
-		if (handled[0]) {
+		if (DroneInteractionDispatcher.handle(this.player, packet)) {
 			ci.cancel();
 		}
 	}
