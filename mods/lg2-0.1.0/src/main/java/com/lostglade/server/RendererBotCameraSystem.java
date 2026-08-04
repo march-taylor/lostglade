@@ -1204,6 +1204,27 @@ public final class RendererBotCameraSystem {
 		return stream != null && !stream.isStale();
 	}
 
+	/**
+	 * Whether this renderer bot is currently serving a real-time view rather
+	 * than the low-rate camera-hotbar warm-up.  Map tiles use the same client
+	 * world renderer, so they must yield while a monitor is receiving video.
+	 */
+	public static boolean hasActiveRealtimeLiveStream(MinecraftServer server) {
+		if (server == null) {
+			return false;
+		}
+		for (ActiveLiveStream stream : ACTIVE_LIVE_STREAMS.values()) {
+			if (stream == null || stream.server() != server || stream.isStale()) {
+				continue;
+			}
+			LiveStreamSpec spec = stream.spec();
+			if (spec != null && spec.targetFps() > CAMERA_HOTBAR_WARMUP_FPS) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	public static boolean hasHealthyLiveStreamFollowingEntity(UUID entityUuid) {
 		if (entityUuid == null) {
 			return false;
@@ -3078,10 +3099,17 @@ public final class RendererBotCameraSystem {
 		if (botUuid == null || PENDING_MAP_TILE_CAPTURES.isEmpty()) {
 			return List.of();
 		}
+		// A map capture whose payload has already reached the client owns its
+		// shadow world until it completes.  Keep that one alive, but do not start
+		// another expensive top-down render while a real-time screen is active.
+		// This is deliberately checked here as well as in the map scheduler:
+		// visible map screens can enqueue work outside the background scheduler.
+		boolean deferNewMapTiles = hasActiveRealtimeLiveStreamForBot(botUuid);
 		List<PendingMapTileCapture> candidates = new ArrayList<>();
 		for (PendingMapTileCapture capture : PENDING_MAP_TILE_CAPTURES.values()) {
 			if (capture != null
 					&& botUuid.equals(capture.botUuid())
+					&& (!deferNewMapTiles || capture.clientRequestSent())
 					&& !capture.pixelsFuture().isDone()) {
 				candidates.add(capture);
 			}
@@ -3091,6 +3119,22 @@ public final class RendererBotCameraSystem {
 			return candidates;
 		}
 		return new ArrayList<>(candidates.subList(0, MAX_ACTIVE_MAP_TILE_SHADOW_TARGETS));
+	}
+
+	private static boolean hasActiveRealtimeLiveStreamForBot(UUID botUuid) {
+		if (botUuid == null) {
+			return false;
+		}
+		for (ActiveLiveStream stream : ACTIVE_LIVE_STREAMS.values()) {
+			if (stream == null || !botUuid.equals(stream.botUuid()) || stream.isStale()) {
+				continue;
+			}
+			LiveStreamSpec spec = stream.spec();
+			if (spec != null && spec.targetFps() > CAMERA_HOTBAR_WARMUP_FPS) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private static boolean isPendingMapTileCapture(PendingMapTileCapture capture) {

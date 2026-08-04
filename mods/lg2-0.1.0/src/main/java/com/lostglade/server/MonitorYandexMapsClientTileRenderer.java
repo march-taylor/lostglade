@@ -119,6 +119,14 @@ final class MonitorYandexMapsClientTileRenderer {
 		if (!rendererBotReady || Math.floorMod(server.getTickCount(), BACKGROUND_REFRESH_INTERVAL_TICKS) != 0) {
 			return;
 		}
+		// A top-down tile is a full additional world render on the same camera
+		// client as a live monitor feed.  It used to be started in bursts every
+		// 20 ticks, which showed up as a regular hitch in otherwise smooth video.
+		// The cache is background work: resume it as soon as the real-time feed
+		// stops instead of competing with it.
+		if (RendererBotCameraSystem.hasActiveRealtimeLiveStream(server)) {
+			return;
+		}
 		List<DimensionTileCache> caches;
 		synchronized (LOCK) {
 			if (CACHES.isEmpty()) {
