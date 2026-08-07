@@ -9,6 +9,7 @@ import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.IronBarsBlock;
 import net.minecraft.world.level.block.LadderBlock;
 import net.minecraft.world.level.block.WallTorchBlock;
+import net.minecraft.world.level.block.StandingSignBlock;
 import net.minecraft.world.level.block.WallSignBlock;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
@@ -29,7 +30,7 @@ public final class BackroomsSpecialRooms {
 	private static final double UPPER_LADDER_CRAWL_Y_OFFSET = 0.8D;
 	private static final ThreadLocal<ProfileCache> PROFILE_CACHE = ThreadLocal.withInitial(ProfileCache::new);
 	private static final BlockState BACKROOMS_DOOR_BLOCK = ModBlocks.BACKROOMS_DOOR.defaultBlockState();
-	private static final BlockState EXIT_SIGN_WALL_BLOCK = ModBlocks.EXIT_WALL_SIGN.defaultBlockState();
+	private static final BlockState EXIT_SIGN_BLOCK = ModBlocks.EXIT_SIGN.defaultBlockState();
 	private static final BlockState CHEST_BLOCK = Blocks.CHEST.defaultBlockState();
 	private static final BlockState OAK_DOOR_BLOCK = Blocks.OAK_DOOR.defaultBlockState();
 	private static final BlockState OAK_WALL_SIGN_BLOCK = Blocks.OAK_WALL_SIGN.defaultBlockState();
@@ -48,20 +49,22 @@ public final class BackroomsSpecialRooms {
 			int z,
 			int floorY,
 			int ceilingY,
-			Direction exitSignFacing,
+			Integer exitSignRotation,
 			BlockState lightBlock,
 			BlockState air
 	) {
 		BlockState floor = randomizedBackroomsBlock(x, floorY, z);
-		BlockState lower = doorPlacement != null
+		BlockState lower = exitSignRotation != null
+				? createExitSignState(exitSignRotation)
+				: doorPlacement != null
 				? createDoorState(doorPlacement, DoubleBlockHalf.LOWER)
 				: (corridor ? air : randomizedBackroomsBlock(x, floorY + 1, z));
-		BlockState upper = doorPlacement != null
+		BlockState upper = exitSignRotation != null
+				? air
+				: doorPlacement != null
 				? createDoorState(doorPlacement, DoubleBlockHalf.UPPER)
 				: (corridor ? air : randomizedBackroomsBlock(x, floorY + 2, z));
-		BlockState top = exitSignFacing != null
-				? createExitSignState(exitSignFacing)
-				: (corridor ? air : randomizedBackroomsBlock(x, floorY + 3, z));
+		BlockState top = corridor ? air : randomizedBackroomsBlock(x, floorY + 3, z);
 		BlockState ceiling = ceilingLight ? lightBlock : randomizedBackroomsBlock(x, ceilingY, z);
 		return new ColumnStates(floor, lower, upper, top, ceiling);
 	}
@@ -2236,8 +2239,8 @@ public final class BackroomsSpecialRooms {
 				.setValue(net.minecraft.world.level.block.DoorBlock.HALF, half);
 	}
 
-	private static BlockState createExitSignState(Direction facing) {
-		return EXIT_SIGN_WALL_BLOCK.setValue(WallSignBlock.FACING, facing);
+	private static BlockState createExitSignState(int rotation) {
+		return EXIT_SIGN_BLOCK.setValue(StandingSignBlock.ROTATION, rotation);
 	}
 
 	private static BlockState createLadderState(Direction facing) {

@@ -6461,7 +6461,7 @@
           "targetScreenId": "",
           "upgradeId": "it_drone_auto_aim",
           "pricesBitcoins": [
-            1700
+            1400
           ],
           "icon": {
             "fallbackItem": "minecraft:calibrated_sculk_sensor",

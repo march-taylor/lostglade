@@ -49,6 +49,8 @@ import net.fabricmc.fabric.api.event.player.UseItemCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
+import com.lostglade.network.Lg2Payloads;
 import net.lionarius.skinrestorer.SkinRestorer;
 import net.lionarius.skinrestorer.mineskin.MineskinService;
 import net.lionarius.skinrestorer.skin.SkinService;
@@ -1526,6 +1528,17 @@ public final class ServerRaceSystem {
 	public static void register() {
 		rebuildCache();
 		registerCommands();
+		ServerPlayNetworking.registerGlobalReceiver(Lg2Payloads.RaceAbilityC2SPayload.TYPE, (payload, context) -> {
+			RaceAbilitySlot[] slots = {
+					RaceAbilitySlot.ATTACK,
+					RaceAbilitySlot.DEFENSE,
+					RaceAbilitySlot.UNIQUE_ABILITY,
+					RaceAbilitySlot.SHNYAGA
+			};
+			if (payload.slot() >= 0 && payload.slot() < slots.length) {
+				useAbility(context.player(), slots[payload.slot()]);
+			}
+		});
 
 		ServerLifecycleEvents.SERVER_STARTED.register(server -> {
 			RaceConfig.load();
@@ -2282,6 +2295,14 @@ public final class ServerRaceSystem {
 		ServerPlayer player = context.getSource().getPlayer();
 		if (player == null) {
 			context.getSource().sendFailure(Component.literal(localizeRaceMessageText(null, "player_only")));
+			return 0;
+		}
+		return useAbility(player, slot);
+	}
+
+	/** Shared entry point for commands and the optional client-side race menu. */
+	public static int useAbility(ServerPlayer player, RaceAbilitySlot slot) {
+		if (player == null || slot == null || slot == RaceAbilitySlot.STOCK) {
 			return 0;
 		}
 

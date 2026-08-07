@@ -4,6 +4,7 @@ import com.lostglade.server.DroneSystem;
 import com.lostglade.server.RendererBotCameraSystem;
 import com.lostglade.server.RendererBotPresenceSystem;
 import com.lostglade.server.ServerMilkPocketDimensionSystem;
+import com.lostglade.server.SeasonStartSystem;
 import net.minecraft.server.level.ChunkMap;
 import net.minecraft.server.level.ChunkTrackingView;
 import net.minecraft.server.level.ServerPlayer;
@@ -31,6 +32,17 @@ public abstract class ChunkMapVirtualCameraTrackingMixin {
 
 		if (ServerMilkPocketDimensionSystem.shouldUsePocketChunkTracking(player)) {
 			ChunkTrackingView desiredView = ServerMilkPocketDimensionSystem.createPocketChunkTrackingView(player);
+			if (Objects.equals(player.getChunkTrackingView(), desiredView)) {
+				ci.cancel();
+				return;
+			}
+			((ChunkMapChunkTrackingInvoker) (Object) this).lg2$applyChunkTrackingView(player, desiredView);
+			ci.cancel();
+			return;
+		}
+
+		if (SeasonStartSystem.shouldUseStartupChunkTracking(player)) {
+			ChunkTrackingView desiredView = SeasonStartSystem.createStartupChunkTrackingView(player);
 			if (Objects.equals(player.getChunkTrackingView(), desiredView)) {
 				ci.cancel();
 				return;

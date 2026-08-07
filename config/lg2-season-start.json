@@ -2494,7 +2494,7 @@
     },
     {
       "id": "phase5_menu_progress_name",
-      "trigger": "player_menu_phase_started",
+      "trigger": "player_menu_opened",
       "audience": "player",
       "channel": "player",
       "audioFile": "voice/phase5_menu_progress_name.wav",

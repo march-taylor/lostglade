@@ -17,7 +17,7 @@ import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.StructureManager;
 import net.minecraft.world.level.block.EntityBlock;
 import net.minecraft.world.level.block.Blocks;
-import net.minecraft.world.level.block.WallSignBlock;
+import net.minecraft.world.level.block.StandingSignBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.ChestBlockEntity;
 import net.minecraft.world.level.block.entity.SignBlockEntity;
@@ -63,7 +63,7 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 	private static final BlockState BACKROOMS_LIGHT_BLOCK = ModBlocks.BACKROOMS_LIGHTBLOCK.defaultBlockState();
 	private static final BlockState BACKROOMS_BLOCK = ModBlocks.BACKROOMS_BLOCK.defaultBlockState();
 	private static final BlockState BACKROOMS_DOOR_BLOCK = ModBlocks.BACKROOMS_DOOR.defaultBlockState();
-	private static final BlockState EXIT_SIGN_WALL_BLOCK = ModBlocks.EXIT_WALL_SIGN.defaultBlockState();
+	private static final BlockState EXIT_SIGN_BLOCK = ModBlocks.EXIT_SIGN.defaultBlockState();
 	private static final long BACKROOMS_VARIANT_SALT = 0x4c47324241434b52L;
 	private static final BlockState AIR = Blocks.AIR.defaultBlockState();
 	private static final int CHUNK_LAYOUT_BORDER = 1;
@@ -126,8 +126,8 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 					}
 
 					ColumnLayout layout = layoutGrid.get(localX, localZ, levelIndex);
-					Direction exitSignFacing = layout.corridor
-							? layoutGrid.getExitSignFacing(localX, localZ, levelIndex)
+					Integer exitSignRotation = layout.corridor
+							? layoutGrid.getExitSignRotation(localX, localZ, levelIndex)
 							: null;
 					BackroomsSpecialRooms.ColumnStates columnStates = BackroomsSpecialRooms.createBaseStates(
 							layout.doorPlacement,
@@ -137,7 +137,7 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 							worldZ,
 							floorY,
 							ceilingY,
-							exitSignFacing,
+							exitSignRotation,
 							BACKROOMS_LIGHT_BLOCK,
 							AIR
 					);
@@ -257,8 +257,8 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 			}
 
 			ColumnLayout layout = getSharedColumnLayout(x, z, levelIndex);
-			Direction exitSignFacing = layout.corridor
-					? getExitSignFacingAt(x, z, levelIndex)
+			Integer exitSignRotation = layout.corridor
+					? getExitSignRotationAt(x, z, levelIndex)
 					: null;
 			BackroomsSpecialRooms.ColumnStates columnStates = BackroomsSpecialRooms.createBaseStates(
 					layout.doorPlacement,
@@ -268,7 +268,7 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 					z,
 					floorY,
 					ceilingY,
-					exitSignFacing,
+					exitSignRotation,
 					BACKROOMS_LIGHT_BLOCK,
 					AIR
 			);
@@ -344,10 +344,10 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 				.setValue(net.minecraft.world.level.block.DoorBlock.HALF, half);
 	}
 
-	private static Direction getExitSignFacingAt(int x, int z, int levelIndex) {
+	private static Integer getExitSignRotationAt(int x, int z, int levelIndex) {
 		long key = BlockPos.asLong(x, levelIndex, z);
 		GeneratorCache generatorCache = generatorCache();
-		Optional<Direction> cached = generatorCache.exitSignCache.get(key);
+		Optional<Integer> cached = generatorCache.exitSignCache.get(key);
 		if (cached != null) {
 			return cached.orElse(null);
 		}
@@ -357,9 +357,9 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 			int supportZ = z + supportDirection.getStepZ();
 			BackroomsLayout.DoorPlacement placement = getSharedColumnLayout(supportX, supportZ, levelIndex).doorPlacement;
 			if (placement != null && placement.facing() == supportDirection) {
-				Direction facing = supportDirection.getOpposite();
-				generatorCache.exitSignCache.put(key, Optional.of(facing));
-				return facing;
+				int rotation = (int) Math.floorMod(key ^ BACKROOMS_VARIANT_SALT, 16L);
+				generatorCache.exitSignCache.put(key, Optional.of(rotation));
+				return rotation;
 			}
 		}
 
@@ -371,8 +371,8 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 		return GENERATOR_CACHE.get();
 	}
 
-	private static BlockState createExitSignState(Direction facing) {
-		return EXIT_SIGN_WALL_BLOCK.setValue(WallSignBlock.FACING, facing);
+	private static BlockState createExitSignState(int rotation) {
+		return EXIT_SIGN_BLOCK.setValue(StandingSignBlock.ROTATION, rotation);
 	}
 
 	private static void setChunkBlock(ChunkAccess chunk, BlockPos.MutableBlockPos mutablePos, int localX, int y, int localZ, BlockState state) {
@@ -486,7 +486,7 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 			return this.layouts[index(localX + CHUNK_LAYOUT_BORDER, localZ + CHUNK_LAYOUT_BORDER, levelIndex - this.firstLevelIndex)];
 		}
 
-		Direction getExitSignFacing(int localX, int localZ, int levelIndex) {
+		Integer getExitSignRotation(int localX, int localZ, int levelIndex) {
 			int levelOffset = levelIndex - this.firstLevelIndex;
 			int gridX = localX + CHUNK_LAYOUT_BORDER;
 			int gridZ = localZ + CHUNK_LAYOUT_BORDER;
@@ -497,7 +497,8 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 						levelOffset
 				)];
 				if (support.doorPlacement != null && support.doorPlacement.facing() == supportDirection) {
-					return supportDirection.getOpposite();
+					long key = BlockPos.asLong(this.minBlockX + localX, levelIndex, this.minBlockZ + localZ);
+					return (int) Math.floorMod(key ^ BACKROOMS_VARIANT_SALT, 16L);
 				}
 			}
 			return null;
@@ -513,7 +514,7 @@ public final class BackroomsChunkGenerator extends ChunkGenerator {
 		private static final int MAX_EXIT_SIGN_CACHE = 131072;
 
 		final Map<Long, ColumnLayout> columnLayoutCache = createCappedCache(MAX_COLUMN_LAYOUT_CACHE);
-		final Map<Long, Optional<Direction>> exitSignCache = createCappedCache(MAX_EXIT_SIGN_CACHE);
+		final Map<Long, Optional<Integer>> exitSignCache = createCappedCache(MAX_EXIT_SIGN_CACHE);
 
 		private static <K, V> Map<K, V> createCappedCache(int maxSize) {
 			return new LinkedHashMap<>(256, 0.75F, true) {

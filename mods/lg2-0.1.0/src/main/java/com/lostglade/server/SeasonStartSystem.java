@@ -10,6 +10,7 @@ import com.lostglade.item.ModItems;
 import com.lostglade.util.ItemDisplayHitboxHelper;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.math.Transformation;
+import io.netty.buffer.Unpooled;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.entity.event.v1.ServerPlayerEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
@@ -21,6 +22,7 @@ import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.arguments.EntityArgument;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.core.registries.Registries;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.Holder;
@@ -32,11 +34,13 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.ChatType;
 import net.minecraft.network.chat.PlayerChatMessage;
+import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientboundAddEntityPacket;
 import net.minecraft.network.protocol.game.ClientboundAnimatePacket;
 import net.minecraft.network.protocol.game.ClientboundBlockUpdatePacket;
 import net.minecraft.network.protocol.game.ClientboundBundlePacket;
+import net.minecraft.network.protocol.game.ClientboundChunksBiomesPacket;
 import net.minecraft.network.protocol.game.ClientboundDisguisedChatPacket;
 import net.minecraft.network.protocol.game.ClientboundEntityEventPacket;
 import net.minecraft.network.protocol.game.ClientboundLevelParticlesPacket;
@@ -62,6 +66,7 @@ import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.dedicated.DedicatedServer;
 import net.minecraft.server.level.ServerBossEvent;
+import net.minecraft.server.level.ChunkTrackingView;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.permissions.Permissions;
@@ -97,9 +102,14 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.Property;
 import net.minecraft.world.level.chunk.ChunkGenerator;
+import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.chunk.LevelChunkSection;
+import net.minecraft.world.level.chunk.PalettedContainer;
+import net.minecraft.world.level.chunk.PalettedContainerFactory;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.levelgen.RandomState;
 import net.minecraft.world.level.material.FluidState;
+import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.storage.LevelResource;
 import net.minecraft.world.level.storage.LevelData;
 import net.minecraft.world.level.storage.TagValueOutput;
@@ -135,6 +145,7 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Consumer;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 
@@ -151,6 +162,24 @@ public final class SeasonStartSystem {
 	private static final int WORLD_REVEAL_SNAPSHOT_VERSION = 1;
 	private static final Set<Relative> ABSOLUTE_TELEPORT = EnumSet.noneOf(Relative.class);
 	private static final int DISSOLVE_BATCH_BLOCKS = 96;
+	// A one-chunk exterior buffer keeps the physical shell out of the client's
+	// edge-culling zone. The startup biome turns this buffer into black fog, so
+	// it cannot reveal the ordinary world behind the shell.
+	private static final int STARTUP_CHUNK_TRACKING_GUARD_RING = 1;
+	private static final int STARTUP_BIOME_CHUNKS_PER_TICK = 16;
+	private static final long STARTUP_BIOME_RESYNC_TICKS = 20L * 5L;
+	private static final ResourceKey<Biome> STARTUP_VOID_BIOME_KEY = ResourceKey.create(
+			Registries.BIOME,
+			Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "season_start_void")
+	);
+	private static final List<ResourceKey<Biome>> STARTUP_REVEAL_BIOME_KEYS = List.of(
+			STARTUP_VOID_BIOME_KEY,
+			ResourceKey.create(Registries.BIOME, Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "season_start_dawn_1")),
+			ResourceKey.create(Registries.BIOME, Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "season_start_dawn_2")),
+			ResourceKey.create(Registries.BIOME, Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "season_start_dawn_3")),
+			ResourceKey.create(Registries.BIOME, Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "season_start_dawn_4")),
+			ResourceKey.create(Registries.BIOME, Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "season_start_dawn_5"))
+	);
 	private static final long WAITING_START_INITIAL_PROMPT_TICKS = 20L * 3L;
 	private static final long WAITING_START_REPEAT_TICKS = 20L * 15L;
 	private static final ManagedInfiniteEffect INTRO_BLINDNESS = new ManagedInfiniteEffect(
@@ -166,8 +195,9 @@ public final class SeasonStartSystem {
 	private static final long INTRO_AIR_PUNCH_REPEAT_TICKS = 20L * 5L;
 	private static final long INTRO_TARGET_REACTION_REPEAT_TICKS = 20L * 9L;
 	// EXIT signs are deliberately a rare bit of atmosphere in the blind private
-	// tutorial.  They are not navigation: every sign is short-lived, private to
-	// one player and faces a random direction.
+	// tutorial. They are not navigation: every sign is short-lived, private to
+	// one player and faces a random direction. A player receives a fixed small
+	// budget for the whole scene, never a repeating stream of signs.
 	private static final long PERSONAL_EXIT_SIGN_MIN_INTERVAL_TICKS = 20L * 18L;
 	private static final long PERSONAL_EXIT_SIGN_INTERVAL_VARIATION_TICKS = 20L * 16L;
 	private static final long PERSONAL_EXIT_SIGN_LIFETIME_TICKS = 20L * 6L;
@@ -191,6 +221,7 @@ public final class SeasonStartSystem {
 	private static final long ROUTE_WRONG_WAY_GRACE_TICKS = 20L + 4L;
 	private static final long ROUTE_WRONG_WAY_REPEAT_TICKS = 20L * 4L;
 	private static final long ROUTE_PROGRESS_CUE_TICKS = 20L * 2L;
+	private static final long ROUTE_CONFUSION_MAX_TICKS = 20L * 60L * 3L;
 	private static final double ROUTE_WAYPOINT_REACHED_DISTANCE = 1.25D;
 	private static final double ROUTE_MOVEMENT_SQR = 0.045D * 0.045D;
 	private static final double ROUTE_PROGRESS_AWAY = 0.12D;
@@ -481,8 +512,9 @@ public final class SeasonStartSystem {
 	private static final String PERSONAL_EXIT_SIGN_DISPLAY_TAG = "lg2_season_start_exit_sign";
 	private static final String PERSONAL_EXIT_SIGN_OWNER_TAG_PREFIX = "lg2_season_start_exit_sign_owner:";
 	private static final int STARTUP_WORLDGEN_FRAME_COUNT = 35;
-	private static final float STARTUP_WORLDGEN_VIEW_RANGE = 96.0F;
+	private static final float STARTUP_WORLDGEN_VIEW_RANGE = 160.0F;
 	private static final float STARTUP_WORLDGEN_MARGIN_BLOCKS = 8.0F;
+	private static final float STARTUP_WORLDGEN_DISPLAY_SCALE = 2.0F / 3.0F;
 	private static final float STARTUP_WORLDGEN_THICKNESS_SCALE = 0.25F;
 	private static final double STARTUP_WORLDGEN_Y_OFFSET_FROM_OUTER_FLOOR = 1.25D;
 	private static final int SCENE_BLOCK_SET_FLAGS = 2 | 16 | 32;
@@ -624,6 +656,8 @@ public final class SeasonStartSystem {
 	private static final Set<Long> WORLD_REVEAL_PLAYER_PHYSICS_POSITIONS = new HashSet<>();
 	private static final Set<BlockPos> SHARED_BITCOIN_POSITIONS = new LinkedHashSet<>();
 	private static final Set<UUID> SCENE_BUILD_FLOATING_PLAYERS = new HashSet<>();
+	private static final Map<UUID, StartupBiomeOverride> STARTUP_BIOME_OVERRIDES = new HashMap<>();
+	private static final Map<StartupBiomePayloadKey, byte[]> STARTUP_BIOME_PAYLOAD_CACHE = new HashMap<>();
 	private static CompletableFuture<WorldRevealPlan> worldRevealPlanFuture = null;
 	private static CompletableFuture<PersistedWorldRevealSnapshot> worldRevealSnapshotLoadFuture = null;
 	private static WorldRevealSnapshotLoadTask worldRevealSnapshotLoadTask = null;
@@ -740,6 +774,8 @@ public final class SeasonStartSystem {
 		WORLD_REVEAL_REVEALED_POSITIONS.clear();
 		WORLD_REVEAL_PLAYER_MINED_POSITIONS.clear();
 		WORLD_REVEAL_PLAYER_PHYSICS_POSITIONS.clear();
+		STARTUP_BIOME_OVERRIDES.clear();
+		STARTUP_BIOME_PAYLOAD_CACHE.clear();
 		worldRevealPlanFuture = null;
 		worldRevealSnapshotLoadFuture = null;
 		worldRevealSnapshotLoadTask = null;
@@ -1026,6 +1062,53 @@ public final class SeasonStartSystem {
 
 	public static void onServerMenuRequestedTooEarly(ServerPlayer player) {
 		// Before the menu phase begins, interacting with the server is intentionally silent.
+	}
+
+	/**
+	 * While the startup box is intact, clients inside it only receive the chunks
+	 * intersecting the startup box. This is a client-view boundary; the server's
+	 * normal chunk tickets remain untouched so scene generation and the finale
+	 * cannot stall waiting for a player ticket.
+	 */
+	public static boolean shouldUseStartupChunkTracking(ServerPlayer player) {
+		if (!active
+				|| completed
+				|| worldRevealActive
+				|| player == null
+				|| !(player.level() instanceof ServerLevel level)
+				|| !Level.OVERWORLD.equals(level.dimension())
+				|| serverAnchor == null
+				|| !isSeasonStartEligiblePlayer(player)) {
+			return false;
+		}
+		return isInsideFootprint(computeOuterBoxGeometry(resolveServerAnchor(level)), player.blockPosition());
+	}
+
+	public static ChunkTrackingView createStartupChunkTrackingView(ServerPlayer player) {
+		if (player == null || !(player.level() instanceof ServerLevel level) || serverAnchor == null) {
+			return ChunkTrackingView.EMPTY;
+		}
+		BoxGeometry box = computeOuterBoxGeometry(resolveServerAnchor(level));
+		Set<Long> chunks = collectStartupChunkKeys(box, STARTUP_CHUNK_TRACKING_GUARD_RING);
+		return chunks.isEmpty() ? ChunkTrackingView.EMPTY : new StartupChunkTrackingView(chunks);
+	}
+
+	private static Set<Long> collectStartupChunkKeys(BoxGeometry box, int exteriorRing) {
+		if (box == null) {
+			return Set.of();
+		}
+		Set<Long> chunks = new LinkedHashSet<>();
+		int ring = Math.max(0, exteriorRing);
+		int minChunkX = Math.floorDiv(box.minX, 16) - ring;
+		int maxChunkX = Math.floorDiv(box.maxX, 16) + ring;
+		int minChunkZ = Math.floorDiv(box.minZ, 16) - ring;
+		int maxChunkZ = Math.floorDiv(box.maxZ, 16) + ring;
+		for (int chunkX = minChunkX; chunkX <= maxChunkX; chunkX++) {
+			for (int chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ++) {
+				chunks.add(new ChunkPos(chunkX, chunkZ).toLong());
+			}
+		}
+		return chunks;
 	}
 
 	public static int resolveStartupMenuPrice(ServerPlayer player, String upgradeId, int configuredPrice) {
@@ -1549,6 +1632,7 @@ public final class SeasonStartSystem {
 			}
 			tickWorldReveal(server);
 		}
+		tickStartupBiomeOverrides(server);
 		if (shellDissolving) {
 			tickShellDissolve(server);
 		}
@@ -1919,6 +2003,8 @@ public final class SeasonStartSystem {
 		WORLD_REVEAL_REVEALED_POSITIONS.clear();
 		WORLD_REVEAL_PLAYER_MINED_POSITIONS.clear();
 		WORLD_REVEAL_PLAYER_PHYSICS_POSITIONS.clear();
+		STARTUP_BIOME_OVERRIDES.clear();
+		STARTUP_BIOME_PAYLOAD_CACHE.clear();
 		worldRevealPlanFuture = null;
 		worldRevealSnapshotLoadFuture = null;
 		worldRevealSnapshotLoadTask = null;
@@ -2125,6 +2211,9 @@ public final class SeasonStartSystem {
 		if (level == null || player == null || state == null) {
 			return;
 		}
+		if (state.personalExitSignsRemaining <= 0) {
+			return;
+		}
 		long nowTick = level.getGameTime();
 		if (!player.hasEffect(MobEffects.BLINDNESS)) {
 			clearPersonalExitSign(level, state);
@@ -2147,7 +2236,7 @@ public final class SeasonStartSystem {
 		double distance = 4.5D + random.nextDouble() * 2.5D;
 		double x = player.getX() - Math.sin(placementRadians) * distance;
 		double z = player.getZ() + Math.cos(placementRadians) * distance;
-		double y = Math.min(level.getMaxY() - 1.5D, Math.max(level.getMinY() + 1.5D, player.getEyeY() - 0.45D));
+		double y = resolvePersonalExitSignFloorY(level, x, z, player.getY());
 		Display.ItemDisplay sign = new Display.ItemDisplay(EntityType.ITEM_DISPLAY, level);
 		sign.addTag(PERSONAL_EXIT_SIGN_DISPLAY_TAG);
 		sign.addTag(personalExitSignOwnerTag(player.getUUID()));
@@ -2173,9 +2262,45 @@ public final class SeasonStartSystem {
 		level.addFreshEntity(sign);
 		state.personalExitSignId = sign.getUUID();
 		state.personalExitSignExpiresAtTick = nowTick + PERSONAL_EXIT_SIGN_LIFETIME_TICKS;
+		state.personalExitSignsRemaining--;
 		state.nextPersonalExitSignTick = state.personalExitSignExpiresAtTick
 				+ PERSONAL_EXIT_SIGN_MIN_INTERVAL_TICKS
 				+ random.nextInt((int) PERSONAL_EXIT_SIGN_INTERVAL_VARIATION_TICKS + 1);
+	}
+
+	private static int rollPersonalExitSignBudget(UUID playerId, long sceneStartedAtTick) {
+		if (playerId == null) {
+			return 0;
+		}
+		Random random = new Random(
+				playerId.getMostSignificantBits()
+						^ playerId.getLeastSignificantBits()
+						^ Long.rotateLeft(sceneStartedAtTick, 19)
+		);
+		int roll = random.nextInt(100);
+		// Most players see no false exit at all. One is unusual; two is a very
+		// small chance, so signs remain an incidental discovery rather than a
+		// navigation mechanic.
+		if (roll < 80) {
+			return 0;
+		}
+		return roll < 97 ? 1 : 2;
+	}
+
+	private static double resolvePersonalExitSignFloorY(ServerLevel level, double x, double z, double playerY) {
+		if (level == null) {
+			return playerY;
+		}
+		int blockX = Mth.floor(x);
+		int blockZ = Mth.floor(z);
+		int highestY = Math.min(level.getMaxY() - 1, Mth.floor(playerY));
+		int lowestY = Math.max(level.getMinY(), highestY - 8);
+		for (int y = highestY; y >= lowestY; y--) {
+			if (level.getBlockState(new BlockPos(blockX, y, blockZ)).blocksMotion()) {
+				return y + 0.9D;
+			}
+		}
+		return Math.max(level.getMinY() + 0.9D, Math.min(level.getMaxY() - 0.1D, playerY));
 	}
 
 	private static void clearPersonalExitSign(ServerLevel level, PlayerSceneState state) {
@@ -2450,6 +2575,17 @@ public final class SeasonStartSystem {
 			return;
 		}
 		ensureGuidanceRoute(state, player, routeKind, destination, nowTick);
+		if (!state.guidanceRouteDirect
+				&& state.guidanceRouteStartedTick != Long.MIN_VALUE
+				&& nowTick - state.guidanceRouteStartedTick >= ROUTE_CONFUSION_MAX_TICKS) {
+			state.guidanceRouteDirect = true;
+			state.guidanceRouteLegIndex = 0;
+			state.guidanceRouteLegAnnounced = false;
+			state.guidanceRouteLastDistance = Double.NaN;
+			state.guidanceRouteLegStartedTick = nowTick;
+			resetRouteInstructionCadence(state, nowTick);
+			interruptAndFastForwardPlayerNarration(player, state, nowTick);
+		}
 		GuidanceRoute route = buildGuidanceRoute(state, barrier);
 		if (route.waypoints().isEmpty()) {
 			state.guidanceRouteFinished = true;
@@ -2519,6 +2655,8 @@ public final class SeasonStartSystem {
 		state.guidanceRouteLastPlayerZ = player.getZ();
 		state.guidanceRouteLastMoveTick = nowTick;
 		state.guidanceRouteLegStartedTick = nowTick;
+		state.guidanceRouteStartedTick = nowTick;
+		state.guidanceRouteDirect = false;
 		resetRouteInstructionCadence(state, nowTick);
 		state.guidanceRouteStarted = true;
 	}
@@ -2529,6 +2667,9 @@ public final class SeasonStartSystem {
 		}
 		Vec3 origin = new Vec3(state.guidanceRouteOriginX, 0.0D, state.guidanceRouteOriginZ);
 		Vec3 destination = new Vec3(state.guidanceRouteDestinationX, 0.0D, state.guidanceRouteDestinationZ);
+		if (state.guidanceRouteDirect) {
+			return new GuidanceRoute(List.of(clampRoutePoint(destination, barrier)));
+		}
 		Vec3 delta = destination.subtract(origin);
 		double distance = Math.sqrt(delta.x * delta.x + delta.z * delta.z);
 		if (distance <= 1.0E-4D) {
@@ -2971,6 +3112,8 @@ public final class SeasonStartSystem {
 		state.guidanceRouteDestinationX = Double.NaN;
 		state.guidanceRouteDestinationZ = Double.NaN;
 		state.guidanceRouteLastDistance = Double.NaN;
+		state.guidanceRouteStartedTick = Long.MIN_VALUE;
+		state.guidanceRouteDirect = false;
 		state.guidanceRouteInterruptAfterTick = Long.MIN_VALUE;
 		state.guidanceRouteLastTurnCueTick = 0L;
 		state.guidanceRouteNextTurnCueTick = 0L;
@@ -3755,6 +3898,168 @@ public final class SeasonStartSystem {
 			SeasonStartVoiceSystem.fireTrigger(server, "player_menu_phase_started", player);
 		}
 		stateDirty = true;
+	}
+
+	/**
+	 * Applies a client-only biome to the startup chunk window. This hides the
+	 * world in the small chunk buffer around the physical shell without changing
+	 * terrain, and therefore cannot affect the reveal or the saved world.
+	 */
+	private static void tickStartupBiomeOverrides(MinecraftServer server) {
+		if (server == null) {
+			return;
+		}
+		ServerLevel level = server.overworld();
+		if (level == null) {
+			return;
+		}
+		long nowTick = level.getGameTime();
+		if (active && serverAnchor != null) {
+			BoxGeometry box = computeOuterBoxGeometry(resolveServerAnchor(level));
+			List<ChunkPos> chunks = chunkPositions(collectStartupChunkKeys(box, STARTUP_CHUNK_TRACKING_GUARD_RING));
+			for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+				if (!shouldUseStartupChunkTracking(player)) {
+					continue;
+				}
+				StartupBiomeOverride state = STARTUP_BIOME_OVERRIDES.computeIfAbsent(
+						player.getUUID(),
+						ignored -> new StartupBiomeOverride(level.dimension(), chunks, level.getSectionsCount())
+				);
+				state.updateWindow(level.dimension(), chunks, level.getSectionsCount());
+				tickStartupBiomeOverride(player, level, state, 0, nowTick);
+			}
+		}
+
+		if (worldRevealActive) {
+			int stage = resolveStartupBiomeRevealStage(nowTick);
+			for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+				StartupBiomeOverride state = STARTUP_BIOME_OVERRIDES.get(player.getUUID());
+				if (state != null && level.dimension().equals(state.dimension)) {
+					tickStartupBiomeOverride(player, level, state, stage, nowTick);
+				}
+			}
+		}
+
+		if (active || worldRevealActive) {
+			return;
+		}
+		for (Iterator<Map.Entry<UUID, StartupBiomeOverride>> iterator = STARTUP_BIOME_OVERRIDES.entrySet().iterator(); iterator.hasNext(); ) {
+			Map.Entry<UUID, StartupBiomeOverride> entry = iterator.next();
+			ServerPlayer player = server.getPlayerList().getPlayer(entry.getKey());
+			if (player != null && player.level() == level) {
+				restoreStartupBiomes(player, level, entry.getValue());
+			}
+			iterator.remove();
+		}
+	}
+
+	private static int resolveStartupBiomeRevealStage(long nowTick) {
+		if (worldRevealCrackStartTick == Long.MIN_VALUE) {
+			return 0;
+		}
+		// The crack animation is the fade.  Later finale phases keep the final
+		// light stage until the genuine chunk biomes are restored on completion.
+		if (worldRevealPhase != WorldRevealPhase.CRACKING) {
+			return STARTUP_REVEAL_BIOME_KEYS.size() - 1;
+		}
+		long elapsed = Math.max(0L, nowTick - worldRevealCrackStartTick);
+		return Mth.clamp(
+				(int) (elapsed * (STARTUP_REVEAL_BIOME_KEYS.size() - 1) / Math.max(1L, WORLD_REVEAL_CRACKING_DURATION_TICKS)),
+				0,
+				STARTUP_REVEAL_BIOME_KEYS.size() - 1
+		);
+	}
+
+	private static void tickStartupBiomeOverride(
+			ServerPlayer player,
+			ServerLevel level,
+			StartupBiomeOverride state,
+			int stage,
+			long nowTick
+	) {
+		if (player == null || player.connection == null || state == null || state.chunks.isEmpty()) {
+			return;
+		}
+		if (stage != state.appliedStage || nowTick >= state.nextResyncTick) {
+			state.appliedStage = stage;
+			state.nextChunkIndex = 0;
+			state.nextResyncTick = nowTick + STARTUP_BIOME_RESYNC_TICKS;
+		}
+		if (state.nextChunkIndex >= state.chunks.size()) {
+			return;
+		}
+		byte[] payload = startupBiomePayload(level, state.sectionCount, STARTUP_REVEAL_BIOME_KEYS.get(stage));
+		if (payload.length == 0) {
+			return;
+		}
+		int endIndex = Math.min(state.chunks.size(), state.nextChunkIndex + STARTUP_BIOME_CHUNKS_PER_TICK);
+		List<ClientboundChunksBiomesPacket.ChunkBiomeData> data = new ArrayList<>(endIndex - state.nextChunkIndex);
+		for (int index = state.nextChunkIndex; index < endIndex; index++) {
+			data.add(new ClientboundChunksBiomesPacket.ChunkBiomeData(state.chunks.get(index), payload));
+		}
+		state.nextChunkIndex = endIndex;
+		player.connection.send(new ClientboundChunksBiomesPacket(data));
+	}
+
+	private static byte[] startupBiomePayload(ServerLevel level, int sectionCount, ResourceKey<Biome> biomeKey) {
+		if (level == null || sectionCount <= 0 || biomeKey == null) {
+			return new byte[0];
+		}
+		StartupBiomePayloadKey key = new StartupBiomePayloadKey(sectionCount, biomeKey);
+		byte[] cached = STARTUP_BIOME_PAYLOAD_CACHE.get(key);
+		if (cached != null) {
+			return cached;
+		}
+		Holder<Biome> biome = level.registryAccess().lookupOrThrow(Registries.BIOME).getOrThrow(biomeKey);
+		PalettedContainerFactory factory = PalettedContainerFactory.create(level.registryAccess());
+		FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
+		try {
+			int biomeSize = 1 << LevelChunkSection.BIOME_CONTAINER_BITS;
+			for (int section = 0; section < sectionCount; section++) {
+				PalettedContainer<Holder<Biome>> biomes = factory.createForBiomes();
+				for (int x = 0; x < biomeSize; x++) {
+					for (int y = 0; y < biomeSize; y++) {
+						for (int z = 0; z < biomeSize; z++) {
+							biomes.set(x, y, z, biome);
+						}
+					}
+				}
+				biomes.write(buffer);
+			}
+			byte[] payload = new byte[buffer.readableBytes()];
+			buffer.getBytes(0, payload);
+			STARTUP_BIOME_PAYLOAD_CACHE.put(key, payload);
+			return payload;
+		} finally {
+			buffer.release();
+		}
+	}
+
+	private static void restoreStartupBiomes(ServerPlayer player, ServerLevel level, StartupBiomeOverride state) {
+		List<LevelChunk> chunks = new ArrayList<>();
+		for (ChunkPos pos : state.chunks) {
+			LevelChunk chunk = level.getChunkSource().chunkMap.getChunkToSend(pos.toLong());
+			if (chunk == null) {
+				chunk = level.getChunkSource().getChunkNow(pos.x, pos.z);
+			}
+			if (chunk != null) {
+				chunks.add(chunk);
+			}
+		}
+		if (!chunks.isEmpty()) {
+			player.connection.send(ClientboundChunksBiomesPacket.forChunks(chunks));
+		}
+	}
+
+	private static List<ChunkPos> chunkPositions(Set<Long> chunks) {
+		if (chunks == null || chunks.isEmpty()) {
+			return List.of();
+		}
+		List<ChunkPos> positions = new ArrayList<>(chunks.size());
+		for (long chunk : chunks) {
+			positions.add(new ChunkPos(chunk));
+		}
+		return positions;
 	}
 
 	private static void tickShellDissolve(MinecraftServer server) {
@@ -7104,7 +7409,7 @@ public final class SeasonStartSystem {
 			return;
 		}
 
-		float scale = Math.max(
+		float scale = STARTUP_WORLDGEN_DISPLAY_SCALE * Math.max(
 				16.0F,
 				Math.min(outerGeometry.maxX - outerGeometry.minX, outerGeometry.maxZ - outerGeometry.minZ) - STARTUP_WORLDGEN_MARGIN_BLOCKS
 		);
@@ -8851,6 +9156,7 @@ public final class SeasonStartSystem {
 		state.nextStartPromptTick = Long.MAX_VALUE;
 		state.nextPersonalExitSignTick = nowTick + PERSONAL_EXIT_SIGN_MIN_INTERVAL_TICKS;
 		state.personalExitSignExpiresAtTick = Long.MIN_VALUE;
+		state.personalExitSignsRemaining = rollPersonalExitSignBudget(player.getUUID(), nowTick);
 		state.guidanceNarrationGateTick = nowTick + resolveTriggerSequenceDurationTicks("player_intro_assigned");
 		stateDirty = true;
 		primeObservationState(player, state);
@@ -9153,6 +9459,8 @@ public final class SeasonStartSystem {
 		private double guidanceRouteLastPlayerZ = 0.0D;
 		private long guidanceRouteLastMoveTick = Long.MIN_VALUE;
 		private long guidanceRouteLegStartedTick = Long.MIN_VALUE;
+		private long guidanceRouteStartedTick = Long.MIN_VALUE;
+		private boolean guidanceRouteDirect = false;
 		private long guidanceRouteInterruptAfterTick = Long.MIN_VALUE;
 		private long guidanceRouteLastTurnCueTick = 0L;
 		private long guidanceRouteNextTurnCueTick = 0L;
@@ -9182,6 +9490,7 @@ public final class SeasonStartSystem {
 		private UUID personalExitSignId;
 		private long personalExitSignExpiresAtTick = Long.MIN_VALUE;
 		private long nextPersonalExitSignTick = Long.MAX_VALUE;
+		private int personalExitSignsRemaining;
 		private long lastObservationTick = Long.MIN_VALUE;
 		private double lastObservedX;
 		private double lastObservedY;
@@ -9205,6 +9514,60 @@ public final class SeasonStartSystem {
 	}
 
 	private record PlayerVisibilityPair(UUID viewerId, UUID subjectId) {
+	}
+
+	/** A bounded, equality-stable view so ChunkMap can diff it without resending it every tick. */
+	private record StartupChunkTrackingView(Set<Long> chunks) implements ChunkTrackingView {
+		private StartupChunkTrackingView(Set<Long> chunks) {
+			this.chunks = chunks == null ? Set.of() : Set.copyOf(chunks);
+		}
+
+		@Override
+		public boolean contains(int chunkX, int chunkZ, boolean includeEdge) {
+			return this.chunks.contains(new ChunkPos(chunkX, chunkZ).toLong());
+		}
+
+		@Override
+		public void forEach(Consumer<ChunkPos> consumer) {
+			if (consumer == null) {
+				return;
+			}
+			for (long chunk : this.chunks) {
+				consumer.accept(new ChunkPos(chunk));
+			}
+		}
+	}
+
+	private record StartupBiomePayloadKey(int sectionCount, ResourceKey<Biome> biome) {
+	}
+
+	/** Per-player state: the world stays unchanged; only this player's palette is replaced. */
+	private static final class StartupBiomeOverride {
+		private ResourceKey<Level> dimension;
+		private List<ChunkPos> chunks;
+		private int sectionCount;
+		private int appliedStage = Integer.MIN_VALUE;
+		private int nextChunkIndex;
+		private long nextResyncTick = Long.MIN_VALUE;
+
+		private StartupBiomeOverride(ResourceKey<Level> dimension, List<ChunkPos> chunks, int sectionCount) {
+			this.dimension = dimension;
+			this.chunks = chunks == null ? List.of() : List.copyOf(chunks);
+			this.sectionCount = sectionCount;
+		}
+
+		private void updateWindow(ResourceKey<Level> dimension, List<ChunkPos> chunks, int sectionCount) {
+			List<ChunkPos> nextChunks = chunks == null ? List.of() : List.copyOf(chunks);
+			if (this.dimension.equals(dimension) && this.sectionCount == sectionCount && this.chunks.equals(nextChunks)) {
+				return;
+			}
+			this.dimension = dimension;
+			this.chunks = nextChunks;
+			this.sectionCount = sectionCount;
+			this.appliedStage = Integer.MIN_VALUE;
+			this.nextChunkIndex = 0;
+			this.nextResyncTick = Long.MIN_VALUE;
+		}
 	}
 
 	private record BoxGeometry(int minX, int maxX, int minZ, int maxZ, int floorY, int roofY) {

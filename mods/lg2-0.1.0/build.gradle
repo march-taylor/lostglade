@@ -3,6 +3,8 @@ plugins {
 	id 'maven-publish'
 }
 
+import net.fabricmc.loom.task.RemapJarTask
+
 version = project.mod_version
 group = project.maven_group
 
@@ -46,7 +48,6 @@ loom {
 	mods {
 		"lg2" {
 			sourceSet sourceSets.main
-			sourceSet sourceSets.client
 		}
 	}
 
@@ -248,6 +249,62 @@ jar {
 	from("LICENSE") {
 		rename { "${it}_${inputs.properties.archivesName}"}
 	}
+
+	// The distributable lg2 jar is server-only. Client features are emitted by
+	// gameplayClientDevJar/remapGameplayClientJar below.
+	exclude(
+			"com/lostglade/Lg2Client.class",
+			"com/lostglade/client/**",
+			"com/lostglade/mixin/client/**",
+			"com/lostglade/raceclient/**",
+			"lg2.client.mixins.json",
+			"lg2.absolute_invisibility.client.mixins.json",
+			"assets/lg2/textures/gui/race/**",
+			"race-client/**"
+	)
+}
+
+// Normal players receive only the client UI and drone camera tilt.  The regular lg2 jar stays server-only.
+def gameplayClientDevJar = tasks.register("gameplayClientDevJar", Jar) {
+	group = "build"
+	description = "Assembles the lightweight Lostglade client jar before remapping."
+	dependsOn(tasks.named("compileClientJava"))
+	archiveBaseName.set("lg2-client")
+	archiveVersion.set(project.version.toString())
+	archiveClassifier.set("dev")
+	destinationDirectory.set(layout.buildDirectory.dir("devlibs"))
+	from(sourceSets.client.output) {
+		include("com/lostglade/raceclient/**")
+		include("com/lostglade/client/DroneCameraTilt*.class")
+		include("com/lostglade/mixin/client/CameraDroneTiltMixin.class")
+		include("com/lostglade/mixin/client/CameraPositionInvoker.class")
+	}
+	from("src/client/resources/race-client") {
+		exclude("fabric.mod.json")
+	}
+	from("src/client/resources/race-client") {
+		include("fabric.mod.json")
+		expand(version: project.version)
+	}
+}
+
+tasks.register("remapGameplayClientJar", RemapJarTask) {
+	group = "build"
+	description = "Remaps the lightweight Lostglade client jar for Prism/Fabric."
+	dependsOn(gameplayClientDevJar)
+	inputFile.set(gameplayClientDevJar.flatMap { it.archiveFile })
+	archiveBaseName.set("lg2-client")
+	archiveVersion.set(project.version.toString())
+	destinationDirectory.set(layout.buildDirectory.dir("libs"))
+	addNestedDependencies.set(false)
+}
+
+tasks.register("installGameplayClientJar", Sync) {
+	group = "build"
+	description = "Publishes the lightweight client jar into the repository's client-mods directory."
+	dependsOn(tasks.named("remapGameplayClientJar"))
+	from(tasks.named("remapGameplayClientJar").flatMap { it.archiveFile })
+	into(layout.projectDirectory.dir("client-mods"))
 }
 
 // configure the maven publication

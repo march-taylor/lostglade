@@ -21,6 +21,27 @@ public final class Lg2Payloads {
 		}
 
 		PayloadTypeRegistry.playS2C().register(MilkPocketVoidFadeS2CPayload.TYPE, MilkPocketVoidFadeS2CPayload.STREAM_CODEC);
+		PayloadTypeRegistry.playC2S().register(RaceAbilityC2SPayload.TYPE, RaceAbilityC2SPayload.STREAM_CODEC);
+	}
+
+	/** A request from the optional LG2 client UI to activate one of the four race actions. */
+	public record RaceAbilityC2SPayload(int slot) implements CustomPacketPayload {
+		public static final Type<RaceAbilityC2SPayload> TYPE = new Type<>(id("race_ability"));
+		public static final StreamCodec<FriendlyByteBuf, RaceAbilityC2SPayload> STREAM_CODEC =
+				CustomPacketPayload.codec(RaceAbilityC2SPayload::write, RaceAbilityC2SPayload::new);
+
+		public RaceAbilityC2SPayload(FriendlyByteBuf buffer) {
+			this(buffer.readVarInt());
+		}
+
+		private void write(FriendlyByteBuf buffer) {
+			buffer.writeVarInt(this.slot);
+		}
+
+		@Override
+		public Type<RaceAbilityC2SPayload> type() {
+			return TYPE;
+		}
 	}
 
 	public record MilkPocketVoidFadeS2CPayload(float alpha) implements CustomPacketPayload {

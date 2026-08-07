@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "lg2-client",
+  "version": "${version}",
+  "name": "Lostglade Client",
+  "description": "Client features for Lostglade: race abilities and drone camera tilt.",
+  "environment": "client",
+  "entrypoints": {
+    "client": ["com.lostglade.raceclient.Lg2RaceClient"]
+  },
+  "mixins": [
+    "lg2-race-client.mixins.json",
+    "lg2-camera-tilt.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=0.18.4",
+    "minecraft": "~1.21.11",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}

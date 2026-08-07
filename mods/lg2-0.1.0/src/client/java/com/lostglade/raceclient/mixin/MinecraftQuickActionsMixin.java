@@ -1,0 +1,24 @@
+package com.lostglade.raceclient.mixin;
+
+import com.lostglade.raceclient.RaceClientControls;
+import com.lostglade.raceclient.RaceAbilityPayload;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
+import net.minecraft.client.Minecraft;
+import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+
+@Mixin(Minecraft.class)
+public abstract class MinecraftQuickActionsMixin {
+	@Inject(method = "handleKeybinds", at = @At("HEAD"))
+	private void lg2RaceClient$replaceVanillaQuickActions(CallbackInfo callbackInfo) {
+		if (!ClientPlayNetworking.canSend(RaceAbilityPayload.TYPE)) {
+			return;
+		}
+		Minecraft client = (Minecraft) (Object) this;
+		while (client.options.keyQuickActions.consumeClick()) {
+			RaceClientControls.openMenu(client);
+		}
+	}
+}

@@ -1,0 +1,12 @@
+{
+  "required": true,
+  "package": "com.lostglade.mixin.client",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "CameraDroneTiltMixin",
+    "CameraPositionInvoker"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
