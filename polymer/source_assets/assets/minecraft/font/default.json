@@ -920,6 +920,42 @@
       ]
     },
     {
+      "type": "bitmap",
+      "file": "lg2:font/race_attack_button_fragments.png",
+      "ascent": 13,
+      "height": 18,
+      "chars": [
+        "\uf200", "\uf201", "\uf202", "\uf203", "\uf204", "\uf205"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "lg2:font/race_defense_button_fragments.png",
+      "ascent": 13,
+      "height": 18,
+      "chars": [
+        "\uf20b", "\uf20c", "\uf20d", "\uf20e", "\uf20f", "\uf210"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "lg2:font/race_ability_button_fragments.png",
+      "ascent": 13,
+      "height": 18,
+      "chars": [
+        "\uf216", "\uf217", "\uf218", "\uf219", "\uf21a", "\uf21b"
+      ]
+    },
+    {
+      "type": "bitmap",
+      "file": "lg2:font/race_shnyaga_button_fragments.png",
+      "ascent": 13,
+      "height": 18,
+      "chars": [
+        "\uf221", "\uf222", "\uf223", "\uf224", "\uf225", "\uf226"
+      ]
+    },
+    {
       "type": "reference",
       "id": "minecraft:include/space"
     },

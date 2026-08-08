@@ -1,322 +1,35 @@
 {
-    "type":  "minecraft:multi_action",
-    "title":  {
-                  "translate":  "dialog.lg2.race_quick_actions.title",
-                  "fallback":  "Способности расы"
-              },
-    "external_title":  {
-                           "translate":  "dialog.lg2.race_quick_actions.external_title",
-                           "fallback":  "Способности расы"
-                       },
-    "can_close_with_escape":  true,
-    "pause":  false,
-    "columns":  2,
-    "actions":  [
-                    {
-                        "label":  {
-                                      "translate":  "dialog.lg2.race_quick_actions.rp.attack_1",
-                                      "fallback":  "§cАтака"
-                                  },
-                        "tooltip":  {
-                                        "translate":  "dialog.lg2.race_quick_actions.attack.tooltip",
-                                        "fallback":  "Активировать атакующую способность расы"
-                                    },
-                        "width":  180,
-                        "action":  {
-                                       "type":  "minecraft:run_command",
-                                       "command":  "/use attack"
-                                   }
-                    },
-                    {
-                        "label":  {
-                                      "translate":  "dialog.lg2.race_quick_actions.rp.defense_1",
-                                      "fallback":  "§9Защита"
-                                  },
-                        "tooltip":  {
-                                        "translate":  "dialog.lg2.race_quick_actions.defense.tooltip",
-                                        "fallback":  "Активировать защитную способность расы"
-                                    },
-                        "width":  180,
-                        "action":  {
-                                       "type":  "minecraft:run_command",
-                                       "command":  "/use defense"
-                                   }
-                    },
-                    {
-                        "label":  {
-                                      "translate":  "dialog.lg2.race_quick_actions.rp.attack_2",
-                                      "fallback":  "§cАтака"
-                                  },
-                        "tooltip":  {
-                                        "translate":  "dialog.lg2.race_quick_actions.attack.tooltip",
-                                        "fallback":  "Активировать атакующую способность расы"
-                                    },
-                        "width":  180,
-                        "action":  {
-                                       "type":  "minecraft:run_command",
-                                       "command":  "/use attack"
-                                   }
-                    },
-                    {
-                        "label":  {
-                                      "translate":  "dialog.lg2.race_quick_actions.rp.defense_2",
-                                      "fallback":  "§9Защита"
-                                  },
-                        "tooltip":  {
-                                        "translate":  "dialog.lg2.race_quick_actions.defense.tooltip",
-                                        "fallback":  "Активировать защитную способность расы"
-                                    },
-                        "width":  180,
-                        "action":  {
-                                       "type":  "minecraft:run_command",
-                                       "command":  "/use defense"
-                                   }
-                    },
-                    {
-                        "label":  {
-                                      "translate":  "dialog.lg2.race_quick_actions.rp.attack_3",
-                                      "fallback":  "§cАтака"
-                                  },
-                        "tooltip":  {
-                                        "translate":  "dialog.lg2.race_quick_actions.attack.tooltip",
-                                        "fallback":  "Активировать атакующую способность расы"
-                                    },
-                        "width":  180,
-                        "action":  {
-                                       "type":  "minecraft:run_command",
-                                       "command":  "/use attack"
-                                   }
-                    },
-                    {
-                        "label":  {
-                                      "translate":  "dialog.lg2.race_quick_actions.rp.defense_3",
-                                      "fallback":  "§9Защита"
-                                  },
-                        "tooltip":  {
-                                        "translate":  "dialog.lg2.race_quick_actions.defense.tooltip",
-                                        "fallback":  "Активировать защитную способность расы"
-                                    },
-                        "width":  180,
-                        "action":  {
-                                       "type":  "minecraft:run_command",
-                                       "command":  "/use defense"
-                                   }
-                    },
-                    {
-                        "label":  {
-                                      "translate":  "dialog.lg2.race_quick_actions.rp.attack_4",
-                                      "fallback":  "§cАтака"
-                                  },
-                        "tooltip":  {
-                                        "translate":  "dialog.lg2.race_quick_actions.attack.tooltip",
-                                        "fallback":  "Активировать атакующую способность расы"
-                                    },
-                        "width":  180,
-                        "action":  {
-                                       "type":  "minecraft:run_command",
-                                       "command":  "/use attack"
-                                   }
-                    },
-                    {
-                        "label":  {
-                                      "translate":  "dialog.lg2.race_quick_actions.rp.defense_4",
-                                      "fallback":  "§9Защита"
-                                  },
-                        "tooltip":  {
-                                        "translate":  "dialog.lg2.race_quick_actions.defense.tooltip",
-                                        "fallback":  "Активировать защитную способность расы"
-                                    },
-                        "width":  180,
-                        "action":  {
-                                       "type":  "minecraft:run_command",
-                                       "command":  "/use defense"
-                                   }
-                    },
-                    {
-                        "label":  {
-                                      "translate":  "dialog.lg2.race_quick_actions.rp.attack_5",
-                                      "fallback":  "§cАтака"
-                                  },
-                        "tooltip":  {
-                                        "translate":  "dialog.lg2.race_quick_actions.attack.tooltip",
-                                        "fallback":  "Активировать атакующую способность расы"
-                                    },
-                        "width":  180,
-                        "action":  {
-                                       "type":  "minecraft:run_command",
-                                       "command":  "/use attack"
-                                   }
-                    },
-                    {
-                        "label":  {
-                                      "translate":  "dialog.lg2.race_quick_actions.rp.defense_5",
-                                      "fallback":  "§9Защита"
-                                  },
-                        "tooltip":  {
-                                        "translate":  "dialog.lg2.race_quick_actions.defense.tooltip",
-                                        "fallback":  "Активировать защитную способность расы"
-                                    },
-                        "width":  180,
-                        "action":  {
-                                       "type":  "minecraft:run_command",
-                                       "command":  "/use defense"
-                                   }
-                    },
-                    {
-                        "label":  {
-                                      "translate":  "dialog.lg2.race_quick_actions.rp.ability_1",
-                                      "fallback":  "§5Абилка"
-                                  },
-                        "tooltip":  {
-                                        "translate":  "dialog.lg2.race_quick_actions.ability.tooltip",
-                                        "fallback":  "Активировать уникальную способность расы"
-                                    },
-                        "width":  180,
-                        "action":  {
-                                       "type":  "minecraft:run_command",
-                                       "command":  "/use ability"
-                                   }
-                    },
-                    {
-                        "label":  {
-                                      "translate":  "dialog.lg2.race_quick_actions.rp.shnyaga_1",
-                                      "fallback":  "§aШняга"
-                                  },
-                        "tooltip":  {
-                                        "translate":  "dialog.lg2.race_quick_actions.shnyaga.tooltip",
-                                        "fallback":  "Активировать шнягу расы"
-                                    },
-                        "width":  180,
-                        "action":  {
-                                       "type":  "minecraft:run_command",
-                                       "command":  "/use shnyaga"
-                                   }
-                    },
-                    {
-                        "label":  {
-                                      "translate":  "dialog.lg2.race_quick_actions.rp.ability_2",
-                                      "fallback":  "§5Абилка"
-                                  },
-                        "tooltip":  {
-                                        "translate":  "dialog.lg2.race_quick_actions.ability.tooltip",
-                                        "fallback":  "Активировать уникальную способность расы"
-                                    },
-                        "width":  180,
-                        "action":  {
-                                       "type":  "minecraft:run_command",
-                                       "command":  "/use ability"
-                                   }
-                    },
-                    {
-                        "label":  {
-                                      "translate":  "dialog.lg2.race_quick_actions.rp.shnyaga_2",
-                                      "fallback":  "§aШняга"
-                                  },
-                        "tooltip":  {
-                                        "translate":  "dialog.lg2.race_quick_actions.shnyaga.tooltip",
-                                        "fallback":  "Активировать шнягу расы"
-                                    },
-                        "width":  180,
-                        "action":  {
-                                       "type":  "minecraft:run_command",
-                                       "command":  "/use shnyaga"
-                                   }
-                    },
-                    {
-                        "label":  {
-                                      "translate":  "dialog.lg2.race_quick_actions.rp.ability_3",
-                                      "fallback":  "§5Абилка"
-                                  },
-                        "tooltip":  {
-                                        "translate":  "dialog.lg2.race_quick_actions.ability.tooltip",
-                                        "fallback":  "Активировать уникальную способность расы"
-                                    },
-                        "width":  180,
-                        "action":  {
-                                       "type":  "minecraft:run_command",
-                                       "command":  "/use ability"
-                                   }
-                    },
-                    {
-                        "label":  {
-                                      "translate":  "dialog.lg2.race_quick_actions.rp.shnyaga_3",
-                                      "fallback":  "§aШняга"
-                                  },
-                        "tooltip":  {
-                                        "translate":  "dialog.lg2.race_quick_actions.shnyaga.tooltip",
-                                        "fallback":  "Активировать шнягу расы"
-                                    },
-                        "width":  180,
-                        "action":  {
-                                       "type":  "minecraft:run_command",
-                                       "command":  "/use shnyaga"
-                                   }
-                    },
-                    {
-                        "label":  {
-                                      "translate":  "dialog.lg2.race_quick_actions.rp.ability_4",
-                                      "fallback":  "§5Абилка"
-                                  },
-                        "tooltip":  {
-                                        "translate":  "dialog.lg2.race_quick_actions.ability.tooltip",
-                                        "fallback":  "Активировать уникальную способность расы"
-                                    },
-                        "width":  180,
-                        "action":  {
-                                       "type":  "minecraft:run_command",
-                                       "command":  "/use ability"
-                                   }
-                    },
-                    {
-                        "label":  {
-                                      "translate":  "dialog.lg2.race_quick_actions.rp.shnyaga_4",
-                                      "fallback":  "§aШняга"
-                                  },
-                        "tooltip":  {
-                                        "translate":  "dialog.lg2.race_quick_actions.shnyaga.tooltip",
-                                        "fallback":  "Активировать шнягу расы"
-                                    },
-                        "width":  180,
-                        "action":  {
-                                       "type":  "minecraft:run_command",
-                                       "command":  "/use shnyaga"
-                                   }
-                    },
-                    {
-                        "label":  {
-                                      "translate":  "dialog.lg2.race_quick_actions.rp.ability_5",
-                                      "fallback":  "§5Абилка"
-                                  },
-                        "tooltip":  {
-                                        "translate":  "dialog.lg2.race_quick_actions.ability.tooltip",
-                                        "fallback":  "Активировать уникальную способность расы"
-                                    },
-                        "width":  180,
-                        "action":  {
-                                       "type":  "minecraft:run_command",
-                                       "command":  "/use ability"
-                                   }
-                    },
-                    {
-                        "label":  {
-                                      "translate":  "dialog.lg2.race_quick_actions.rp.shnyaga_5",
-                                      "fallback":  "§aШняга"
-                                  },
-                        "tooltip":  {
-                                        "translate":  "dialog.lg2.race_quick_actions.shnyaga.tooltip",
-                                        "fallback":  "Активировать шнягу расы"
-                                    },
-                        "width":  180,
-                        "action":  {
-                                       "type":  "minecraft:run_command",
-                                       "command":  "/use shnyaga"
-                                   }
-                    }
-                ],
-    "exit_action":  {
-                        "label":  {
-                                      "translate":  "gui.back"
-                                  },
-                        "width":  200
-                    }
+  "type": "minecraft:multi_action",
+  "title": {"translate": "dialog.lg2.race_quick_actions.title", "fallback": "Способности расы"},
+  "external_title": {"translate": "dialog.lg2.race_quick_actions.external_title", "fallback": "Способности расы"},
+  "can_close_with_escape": true,
+  "pause": false,
+  "columns": 2,
+  "actions": [
+    {"label":{"text":"\uf200","shadow_color":0},"tooltip":{"translate":"dialog.lg2.race_quick_actions.attack.tooltip","fallback":"Активировать атакующую способность расы"},"width":184,"action":{"type":"minecraft:run_command","command":"/use attack"}},
+    {"label":{"text":"\uf20b","shadow_color":0},"tooltip":{"translate":"dialog.lg2.race_quick_actions.defense.tooltip","fallback":"Активировать защитную способность расы"},"width":184,"action":{"type":"minecraft:run_command","command":"/use defense"}},
+    {"label":{"text":"\uf201","shadow_color":0},"tooltip":{"translate":"dialog.lg2.race_quick_actions.attack.tooltip","fallback":"Активировать атакующую способность расы"},"width":184,"action":{"type":"minecraft:run_command","command":"/use attack"}},
+    {"label":{"text":"\uf20c","shadow_color":0},"tooltip":{"translate":"dialog.lg2.race_quick_actions.defense.tooltip","fallback":"Активировать защитную способность расы"},"width":184,"action":{"type":"minecraft:run_command","command":"/use defense"}},
+    {"label":{"text":"\uf202","shadow_color":0},"tooltip":{"translate":"dialog.lg2.race_quick_actions.attack.tooltip","fallback":"Активировать атакующую способность расы"},"width":184,"action":{"type":"minecraft:run_command","command":"/use attack"}},
+    {"label":{"text":"\uf20d","shadow_color":0},"tooltip":{"translate":"dialog.lg2.race_quick_actions.defense.tooltip","fallback":"Активировать защитную способность расы"},"width":184,"action":{"type":"minecraft:run_command","command":"/use defense"}},
+    {"label":{"text":"\uf203","shadow_color":0},"tooltip":{"translate":"dialog.lg2.race_quick_actions.attack.tooltip","fallback":"Активировать атакующую способность расы"},"width":184,"action":{"type":"minecraft:run_command","command":"/use attack"}},
+    {"label":{"text":"\uf20e","shadow_color":0},"tooltip":{"translate":"dialog.lg2.race_quick_actions.defense.tooltip","fallback":"Активировать защитную способность расы"},"width":184,"action":{"type":"minecraft:run_command","command":"/use defense"}},
+    {"label":{"text":"\uf204","shadow_color":0},"tooltip":{"translate":"dialog.lg2.race_quick_actions.attack.tooltip","fallback":"Активировать атакующую способность расы"},"width":184,"action":{"type":"minecraft:run_command","command":"/use attack"}},
+    {"label":{"text":"\uf20f","shadow_color":0},"tooltip":{"translate":"dialog.lg2.race_quick_actions.defense.tooltip","fallback":"Активировать защитную способность расы"},"width":184,"action":{"type":"minecraft:run_command","command":"/use defense"}},
+    {"label":{"text":"\uf205","shadow_color":0},"tooltip":{"translate":"dialog.lg2.race_quick_actions.attack.tooltip","fallback":"Активировать атакующую способность расы"},"width":184,"action":{"type":"minecraft:run_command","command":"/use attack"}},
+    {"label":{"text":"\uf210","shadow_color":0},"tooltip":{"translate":"dialog.lg2.race_quick_actions.defense.tooltip","fallback":"Активировать защитную способность расы"},"width":184,"action":{"type":"minecraft:run_command","command":"/use defense"}},
+    {"label":{"text":"\uf216","shadow_color":0},"tooltip":{"translate":"dialog.lg2.race_quick_actions.ability.tooltip","fallback":"Активировать уникальную способность расы"},"width":184,"action":{"type":"minecraft:run_command","command":"/use ability"}},
+    {"label":{"text":"\uf221","shadow_color":0},"tooltip":{"translate":"dialog.lg2.race_quick_actions.shnyaga.tooltip","fallback":"Активировать шнягу расы"},"width":184,"action":{"type":"minecraft:run_command","command":"/use shnyaga"}},
+    {"label":{"text":"\uf217","shadow_color":0},"tooltip":{"translate":"dialog.lg2.race_quick_actions.ability.tooltip","fallback":"Активировать уникальную способность расы"},"width":184,"action":{"type":"minecraft:run_command","command":"/use ability"}},
+    {"label":{"text":"\uf222","shadow_color":0},"tooltip":{"translate":"dialog.lg2.race_quick_actions.shnyaga.tooltip","fallback":"Активировать шнягу расы"},"width":184,"action":{"type":"minecraft:run_command","command":"/use shnyaga"}},
+    {"label":{"text":"\uf218","shadow_color":0},"tooltip":{"translate":"dialog.lg2.race_quick_actions.ability.tooltip","fallback":"Активировать уникальную способность расы"},"width":184,"action":{"type":"minecraft:run_command","command":"/use ability"}},
+    {"label":{"text":"\uf223","shadow_color":0},"tooltip":{"translate":"dialog.lg2.race_quick_actions.shnyaga.tooltip","fallback":"Активировать шнягу расы"},"width":184,"action":{"type":"minecraft:run_command","command":"/use shnyaga"}},
+    {"label":{"text":"\uf219","shadow_color":0},"tooltip":{"translate":"dialog.lg2.race_quick_actions.ability.tooltip","fallback":"Активировать уникальную способность расы"},"width":184,"action":{"type":"minecraft:run_command","command":"/use ability"}},
+    {"label":{"text":"\uf224","shadow_color":0},"tooltip":{"translate":"dialog.lg2.race_quick_actions.shnyaga.tooltip","fallback":"Активировать шнягу расы"},"width":184,"action":{"type":"minecraft:run_command","command":"/use shnyaga"}},
+    {"label":{"text":"\uf21a","shadow_color":0},"tooltip":{"translate":"dialog.lg2.race_quick_actions.ability.tooltip","fallback":"Активировать уникальную способность расы"},"width":184,"action":{"type":"minecraft:run_command","command":"/use ability"}},
+    {"label":{"text":"\uf225","shadow_color":0},"tooltip":{"translate":"dialog.lg2.race_quick_actions.shnyaga.tooltip","fallback":"Активировать шнягу расы"},"width":184,"action":{"type":"minecraft:run_command","command":"/use shnyaga"}},
+    {"label":{"text":"\uf21b","shadow_color":0},"tooltip":{"translate":"dialog.lg2.race_quick_actions.ability.tooltip","fallback":"Активировать уникальную способность расы"},"width":184,"action":{"type":"minecraft:run_command","command":"/use ability"}},
+    {"label":{"text":"\uf226","shadow_color":0},"tooltip":{"translate":"dialog.lg2.race_quick_actions.shnyaga.tooltip","fallback":"Активировать шнягу расы"},"width":184,"action":{"type":"minecraft:run_command","command":"/use shnyaga"}}
+  ],
+  "exit_action": {"label": {"translate": "gui.back"}, "width": 200}
 }
