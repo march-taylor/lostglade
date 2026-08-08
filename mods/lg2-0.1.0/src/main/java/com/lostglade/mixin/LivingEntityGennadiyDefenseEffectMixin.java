@@ -1,6 +1,7 @@
 package com.lostglade.mixin;
 
 import com.lostglade.server.ServerRaceSystem;
+import com.lostglade.server.PuroSanStockSystem;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
@@ -16,7 +17,8 @@ public abstract class LivingEntityGennadiyDefenseEffectMixin {
 		LivingEntity self = (LivingEntity) (Object) this;
 		if (ServerRaceSystem.shouldBlockGennadiyDefenseEffect(self, effect)
 				|| ServerRaceSystem.shouldBlockMarkStockRestorativeEffect(self, effect)
-				|| ServerRaceSystem.shouldBlockMilkStockPositiveEffect(self, effect)) {
+				|| ServerRaceSystem.shouldBlockMilkStockPositiveEffect(self, effect)
+				|| PuroSanStockSystem.shouldBlockBlindness(self, effect)) {
 			cir.setReturnValue(false);
 		}
 	}
@@ -26,7 +28,8 @@ public abstract class LivingEntityGennadiyDefenseEffectMixin {
 		LivingEntity self = (LivingEntity) (Object) this;
 		if (ServerRaceSystem.shouldBlockGennadiyDefenseEffect(self, effect)
 				|| ServerRaceSystem.shouldBlockMarkStockRestorativeEffect(self, effect)
-				|| ServerRaceSystem.shouldBlockMilkStockPositiveEffect(self, effect)) {
+				|| ServerRaceSystem.shouldBlockMilkStockPositiveEffect(self, effect)
+				|| PuroSanStockSystem.shouldBlockBlindness(self, effect)) {
 			cir.setReturnValue(false);
 		}
 	}

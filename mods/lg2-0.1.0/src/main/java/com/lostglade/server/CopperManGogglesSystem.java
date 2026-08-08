@@ -455,6 +455,10 @@ public final class CopperManGogglesSystem {
 		if (priorityTitle != null) {
 			return priorityTitle;
 		}
+		priorityTitle = PuroSanStockSystem.getAimWarningTitleOverride(player);
+		if (priorityTitle != null) {
+			return priorityTitle;
+		}
 		return shouldShowScreenOverlay(player) ? buildScreenOverlayTitle(player) : Component.empty();
 	}
 
@@ -1700,6 +1704,9 @@ public final class CopperManGogglesSystem {
 			return;
 		}
 		Component priorityTitle = ServerRaceSystem.getKilkaAttackFlashTitleOverride(player);
+		if (priorityTitle == null) {
+			priorityTitle = PuroSanStockSystem.getAimWarningTitleOverride(player);
+		}
 		if (priorityTitle != null) {
 			player.connection.send(new ClientboundSetTitlesAnimationPacket(0, 16, 0));
 			player.connection.send(new ClientboundSetTitleTextPacket(priorityTitle));

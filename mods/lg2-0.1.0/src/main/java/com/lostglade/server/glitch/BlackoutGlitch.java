@@ -33,6 +33,11 @@ public final class BlackoutGlitch implements ServerGlitchHandler {
 	private static final double FLICKER_WAVE_SPEED = 0.40D;
 	private static final double FLICKER_NOISE_MIN = 0.75D;
 	private static final Map<UUID, ActiveBlackoutState> ACTIVE_STATES = new HashMap<>();
+	private static final ThreadLocal<UUID> APPLYING_EFFECT_TO = new ThreadLocal<>();
+
+	public static boolean isApplyingEffectsTo(ServerPlayer player) {
+		return player != null && player.getUUID().equals(APPLYING_EFFECT_TO.get());
+	}
 
 	public static void tickActiveStates(MinecraftServer server) {
 		if (server == null || ACTIVE_STATES.isEmpty()) {
@@ -174,22 +179,27 @@ public final class BlackoutGlitch implements ServerGlitchHandler {
 		int blindnessAmplifier = scaleAmplifier(BLINDNESS_AMPLIFIER, intensity);
 		int darknessAmplifier = scaleAmplifier(DARKNESS_AMPLIFIER, intensity);
 
-		player.addEffect(new MobEffectInstance(
-				MobEffects.BLINDNESS,
-				effectDurationTicks,
-				blindnessAmplifier,
-				false,
-				false,
-				false
-		));
-		player.addEffect(new MobEffectInstance(
-				MobEffects.DARKNESS,
-				effectDurationTicks,
-				darknessAmplifier,
-				false,
-				false,
-				false
-		));
+		APPLYING_EFFECT_TO.set(player.getUUID());
+		try {
+			player.addEffect(new MobEffectInstance(
+					MobEffects.BLINDNESS,
+					effectDurationTicks,
+					blindnessAmplifier,
+					false,
+					false,
+					false
+			));
+			player.addEffect(new MobEffectInstance(
+					MobEffects.DARKNESS,
+					effectDurationTicks,
+					darknessAmplifier,
+					false,
+					false,
+					false
+			));
+		} finally {
+			APPLYING_EFFECT_TO.remove();
+		}
 	}
 
 	private static double getFadeProgress(ActiveBlackoutState state, long nowTick) {

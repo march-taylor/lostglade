@@ -326,18 +326,23 @@ public final class ServerRaceSystem {
 	private static final double PURO_SAN_SHNYAGA_DEFAULT_CHARGE_SECONDS = 5.0D;
 	private static final double PURO_SAN_SHNYAGA_DEFAULT_SPEED_BONUS_RATIO = 0.2D;
 	private static final double PURO_SAN_SHNYAGA_DEFAULT_SHIELD_HEALTH_RATIO = 0.5D;
-	private static final double PURO_SAN_WALL_SLIDE_MAX_FALL_SPEED = -0.025D;
+	private static final double PURO_SAN_WALL_SLIDE_MAX_FALL_SPEED = -0.05D;
 	private static final double PURO_SAN_WALL_SLIDE_GRAVITY = Math.abs(PURO_SAN_WALL_SLIDE_MAX_FALL_SPEED) / 49.0D;
 	private static final Identifier PURO_SAN_WALL_SLIDE_GRAVITY_MODIFIER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "puro_san_wall_slide_gravity");
-	private static final double PURO_SAN_WALL_PROBE_DISTANCE = 0.08D;
+	private static final double PURO_SAN_WALL_SLIDE_PROBE_DISTANCE = 0.08D;
+	private static final double PURO_SAN_WALL_JUMP_PROBE_DISTANCE = 0.30D;
 	private static final double PURO_SAN_WALL_PROBE_SLICE_HEIGHT = 0.35D;
 	private static final int PURO_SAN_RUN_SPEED_SAMPLE_TICKS = 5;
-
-	private static final long PURO_SAN_DEFENSE_FALL_PROTECTION_TICKS = 300L;
+	private static final double PURO_SAN_GROUND_SPEED_BLOCKS_PER_ATTRIBUTE = 2.1585D;
 	private static final double PURO_SAN_ATTACK_WAVE_ANGLE_DEGREES = 150.0D;
 	private static final double PURO_SAN_ATTACK_JUMP_ANGLE_DEGREES = 45.0D;
 	private static final double PURO_SAN_ATTACK_KNOCKBACK_ANGLE_DEGREES = 30.0D;
-	private static final double PURO_SAN_ATTACK_BLOCKS_TO_VELOCITY = 0.115D;
+	private static final double PURO_SAN_ATTACK_KNOCKBACK_BLOCKS_TO_VELOCITY = 0.115D;
+	private static final double PURO_SAN_ATTACK_AIR_FRICTION = 0.91D;
+	private static final double PURO_SAN_ATTACK_VERTICAL_DRAG = 0.98D;
+	private static final double PURO_SAN_ATTACK_GRAVITY = 0.08D;
+	private static final int PURO_SAN_ATTACK_MAX_FLIGHT_TICKS = 200;
+	private static final int PURO_SAN_ATTACK_VELOCITY_SEARCH_STEPS = 64;
 	private static final Identifier PURO_SAN_ATTACK_MOVEMENT_SLOW_MODIFIER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "puro_san_attack_movement_slow");
 	private static final Identifier PURO_SAN_ATTACK_SPEED_SLOW_MODIFIER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "puro_san_attack_speed_slow");
 	private static final Identifier PURO_SAN_SHNYAGA_SPEED_MODIFIER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "puro_san_shnyaga_speed");
@@ -1092,7 +1097,6 @@ public final class ServerRaceSystem {
 	private static final Map<UUID, KilkaDefenseSession> KILKA_DEFENSE_SESSIONS = new LinkedHashMap<>();
 	private static final Map<UUID, KilkaDefenseProjectileDiversion> KILKA_DEFENSE_PROJECTILE_DIVERSIONS = new HashMap<>();
 	private static final Map<UUID, PuroSanAttackDebuffSession> PURO_SAN_ATTACK_DEBUFFS = new HashMap<>();
-	private static final Map<UUID, Long> PURO_SAN_DEFENSE_FALL_PROTECTION_END_TICKS = new HashMap<>();
 	private static final Map<UUID, PuroSanJumpTrailSession> PURO_SAN_JUMP_TRAIL_END_TICKS = new HashMap<>();
 	private static final Map<UUID, PuroSanOverdriveSession> PURO_SAN_OVERDRIVE_SESSIONS = new HashMap<>();
 	private static final Map<UUID, ServerBossEvent> PURO_SAN_OVERDRIVE_BOSS_BARS = new HashMap<>();
@@ -1878,7 +1882,6 @@ public final class ServerRaceSystem {
 			tickPendingKilkaSalmonFormRestores(server);
 			tickKilkaSalmonForm(server);
 			tickPuroSanAttackDebuffs(server);
-			tickPuroSanDefenseLandings(server);
 			tickPuroSanJumpTrails(server);
 			tickPuroSanOverdrive(server);
 			tickKilkaAttack(server);
@@ -4697,7 +4700,7 @@ public final class ServerRaceSystem {
 		}
 	}
 
-		private static final class PuroSanJumpTrailSession {
+	private static final class PuroSanJumpTrailSession {
 		private final long startTick;
 		private final long endTick;
 		private Vec3 lastTrailPosition;
@@ -4713,6 +4716,7 @@ public final class ServerRaceSystem {
 
 	private record PuroSanAttackDebuffSession(LivingEntity target, long endTick) {
 	}
+
 	private static final class PuroSanOverdriveSession {
 		private long chargeTicks;
 		private boolean active;
@@ -16813,7 +16817,7 @@ private static void restoreKilkaSalmonFormAfterJoin(MinecraftServer server, Serv
 				} else {
 					syncPuroSanOverdriveSpeed(player, ability, session);
 					updatePuroSanOverdriveBossBar(player, session, false);
-					handlePuroSanWallMovement(player, session, input.jump(), wallSliding, wallJumpNormal);
+					handlePuroSanWallMovement(player, session, input, wallSliding, wallJumpNormal);
 				}
 			} else {
 				boolean charging = player.isAlive() && chargingRun;
@@ -16922,13 +16926,14 @@ private static void restoreKilkaSalmonFormAfterJoin(MinecraftServer server, Serv
 	private static void handlePuroSanWallMovement(
 			ServerPlayer player,
 			PuroSanOverdriveSession session,
-			boolean jumpPressed,
+			net.minecraft.world.entity.player.Input input,
 			boolean wallSliding,
 			Vec3 wallJumpNormal
 	) {
 		if (player.onGround()) {
 			return;
 		}
+		boolean jumpPressed = input.jump();
 		if (jumpPressed && !session.jumpPressed && wallJumpNormal.lengthSqr() > 1.0E-8D) {
 			Vec3 look = player.getLookAngle();
 			Vec3 jumpDirection = new Vec3(look.x, 0.0D, look.z);
@@ -16937,11 +16942,15 @@ private static void restoreKilkaSalmonFormAfterJoin(MinecraftServer server, Serv
 				if (jumpDirection.dot(wallJumpNormal.normalize()) > 0.0D) {
 					removeAttributeModifier(player.getAttribute(Attributes.GRAVITY), PURO_SAN_WALL_SLIDE_GRAVITY_MODIFIER_ID);
 					session.wallSlideSuppressionTicks = 4;
-					boolean sprinting = player.isSprinting();
+					double runningSpeed = getPuroSanWallSlideHorizontalMovement(player, input).length();
 					player.jumpFromGround();
-					if (!sprinting) {
-						player.addDeltaMovement(jumpDirection.scale(0.2D));
-					}
+					Vec3 jumpVelocity = player.getDeltaMovement();
+					double horizontalJumpSpeed = runningSpeed + 0.2D;
+					player.setDeltaMovement(
+							jumpDirection.x * horizontalJumpSpeed,
+							jumpVelocity.y,
+							jumpDirection.z * horizontalJumpSpeed
+					);
 					player.resetFallDistance();
 					player.hurtMarked = true;
 					player.connection.send(new ClientboundSetEntityMotionPacket(player));
@@ -16951,8 +16960,15 @@ private static void restoreKilkaSalmonFormAfterJoin(MinecraftServer server, Serv
 		}
 		if (wallSliding) {
 			Vec3 movement = player.getDeltaMovement();
-			if (movement.y != PURO_SAN_WALL_SLIDE_MAX_FALL_SPEED) {
-				player.setDeltaMovement(movement.x, PURO_SAN_WALL_SLIDE_MAX_FALL_SPEED, movement.z);
+			Vec3 horizontalMovement = getPuroSanWallSlideHorizontalMovement(player, input);
+			if (Math.abs(movement.x - horizontalMovement.x) > 1.0E-6D
+					|| movement.y != PURO_SAN_WALL_SLIDE_MAX_FALL_SPEED
+					|| Math.abs(movement.z - horizontalMovement.z) > 1.0E-6D) {
+				player.setDeltaMovement(
+						horizontalMovement.x,
+						PURO_SAN_WALL_SLIDE_MAX_FALL_SPEED,
+						horizontalMovement.z
+				);
 				player.hurtMarked = true;
 				player.connection.send(new ClientboundSetEntityMotionPacket(player));
 			}
@@ -16960,6 +16976,38 @@ private static void restoreKilkaSalmonFormAfterJoin(MinecraftServer server, Serv
 		}
 	}
 
+	private static Vec3 getPuroSanWallSlideHorizontalMovement(
+			ServerPlayer player,
+			net.minecraft.world.entity.player.Input input
+	) {
+		double forwardInput = (input.forward() ? 1.0D : 0.0D) - (input.backward() ? 1.0D : 0.0D);
+		double rightInput = (input.right() ? 1.0D : 0.0D) - (input.left() ? 1.0D : 0.0D);
+		if (Math.abs(forwardInput) <= 1.0E-8D && Math.abs(rightInput) <= 1.0E-8D) {
+			return Vec3.ZERO;
+		}
+
+		double yaw = Math.toRadians(player.getYRot());
+		Vec3 forward = new Vec3(-Math.sin(yaw), 0.0D, Math.cos(yaw));
+		Vec3 right = new Vec3(-forward.z, 0.0D, forward.x);
+		Vec3 direction = forward.scale(forwardInput).add(right.scale(rightInput));
+		if (direction.lengthSqr() <= 1.0E-8D) {
+			return Vec3.ZERO;
+		}
+
+		AttributeInstance movementSpeed = player.getAttribute(Attributes.MOVEMENT_SPEED);
+		if (movementSpeed == null) {
+			return Vec3.ZERO;
+		}
+		AttributeModifier sprintModifier = movementSpeed.getModifier(PURO_SAN_VANILLA_SPRINT_SPEED_MODIFIER_ID);
+		double speedAttribute = removeTotalAttributeModifierFactor(movementSpeed.getValue(), sprintModifier);
+		boolean sprinting = player.isSprinting() || input.sprint();
+		if (sprinting) {
+			double sprintRatio = sprintModifier == null ? 0.3D : sprintModifier.amount();
+			speedAttribute *= 1.0D + sprintRatio;
+		}
+		double blocksPerTick = Math.max(0.0D, speedAttribute) * PURO_SAN_GROUND_SPEED_BLOCKS_PER_ATTRIBUTE;
+		return direction.normalize().scale(blocksPerTick);
+	}
 	private static void syncPuroSanWallSlideGravity(ServerPlayer player, boolean wallSliding) {
 		AttributeInstance gravity = player == null ? null : player.getAttribute(Attributes.GRAVITY);
 		if (gravity == null) {
@@ -16991,18 +17039,19 @@ private static void restoreKilkaSalmonFormAfterJoin(MinecraftServer server, Serv
 		double minY = headLevel ? box.maxY - sliceHeight : box.minY + 0.02D;
 		double maxY = headLevel ? box.maxY - 0.02D : box.minY + sliceHeight;
 		AABB probe = new AABB(box.minX, minY, box.minZ, box.maxX, maxY, box.maxZ);
+		double probeDistance = headLevel ? PURO_SAN_WALL_SLIDE_PROBE_DISTANCE : PURO_SAN_WALL_JUMP_PROBE_DISTANCE;
 		double x = 0.0D;
 		double z = 0.0D;
-		if (!level.noBlockCollision(player, probe.move(PURO_SAN_WALL_PROBE_DISTANCE, 0.0D, 0.0D))) {
+		if (!level.noBlockCollision(player, probe.move(probeDistance, 0.0D, 0.0D))) {
 			x -= 1.0D;
 		}
-		if (!level.noBlockCollision(player, probe.move(-PURO_SAN_WALL_PROBE_DISTANCE, 0.0D, 0.0D))) {
+		if (!level.noBlockCollision(player, probe.move(-probeDistance, 0.0D, 0.0D))) {
 			x += 1.0D;
 		}
-		if (!level.noBlockCollision(player, probe.move(0.0D, 0.0D, PURO_SAN_WALL_PROBE_DISTANCE))) {
+		if (!level.noBlockCollision(player, probe.move(0.0D, 0.0D, probeDistance))) {
 			z -= 1.0D;
 		}
-		if (!level.noBlockCollision(player, probe.move(0.0D, 0.0D, -PURO_SAN_WALL_PROBE_DISTANCE))) {
+		if (!level.noBlockCollision(player, probe.move(0.0D, 0.0D, -probeDistance))) {
 			z += 1.0D;
 		}
 		return new Vec3(x, 0.0D, z);
@@ -17254,31 +17303,28 @@ private static void restoreKilkaSalmonFormAfterJoin(MinecraftServer server, Serv
 		player.resetFallDistance();
 		player.hurtMarked = true;
 		player.connection.send(new ClientboundSetEntityMotionPacket(player));
-		PURO_SAN_DEFENSE_FALL_PROTECTION_END_TICKS.put(player.getUUID(), player.level().getGameTime() + PURO_SAN_DEFENSE_FALL_PROTECTION_TICKS);
 		PURO_SAN_JUMP_TRAIL_END_TICKS.put(player.getUUID(), new PuroSanJumpTrailSession(player.level().getGameTime(), player.level().getGameTime() + 100L, player.position()));
 		startGenericAbilityCooldown(player, RaceAbilitySlot.DEFENSE, ability);
 		Lg2.LOGGER.info("Player {} used puro san defense '{}' from race '{}'", player.getGameProfile().name(), ability.abilityId, race.id);
 		return 1;
 	}
 
-	public static boolean shouldCancelPuroSanDefenseFallDamage(ServerPlayer player, DamageSource damageSource) {
-		if (player == null || damageSource == null || !damageSource.is(DamageTypes.FALL)) {
-			return false;
+	public static void playPuroSanSafeLandingEffects(ServerPlayer player) {
+		if (player == null || !(player.level() instanceof ServerLevel level)) {
+			return;
 		}
-		Long endTick = PURO_SAN_DEFENSE_FALL_PROTECTION_END_TICKS.get(player.getUUID());
-		if (endTick == null) {
-			return false;
-		}
-		if (player.level().getGameTime() > endTick) {
-			PURO_SAN_DEFENSE_FALL_PROTECTION_END_TICKS.remove(player.getUUID());
-			return false;
-		}
-		PURO_SAN_DEFENSE_FALL_PROTECTION_END_TICKS.remove(player.getUUID());
-		player.resetFallDistance();
-		if (player.level() instanceof ServerLevel level) {
-			spawnMarkShieldBashDashParticles(level, player, getPuroSanDashHorizontalDirection(player, player.getLookAngle()));
-		}
-		return true;
+		Vec3 direction = getPuroSanDashHorizontalDirection(player, player.getLookAngle());
+		spawnMarkShieldBashDashParticles(level, player, direction);
+		level.playSound(
+				null,
+				player.getX(),
+				player.getY(),
+				player.getZ(),
+				SoundEvents.BREEZE_LAND,
+				SoundSource.PLAYERS,
+				0.9F,
+				0.9F
+		);
 	}
 	private static int usePuroSanAttack(ServerPlayer player, PlayerRaceConfig race, RaceAbilityConfig ability) {
 		if (player == null || race == null || ability == null || player.level().isClientSide()) {
@@ -17294,11 +17340,9 @@ private static void restoreKilkaSalmonFormAfterJoin(MinecraftServer server, Serv
 		double damage = positiveOrDefault(ability.puroSanAttackDamage, PURO_SAN_ATTACK_DEFAULT_DAMAGE);
 		long debuffTicks = Math.max(1L, Math.round(positiveOrDefault(ability.puroSanAttackDebuffSeconds, PURO_SAN_ATTACK_DEFAULT_DEBUFF_SECONDS) * 20.0D));
 		Vec3 origin = player.position();
-		Vec3 look = new Vec3(player.getLookAngle().x, 0.0D, player.getLookAngle().z);
-		if (look.lengthSqr() <= 1.0E-8D) {
-			look = Vec3.directionFromRotation(0.0F, player.getYRot());
-		}
-		look = look.normalize();
+		double yaw = Math.toRadians(player.getYRot());
+		Vec3 look = new Vec3(-Math.sin(yaw), 0.0D, Math.cos(yaw));
+
 		level.playSound(null, origin.x, origin.y, origin.z, SoundEvents.BREEZE_JUMP, SoundSource.PLAYERS, 1.0F, 0.9F);
 		applyPuroSanAttackWave(level, player, origin, look, waveRadius, damage, debuffTicks, jumpBlocks);
 		launchPuroSanBackward(player, look, jumpBlocks);
@@ -17312,12 +17356,58 @@ private static void restoreKilkaSalmonFormAfterJoin(MinecraftServer server, Serv
 			return;
 		}
 		double angle = Math.toRadians(PURO_SAN_ATTACK_JUMP_ANGLE_DEGREES);
-		double speed = distanceBlocks * PURO_SAN_ATTACK_BLOCKS_TO_VELOCITY;
-		Vec3 impulse = look.scale(-Math.cos(angle) * speed).add(0.0D, Math.sin(angle) * speed, 0.0D);
-		player.setDeltaMovement(player.getDeltaMovement().scale(0.15D).add(impulse));
+		double horizontalVelocity = calculatePuroSanAttackHorizontalVelocity(player, distanceBlocks);
+		double verticalVelocity = horizontalVelocity * Math.tan(angle);
+		Vec3 impulse = look.scale(-horizontalVelocity).add(0.0D, verticalVelocity, 0.0D);
+
+		player.setDeltaMovement(impulse);
 		player.hurtMarked = true;
-		player.connection.send(new ClientboundSetEntityMotionPacket(player));
-		PURO_SAN_JUMP_TRAIL_END_TICKS.put(player.getUUID(), new PuroSanJumpTrailSession(player.level().getGameTime(), player.level().getGameTime() + 40L, player.position()));
+		long nowTick = player.level().getGameTime();
+		PURO_SAN_JUMP_TRAIL_END_TICKS.put(player.getUUID(), new PuroSanJumpTrailSession(nowTick, nowTick + 40L, player.position()));
+	}
+
+	private static double calculatePuroSanAttackHorizontalVelocity(ServerPlayer player, double distanceBlocks) {
+		if (player == null || distanceBlocks <= 0.0D) {
+			return 0.0D;
+		}
+		double initialFriction = PURO_SAN_ATTACK_AIR_FRICTION;
+		if (player.onGround()) {
+			initialFriction = player.level()
+					.getBlockState(player.getBlockPosBelowThatAffectsMyMovement())
+					.getBlock()
+					.getFriction() * PURO_SAN_ATTACK_AIR_FRICTION;
+		}
+		double low = 0.0D;
+		double high = Math.max(1.0D, distanceBlocks * 0.5D);
+		while (simulatePuroSanAttackHorizontalDistance(high, initialFriction) < distanceBlocks && high < 64.0D) {
+			high *= 2.0D;
+		}
+		for (int i = 0; i < PURO_SAN_ATTACK_VELOCITY_SEARCH_STEPS; i++) {
+			double candidate = (low + high) * 0.5D;
+			if (simulatePuroSanAttackHorizontalDistance(candidate, initialFriction) < distanceBlocks) {
+				low = candidate;
+			} else {
+				high = candidate;
+			}
+		}
+		return high;
+	}
+
+	private static double simulatePuroSanAttackHorizontalDistance(double horizontalVelocity, double initialFriction) {
+		double angle = Math.toRadians(PURO_SAN_ATTACK_JUMP_ANGLE_DEGREES);
+		double verticalVelocity = horizontalVelocity * Math.tan(angle);
+		double horizontalDistance = 0.0D;
+		double height = 0.0D;
+		for (int tick = 0; tick < PURO_SAN_ATTACK_MAX_FLIGHT_TICKS; tick++) {
+			horizontalDistance += horizontalVelocity;
+			height += verticalVelocity;
+			if (tick > 0 && height <= 0.0D) {
+				break;
+			}
+			horizontalVelocity *= tick == 0 ? initialFriction : PURO_SAN_ATTACK_AIR_FRICTION;
+			verticalVelocity = (verticalVelocity - PURO_SAN_ATTACK_GRAVITY) * PURO_SAN_ATTACK_VERTICAL_DRAG;
+		}
+		return horizontalDistance;
 	}
 
 	private static void applyPuroSanAttackWave(ServerLevel level, ServerPlayer player, Vec3 origin, Vec3 look, double radius, double damage, long debuffTicks, double jumpBlocks) {
@@ -17369,7 +17459,7 @@ Vec3 offset = target.position().subtract(origin);
 			away = Vec3.directionFromRotation(0.0F, player.getYRot());
 		}
 		double angle = Math.toRadians(PURO_SAN_ATTACK_KNOCKBACK_ANGLE_DEGREES);
-		double speed = knockbackBlocks * PURO_SAN_ATTACK_BLOCKS_TO_VELOCITY;
+		double speed = knockbackBlocks * PURO_SAN_ATTACK_KNOCKBACK_BLOCKS_TO_VELOCITY;
 		Vec3 impulse = away.normalize().scale(Math.cos(angle) * speed).add(0.0D, Math.sin(angle) * speed, 0.0D);
 		target.setDeltaMovement(impulse);
 		target.hurtMarked = true;
@@ -17445,30 +17535,6 @@ Vec3 offset = target.position().subtract(origin);
 
 
 
-	private static void tickPuroSanDefenseLandings(MinecraftServer server) {
-		if (server == null || PURO_SAN_DEFENSE_FALL_PROTECTION_END_TICKS.isEmpty()) {
-			return;
-		}
-		long nowTick = server.overworld().getGameTime();
-		Iterator<Map.Entry<UUID, Long>> iterator = PURO_SAN_DEFENSE_FALL_PROTECTION_END_TICKS.entrySet().iterator();
-		while (iterator.hasNext()) {
-			Map.Entry<UUID, Long> entry = iterator.next();
-			ServerPlayer player = server.getPlayerList().getPlayer(entry.getKey());
-			long endTick = entry.getValue() == null ? 0L : entry.getValue();
-			if (player == null || !player.isAlive() || nowTick > endTick) {
-				iterator.remove();
-				continue;
-			}
-			long activationTick = endTick - PURO_SAN_DEFENSE_FALL_PROTECTION_TICKS;
-			if (nowTick <= activationTick + 2L || !player.onGround() || !(player.level() instanceof ServerLevel level)) {
-				continue;
-			}
-			player.resetFallDistance();
-			spawnMarkShieldBashDashParticles(level, player, getPuroSanDashHorizontalDirection(player, player.getLookAngle()));
-			iterator.remove();
-		}
-	}
-
 	private static void tickPuroSanJumpTrails(MinecraftServer server) {
 		if (server == null || PURO_SAN_JUMP_TRAIL_END_TICKS.isEmpty()) {
 			return;
@@ -17485,6 +17551,8 @@ Vec3 offset = target.position().subtract(origin);
 			}
 			Vec3 current = player.position();
 			Vec3 delta = current.subtract(session.lastTrailPosition);
+
+
 			Vec3 horizontal = new Vec3(player.getLookAngle().x, 0.0D, player.getLookAngle().z);
 			if (horizontal.lengthSqr() > 1.0E-6D && (delta.x * delta.x + delta.z * delta.z > 1.0E-6D)) {
 				spawnMarkShieldBashTrailParticles(level, session.lastTrailPosition, current, horizontal.normalize(), player.getBbWidth());

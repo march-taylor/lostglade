@@ -248,6 +248,13 @@ public final class RaceConfig {
 		changed |= normalizeNonNegative(ability.puroSanShnyagaChargeSeconds, value -> ability.puroSanShnyagaChargeSeconds = value);
 		changed |= normalizeNonNegative(ability.puroSanShnyagaSpeedBonusRatio, value -> ability.puroSanShnyagaSpeedBonusRatio = value);
 		changed |= normalizeNonNegative(ability.puroSanShnyagaShieldHealthRatio, value -> ability.puroSanShnyagaShieldHealthRatio = value);
+		changed |= normalizeNonNegative(ability.puroSanStockTrailDurationSeconds, value -> ability.puroSanStockTrailDurationSeconds = value);
+		changed |= normalizeNonNegative(ability.puroSanStockTrailDamage, value -> ability.puroSanStockTrailDamage = value);
+		changed |= normalizeNonNegative(ability.puroSanStockBaseSpeedBonusRatio, value -> ability.puroSanStockBaseSpeedBonusRatio = value);
+		changed |= normalizeNonNegative(ability.puroSanStockAimWarningRadiusBlocks, value -> ability.puroSanStockAimWarningRadiusBlocks = value);
+		changed |= normalizeNonNegative(ability.puroSanStockMeleeDamagePenaltyRatio, value -> ability.puroSanStockMeleeDamagePenaltyRatio = value);
+		changed |= normalizeNonNegative(ability.puroSanStockMeleeVulnerabilityRatio, value -> ability.puroSanStockMeleeVulnerabilityRatio = value);
+		changed |= normalizeNonNegative(ability.puroSanStockMaxHealthHearts, value -> ability.puroSanStockMaxHealthHearts = value);
 
 		changed |= normalizeNonNegative(ability.kilkaAttackChargeSeconds, value -> ability.kilkaAttackChargeSeconds = value);
 		changed |= normalizeNonNegative(ability.kilkaAttackRadiusBlocks, value -> ability.kilkaAttackRadiusBlocks = value);
@@ -495,6 +502,13 @@ public final class RaceConfig {
 			addDoubleIfNonZero(json, "puroSanShnyagaChargeSeconds", ability.puroSanShnyagaChargeSeconds);
 			addDoubleIfNonZero(json, "puroSanShnyagaSpeedBonusRatio", ability.puroSanShnyagaSpeedBonusRatio);
 			addDoubleIfNonZero(json, "puroSanShnyagaShieldHealthRatio", ability.puroSanShnyagaShieldHealthRatio);
+			addDoubleIfNonZero(json, "puroSanStockTrailDurationSeconds", ability.puroSanStockTrailDurationSeconds);
+			addDoubleIfNonZero(json, "puroSanStockTrailDamage", ability.puroSanStockTrailDamage);
+			addDoubleIfNonZero(json, "puroSanStockBaseSpeedBonusRatio", ability.puroSanStockBaseSpeedBonusRatio);
+			addDoubleIfNonZero(json, "puroSanStockAimWarningRadiusBlocks", ability.puroSanStockAimWarningRadiusBlocks);
+			addDoubleIfNonZero(json, "puroSanStockMeleeDamagePenaltyRatio", ability.puroSanStockMeleeDamagePenaltyRatio);
+			addDoubleIfNonZero(json, "puroSanStockMeleeVulnerabilityRatio", ability.puroSanStockMeleeVulnerabilityRatio);
+			addDoubleIfNonZero(json, "puroSanStockMaxHealthHearts", ability.puroSanStockMaxHealthHearts);
 
 			addDoubleIfNonZero(json, "kilkaAttackChargeSeconds", ability.kilkaAttackChargeSeconds);
 			addDoubleIfNonZero(json, "kilkaAttackRadiusBlocks", ability.kilkaAttackRadiusBlocks);
@@ -720,6 +734,13 @@ public final class RaceConfig {
 		public double puroSanShnyagaChargeSeconds = 0.0D;
 		public double puroSanShnyagaSpeedBonusRatio = 0.0D;
 		public double puroSanShnyagaShieldHealthRatio = 0.0D;
+		public double puroSanStockTrailDurationSeconds = 0.0D;
+		public double puroSanStockTrailDamage = 0.0D;
+		public double puroSanStockBaseSpeedBonusRatio = 0.0D;
+		public double puroSanStockAimWarningRadiusBlocks = 0.0D;
+		public double puroSanStockMeleeDamagePenaltyRatio = 0.0D;
+		public double puroSanStockMeleeVulnerabilityRatio = 0.0D;
+		public double puroSanStockMaxHealthHearts = 0.0D;
 
 		public double kilkaAttackChargeSeconds = 0.0D;
 		public double kilkaAttackRadiusBlocks = 0.0D;

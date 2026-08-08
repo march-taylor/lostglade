@@ -636,7 +636,14 @@
         "enabled": true,
         "abilityId": "puro_san_stock",
         "name": "Ассасин",
-        "description": ""
+        "description": "",
+        "puroSanStockTrailDurationSeconds": 3.0,
+        "puroSanStockTrailDamage": 1.0,
+        "puroSanStockBaseSpeedBonusRatio": 0.1,
+        "puroSanStockAimWarningRadiusBlocks": 64.0,
+        "puroSanStockMeleeDamagePenaltyRatio": 0.25,
+        "puroSanStockMeleeVulnerabilityRatio": 0.25,
+        "puroSanStockMaxHealthHearts": 8.0
       }
     }
   ]
