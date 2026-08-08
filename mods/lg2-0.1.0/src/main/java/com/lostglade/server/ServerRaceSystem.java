@@ -1539,6 +1539,12 @@ public final class ServerRaceSystem {
 				useAbility(context.player(), slots[payload.slot()]);
 			}
 		});
+		ServerPlayNetworking.registerGlobalReceiver(Lg2Payloads.RaceAbilityStateRequestC2SPayload.TYPE, (payload, context) -> {
+			MinecraftServer server = context.player().level().getServer();
+			if (server != null) {
+				server.execute(() -> sendRaceAbilityState(context.player()));
+			}
+		});
 
 		ServerLifecycleEvents.SERVER_STARTED.register(server -> {
 			RaceConfig.load();
@@ -2614,6 +2620,25 @@ public final class ServerRaceSystem {
 	public static boolean hasUnlockedAbility(ServerPlayer player, RaceAbilitySlot slot) {
 		Optional<PlayerRaceConfig> raceOptional = getRace(player);
 		return raceOptional.isPresent() && hasUnlockedAbility(player, raceOptional.get(), slot);
+	}
+
+	private static void sendRaceAbilityState(ServerPlayer player) {
+		if (player == null || !ServerPlayNetworking.canSend(player, Lg2Payloads.RaceAbilityStateS2CPayload.TYPE)) {
+			return;
+		}
+		RaceAbilitySlot[] slots = {
+				RaceAbilitySlot.ATTACK,
+				RaceAbilitySlot.DEFENSE,
+				RaceAbilitySlot.UNIQUE_ABILITY,
+				RaceAbilitySlot.SHNYAGA
+		};
+		int unlockedMask = 0;
+		for (int slot = 0; slot < slots.length; slot++) {
+			if (hasUnlockedAbility(player, slots[slot])) {
+				unlockedMask |= 1 << slot;
+			}
+		}
+		ServerPlayNetworking.send(player, new Lg2Payloads.RaceAbilityStateS2CPayload(unlockedMask));
 	}
 
 	public static RaceAbilityConfig getAbility(PlayerRaceConfig race, RaceAbilitySlot slot) {

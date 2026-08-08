@@ -36,6 +36,7 @@ public final class RaceClientControls {
 
 	public static void openMenu(Minecraft client) {
 		if (client != null && client.player != null && client.screen == null) {
+			requestAbilityState();
 			client.setScreen(new RaceAbilityScreen());
 		}
 	}
@@ -43,6 +44,12 @@ public final class RaceClientControls {
 	public static void useAbility(int slot) {
 		if (slot >= 0 && slot <= 3 && ClientPlayNetworking.canSend(RaceAbilityPayload.TYPE)) {
 			ClientPlayNetworking.send(new RaceAbilityPayload(slot));
+		}
+	}
+
+	private static void requestAbilityState() {
+		if (ClientPlayNetworking.canSend(RaceAbilityStateRequestPayload.TYPE)) {
+			ClientPlayNetworking.send(new RaceAbilityStateRequestPayload());
 		}
 	}
 

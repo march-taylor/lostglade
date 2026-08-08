@@ -21,7 +21,9 @@ public final class Lg2Payloads {
 		}
 
 		PayloadTypeRegistry.playS2C().register(MilkPocketVoidFadeS2CPayload.TYPE, MilkPocketVoidFadeS2CPayload.STREAM_CODEC);
+		PayloadTypeRegistry.playS2C().register(RaceAbilityStateS2CPayload.TYPE, RaceAbilityStateS2CPayload.STREAM_CODEC);
 		PayloadTypeRegistry.playC2S().register(RaceAbilityC2SPayload.TYPE, RaceAbilityC2SPayload.STREAM_CODEC);
+		PayloadTypeRegistry.playC2S().register(RaceAbilityStateRequestC2SPayload.TYPE, RaceAbilityStateRequestC2SPayload.STREAM_CODEC);
 	}
 
 	/** A request from the optional LG2 client UI to activate one of the four race actions. */
@@ -40,6 +42,38 @@ public final class Lg2Payloads {
 
 		@Override
 		public Type<RaceAbilityC2SPayload> type() {
+			return TYPE;
+		}
+	}
+
+	/** Requests the current four-bit ability purchase state for the optional lightweight client menu. */
+	public record RaceAbilityStateRequestC2SPayload() implements CustomPacketPayload {
+		public static final Type<RaceAbilityStateRequestC2SPayload> TYPE = new Type<>(id("race_ability_state_request"));
+		public static final StreamCodec<FriendlyByteBuf, RaceAbilityStateRequestC2SPayload> STREAM_CODEC =
+				StreamCodec.unit(new RaceAbilityStateRequestC2SPayload());
+
+		@Override
+		public Type<RaceAbilityStateRequestC2SPayload> type() {
+			return TYPE;
+		}
+	}
+
+	/** Four-bit purchase state sent only to clients that explicitly support the optional race menu. */
+	public record RaceAbilityStateS2CPayload(int unlockedMask) implements CustomPacketPayload {
+		public static final Type<RaceAbilityStateS2CPayload> TYPE = new Type<>(id("race_ability_state"));
+		public static final StreamCodec<FriendlyByteBuf, RaceAbilityStateS2CPayload> STREAM_CODEC =
+				CustomPacketPayload.codec(RaceAbilityStateS2CPayload::write, RaceAbilityStateS2CPayload::new);
+
+		public RaceAbilityStateS2CPayload(FriendlyByteBuf buffer) {
+			this(buffer.readVarInt());
+		}
+
+		private void write(FriendlyByteBuf buffer) {
+			buffer.writeVarInt(this.unlockedMask);
+		}
+
+		@Override
+		public Type<RaceAbilityStateS2CPayload> type() {
 			return TYPE;
 		}
 	}
