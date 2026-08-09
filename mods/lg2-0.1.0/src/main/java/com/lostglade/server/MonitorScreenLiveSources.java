@@ -539,6 +539,11 @@ final class MonitorScreenLiveSources {
 			return false;
 		}
 		BlockPos cameraPos = cameraRef.pos();
+		if (RocketLaunchEventSystem.launchedCameraFeed(cameraLevel, cameraPos) != null) {
+			// Bluetooth keeps the source's original block coordinate while the
+			// camera itself follows the launched rocket through its anchor entity.
+			return true;
+		}
 		return cameraLevel.hasChunkAt(cameraPos)
 				&& isCameraBlock(cameraLevel, cameraPos)
 				&& RendererBotCameraSystem.isCameraPlayerLoaded(cameraLevel, cameraPos);

@@ -247,6 +247,29 @@ final class MonitorScreenLiveCameraPlayback {
 		if (cameraLevel == null || cameraPos == null) {
 			return resetLiveCameraToHome(server, screenLevel, component, state);
 		}
+		RocketLaunchEventSystem.RocketCameraFeed rocketFeed = RocketLaunchEventSystem.launchedCameraFeed(cameraLevel, cameraPos);
+		if (rocketFeed != null) {
+			boolean started = RendererBotCameraSystem.ensureLiveStream(
+					liveCameraStreamOwnerId(component.runtimeKey()),
+					cameraLevel,
+					null,
+					rocketFeed.expectedX(),
+					rocketFeed.expectedY(),
+					rocketFeed.expectedZ(),
+					rocketFeed.yaw(),
+					rocketFeed.pitch(),
+					rocketFeed.followEntityUuid(),
+					Set.of(rocketFeed.followEntityUuid()),
+					true,
+					fullWidth,
+					fullHeight,
+					LIVE_CAMERA_FOV_DEGREES,
+					LIVE_CAMERA_TARGET_FPS,
+					frame -> onLiveCameraFrame(server, component.runtimeKey(), sourceUrl, fullWidth, fullHeight, frame.pixels()),
+					error -> applyLiveCameraStreamFailure(server, component.runtimeKey(), sourceUrl, error)
+			);
+			return false;
+		}
 		if (!RendererBotCameraSystem.isCameraPlayerLoaded(cameraLevel, cameraPos)) {
 			return resetLiveCameraToHome(server, screenLevel, component, state);
 		}

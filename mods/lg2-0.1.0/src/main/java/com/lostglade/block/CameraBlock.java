@@ -2,6 +2,7 @@ package com.lostglade.block;
 
 import com.lostglade.item.ModItems;
 import com.lostglade.server.MonitorScreenSystem;
+import com.lostglade.server.RocketLaunchEventSystem;
 import com.lostglade.server.CameraOrientationStore;
 import com.lostglade.server.BluetoothLinkSystem;
 import com.lostglade.server.PlacedDeviceNameStore;
@@ -140,6 +141,13 @@ public final class CameraBlock extends SimplePolymerBlock {
 
 	@Override
 	protected void affectNeighborsAfterRemoval(BlockState state, ServerLevel level, BlockPos pos, boolean movedByPiston) {
+		if (RocketLaunchEventSystem.isLaunchedMountedDevice(level, pos)) {
+			// A rocket keeps its device identity while the physical block becomes a
+			// moving display/anchor.  Do not run any normal removal work: apart from
+			// erasing the pose/link it can trigger secondary network cleanup after
+			// the endpoint has already been preserved.
+			return;
+		}
 		CameraOrientationStore.remove(level, pos);
 		PlacedDeviceNameStore.removeCameraName(level, pos);
 		BluetoothLinkSystem.removeBlockEndpoint(level, BluetoothLinkSystem.EndpointType.CAMERA, pos);

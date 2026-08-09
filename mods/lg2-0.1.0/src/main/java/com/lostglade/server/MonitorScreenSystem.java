@@ -2872,6 +2872,11 @@ public final class MonitorScreenSystem {
 	}
 
 	static boolean isPowered(ServerLevel level, ItemFrame frame) {
+		if (frame != null && frame.getTags().contains(RocketLaunchEventSystem.MOUNTED_SCREEN_TAG)) {
+			// Launch devices keep the power state captured at lift-off while their
+			// support is represented by the moving rocket body.
+			return true;
+		}
 		BlockPos supportPos = frame.blockPosition().relative(frame.getDirection().getOpposite());
 		return level.hasNeighborSignal(supportPos)
 				|| level.getBestNeighborSignal(supportPos) > 0
@@ -9404,7 +9409,14 @@ public final class MonitorScreenSystem {
 	}
 
 	static void ensureDisplay(ServerLevel level, ItemFrame frame, int connectionMask) {
-		List<Display.ItemDisplay> displays = findDisplays(level, frame.blockPosition(), frame.getDirection());
+		// A launched rocket keeps the invisible ItemFrame at its construction
+		// coordinate for links/state, while its one visible ItemDisplay follows the
+		// rocket.  Resolve that moving display first so this refresh never creates
+		// a duplicate back at the original coordinate.
+		Display.ItemDisplay mountedRocketDisplay = RocketLaunchEventSystem.resolveRocketMountedScreenDisplay(level, frame);
+		List<Display.ItemDisplay> displays = mountedRocketDisplay == null
+				? findDisplays(level, frame.blockPosition(), frame.getDirection())
+				: List.of(mountedRocketDisplay);
 		Display.ItemDisplay display;
 		boolean created = displays.isEmpty();
 		if (created) {
@@ -9443,6 +9455,7 @@ public final class MonitorScreenSystem {
 		display.setShadowStrength(0.0F);
 		display.setViewRange(1.0F);
 		ItemDisplayHitboxHelper.clear(display);
+		RocketLaunchEventSystem.poseRocketMountedScreen(level, frame, display);
 		if (created) {
 			level.addFreshEntity(display);
 		}

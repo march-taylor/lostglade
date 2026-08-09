@@ -127,6 +127,16 @@ public final class BluetoothLinkSystem {
 		return Endpoint.drone(dimension, pos, droneUuid);
 	}
 
+	/** Resolves a persisted endpoint even when its physical device is temporarily
+	 * represented by a moving rocket rather than a world block. */
+	public static Endpoint mountedBlockEndpoint(ResourceKey<Level> dimension, EndpointType type, BlockPos pos) {
+		if (dimension == null || type == null || pos == null
+				|| type == EndpointType.SCREEN || type == EndpointType.DRONE) {
+			return null;
+		}
+		return Endpoint.block(dimension, type, pos);
+	}
+
 	public static boolean areLinked(Endpoint first, Endpoint second) {
 		if (first == null || second == null) {
 			return false;
@@ -185,6 +195,13 @@ public final class BluetoothLinkSystem {
 
 	public static void removeBlockEndpoint(ServerLevel level, EndpointType type, BlockPos pos) {
 		if (type == null) {
+			return;
+		}
+		if (type == EndpointType.CAMERA && RocketLaunchEventSystem.isLaunchedMountedDevice(level, pos)) {
+			// A launched camera retains this original endpoint identity.  Several
+			// generic block-removal paths can arrive here after the camera block has
+			// become a moving rocket anchor, so guard the endpoint at the Bluetooth
+			// layer as well as in CameraBlock itself.
 			return;
 		}
 		removeEndpoint(level, Endpoint.block(level == null ? null : level.dimension(), type, pos));

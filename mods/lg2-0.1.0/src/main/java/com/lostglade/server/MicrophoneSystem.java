@@ -26,6 +26,7 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
+import net.minecraft.world.phys.Vec3;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -219,13 +220,15 @@ public final class MicrophoneSystem {
 			return true;
 		}
 
+		Vec3 mountedPosition = RocketLaunchEventSystem.launchedMountedDevicePosition(level, key.pos());
+		boolean launched = mountedPosition != null;
 		BlockState state = level.getBlockState(key.pos());
-		if (!state.is(ModBlocks.MICROPHONE)) {
+		if (!launched && !state.is(ModBlocks.MICROPHONE)) {
 			stopRuntime(key);
 			return false;
 		}
 
-		if (!hasMicrophonePower(level, key.pos())) {
+		if (!launched && !hasMicrophonePower(level, key.pos())) {
 			stopRuntime(key);
 			return true;
 		}
@@ -237,7 +240,7 @@ public final class MicrophoneSystem {
 			return true;
 		}
 
-		Set<ScreenRuntimeKey> connectedScreens = connectedPoweredScreenKeys(level, key.pos());
+		Set<ScreenRuntimeKey> connectedScreens = connectedPoweredScreenKeys(level, key.pos(), launched);
 		boolean routedToScreen = !connectedScreens.isEmpty();
 		List<BlockPos> directlyConnectedSpeakers = SpeakerSystem.findConnectedPoweredSpeakerPositions(level, key.pos());
 		List<BlockPos> connectedSpeakers = routedToScreen ? List.of() : directlyConnectedSpeakers;
@@ -248,25 +251,36 @@ public final class MicrophoneSystem {
 
 		MicrophoneRuntime runtime = ACTIVE_MICROPHONES.computeIfAbsent(key, MicrophoneRuntime::new);
 		Set<SpeakerOutputTarget> excludedSpeakerSources = excludedSpeakerSources(server, key, directlyConnectedSpeakers, connectedScreens);
-		if (!runtime.update(level, connectedSpeakers, connectedScreens, excludedSpeakerSources, voicechatApi, voicechatServerApi)) {
+		if (!runtime.update(level, mountedPosition, connectedSpeakers, connectedScreens, excludedSpeakerSources, voicechatApi, voicechatServerApi)) {
 			stopRuntime(key);
 		}
 		return true;
 	}
 
-	private static Set<ScreenRuntimeKey> connectedPoweredScreenKeys(ServerLevel level, BlockPos microphonePos) {
+	private static Set<ScreenRuntimeKey> connectedPoweredScreenKeys(ServerLevel level, BlockPos microphonePos, boolean launched) {
 		if (level == null || microphonePos == null) {
 			return Set.of();
 		}
 		Map<ScreenRuntimeKey, ScreenComponent> components = MonitorScreenWireConnectivity.collectConnectedComponentsForWireSource(level, microphonePos);
-		if (components.isEmpty()) {
-			return Set.of();
-		}
 		Set<ScreenRuntimeKey> connected = new HashSet<>();
 		for (Map.Entry<ScreenRuntimeKey, ScreenComponent> entry : components.entrySet()) {
 			ScreenComponent component = entry.getValue();
 			if (entry.getKey() != null && component != null && component.powered()) {
 				connected.add(entry.getKey());
+			}
+		}
+		if (launched) {
+			BluetoothLinkSystem.Endpoint microphone = BluetoothLinkSystem.mountedBlockEndpoint(
+					level.dimension(), BluetoothLinkSystem.EndpointType.MICROPHONE, microphonePos
+			);
+			for (BluetoothLinkSystem.Endpoint endpoint : BluetoothLinkSystem.linkedEndpoints(microphone)) {
+				if (endpoint.type() != BluetoothLinkSystem.EndpointType.SCREEN) {
+					continue;
+				}
+				ScreenComponent component = MonitorScreenSystem.resolveBluetoothScreenComponent(level, endpoint);
+				if (component != null && component.powered()) {
+					connected.add(component.runtimeKey());
+				}
 			}
 		}
 		return connected.isEmpty() ? Set.of() : Set.copyOf(connected);
@@ -957,6 +971,7 @@ public final class MicrophoneSystem {
 		private volatile Set<ScreenRuntimeKey> connectedScreenKeys;
 		private volatile Set<SpeakerOutputTarget> excludedSpeakerSources;
 		private volatile double captureDistanceSq;
+		private volatile Vec3 capturePosition;
 		private volatile String rendererAudioOwnerKey;
 
 		private MicrophoneRuntime(MicrophoneKey key) {
@@ -969,6 +984,7 @@ public final class MicrophoneSystem {
 
 		private boolean update(
 				ServerLevel level,
+				Vec3 mountedPosition,
 				List<BlockPos> connectedSpeakers,
 				Set<ScreenRuntimeKey> connectedScreens,
 				Set<SpeakerOutputTarget> excludedSpeakerSources,
@@ -980,6 +996,7 @@ public final class MicrophoneSystem {
 			}
 			double captureDistance = Math.max(MIN_CAPTURE_DISTANCE, voicechatApi.getVoiceChatDistance());
 			this.captureDistanceSq = captureDistance * captureDistance;
+			this.capturePosition = mountedPosition != null ? mountedPosition : this.key.pos().getCenter();
 			this.connectedScreenKeys = connectedScreens == null || connectedScreens.isEmpty() ? Set.of() : Set.copyOf(connectedScreens);
 			this.excludedSpeakerSources = excludedSpeakerSources == null || excludedSpeakerSources.isEmpty() ? Set.of() : Set.copyOf(excludedSpeakerSources);
 			this.captureEnabled = !this.connectedScreenKeys.isEmpty() || !connectedSpeakers.isEmpty();
@@ -998,7 +1015,7 @@ public final class MicrophoneSystem {
 			boolean started = RendererBotCameraSystem.ensureAudioCapture(
 					ownerKey,
 					level,
-					this.key.pos(),
+					BlockPos.containing(this.capturePosition),
 					Math.max(MIN_CAPTURE_DISTANCE, captureDistance),
 					this.feed::offerRendererAudioFrame,
 					message -> {
@@ -1031,9 +1048,10 @@ public final class MicrophoneSystem {
 			if (!Objects.equals(senderLevel.dimension(), this.key.dimension())) {
 				return;
 			}
-			double dx = senderPosition.getX() - (this.key.pos().getX() + 0.5D);
-			double dy = senderPosition.getY() - (this.key.pos().getY() + 0.5D);
-			double dz = senderPosition.getZ() - (this.key.pos().getZ() + 0.5D);
+			Vec3 microphonePosition = this.capturePosition != null ? this.capturePosition : this.key.pos().getCenter();
+			double dx = senderPosition.getX() - microphonePosition.x;
+			double dy = senderPosition.getY() - microphonePosition.y;
+			double dz = senderPosition.getZ() - microphonePosition.z;
 			double maxDistanceSq = whispering ? this.captureDistanceSq * (WHISPER_DISTANCE_FACTOR * WHISPER_DISTANCE_FACTOR) : this.captureDistanceSq;
 			double distanceSq = (dx * dx) + (dy * dy) + (dz * dz);
 			if (distanceSq > maxDistanceSq) {

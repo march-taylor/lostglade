@@ -48,6 +48,10 @@ loom {
 	mods {
 		"lg2" {
 			sourceSet sourceSets.main
+			// The renderer bot is a client run of this same mod.  Its capture
+			// pipeline loads shaders from src/client/resources, so those resources
+			// must be present on the development client classpath as well.
+			sourceSet sourceSets.client
 		}
 	}
 

@@ -1149,7 +1149,11 @@ public final class RendererBotCameraSystem {
 						desiredSpec.expectedZ(),
 						desiredSpec.expectedYaw(),
 						desiredSpec.expectedPitch(),
-						desiredSpec.followEntityUuid(),
+					// Follow UUIDs are kept server-side for target resolution.  The
+					// renderer client is driven by the pose packets below instead of
+					// waiting for a moving anchor entity to be tracked in its shadow
+					// world; missing that entity produced a silent stream timeout.
+					null,
 						desiredSpec.fullWidth(),
 						desiredSpec.fullHeight(),
 						desiredSpec.fovDegrees(),
@@ -2277,10 +2281,7 @@ public final class RendererBotCameraSystem {
 			if (spec == null || spec.dimension() == null || !botLevel.dimension().equals(spec.dimension())) {
 				continue;
 			}
-			if (spec.followEntityUuid() != null) {
-				return null;
-			}
-			if (spec.cameraPos() != null && !isCameraPlayerLoaded(botLevel, spec.cameraPos())) {
+			if (spec.followEntityUuid() == null && spec.cameraPos() != null && !isCameraPlayerLoaded(botLevel, spec.cameraPos())) {
 				continue;
 			}
 			ScheduledServiceTarget target = resolveServiceTarget(
@@ -2293,6 +2294,10 @@ public final class RendererBotCameraSystem {
 					spec.expectedPitch(),
 					spec.followEntityUuid()
 			);
+			// Follow streams (drones and rocket cameras) still need their moving
+			// chunks sent to the renderer bot.  Returning null here left the bot at
+			// its old view centre; the moving anchor was never tracked client-side
+			// and the stream consequently timed out without frames.
 			center = mergePositionedVirtualCenter(center, botLevel, target);
 			if (center == null && target != null) {
 				return null;

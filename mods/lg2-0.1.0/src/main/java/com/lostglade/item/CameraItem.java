@@ -75,7 +75,15 @@ public final class CameraItem extends PolymerBlockItem {
 			CameraCaptureSystem.suppressNextCameraSwing(serverPlayer, hand);
 		}
 		if (!player.isShiftKeyDown()) {
-			return InteractionResult.PASS;
+			// use() is only reached for a click in air.  Keep useOn() below for
+			// placing the camera on blocks, but make the handheld camera take a
+			// photo again instead of delegating this click to its block-item base.
+			if (player instanceof ServerPlayer serverPlayer) {
+				return CameraCaptureSystem.tryCapture(serverPlayer, player.getItemInHand(hand))
+						? InteractionResult.SUCCESS
+						: InteractionResult.FAIL;
+			}
+			return InteractionResult.SUCCESS;
 		}
 		if (player instanceof ServerPlayer serverPlayer) {
 			CameraPhotoMenuSystem.open(serverPlayer);

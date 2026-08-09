@@ -3,6 +3,7 @@ package com.lostglade.block;
 import com.lostglade.server.MicrophoneSystem;
 import com.lostglade.server.BluetoothLinkSystem;
 import com.lostglade.server.PlacedDeviceNameStore;
+import com.lostglade.server.RocketLaunchEventSystem;
 import eu.pb4.polymer.blocks.api.BlockModelType;
 import eu.pb4.polymer.blocks.api.PolymerBlockModel;
 import eu.pb4.polymer.blocks.api.PolymerBlockResourceUtils;
@@ -115,6 +116,12 @@ public final class MicrophoneBlock extends SimplePolymerBlock implements Polymer
 
 	@Override
 	protected void affectNeighborsAfterRemoval(BlockState state, ServerLevel level, BlockPos pos, boolean movedByPiston) {
+		if (RocketLaunchEventSystem.isLaunchedMountedDevice(level, pos)) {
+			// Keep the endpoint registered; RocketLaunchEventSystem supplies the
+			// moving position while the launch is active.
+			super.affectNeighborsAfterRemoval(state, level, pos, movedByPiston);
+			return;
+		}
 		BluetoothLinkSystem.removeBlockEndpoint(level, BluetoothLinkSystem.EndpointType.MICROPHONE, pos);
 		PlacedDeviceNameStore.removeMicrophoneName(level, pos);
 		MicrophoneSystem.untrackMicrophone(level, pos);

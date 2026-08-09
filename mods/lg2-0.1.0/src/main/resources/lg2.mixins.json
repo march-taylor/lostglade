@@ -61,6 +61,7 @@
 		"ItemCopperManUseMixin",
 		"ItemCombinerMenuAccessor",
 		"ItemFramePhotoMixin",
+		"ItemFrameRocketMountedScreenMixin",
 		"ItemFrameMonitorPickMixin",
 		"LeavesBlockSeasonStartPhysicsMixin",
 		"LivingEntityAbsoluteInvisibilityCombatMixin",
