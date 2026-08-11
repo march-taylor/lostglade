@@ -333,6 +333,16 @@ public final class MonitorSupportRuntime {
 			if (supportAttachmentPickerRect(layout, inputExpanded).contains(touchPoint.x(), touchPoint.y())) {
 				return true;
 			}
+			// The picker is a modal surface: a touch outside of it dismisses it
+			// instead of leaking through to the chat beneath it.
+			synchronized (state) {
+				state.attachmentPickerOpen = false;
+				state.statusText = "";
+				state.version++;
+			}
+			save(server);
+			requestRuntimeRender(server, component.runtimeKey());
+			return true;
 		}
 		SupportAttachmentSnapshot openedAttachment = supportAttachmentAtTouch(layout, component.runtimeKey(), captureSnapshot(server, component), touchPoint);
 		if (openedAttachment != null) {
@@ -1874,8 +1884,11 @@ public final class MonitorSupportRuntime {
 		UiRect panel = supportAttachmentPickerRect(layout, expanded);
 		boolean ultra = ultraCompactScreenLayout(layout);
 		int arc = ultra ? 8 : clampInt(layout.unit() * 2, 12, 18);
-		fillRoundedRect(graphics, panel, arc, new Color(255, 255, 255, 246));
-		strokeRoundedRect(graphics, panel, arc, 1.0F, new Color(0, 16, 36, 18));
+		// Build the border from two filled shapes.  An opaque light grey stays
+		// even after Minecraft's map-palette conversion, unlike the old
+		// translucent stroke, while remaining visually quiet on the white panel.
+		fillRoundedRect(graphics, panel, arc, new Color(210, 216, 224));
+		fillRoundedRect(graphics, panel.inset(1), Math.max(2, arc - 2), Color.WHITE);
 
 		UiRect header = supportAttachmentPickerHeaderRect(layout, expanded);
 		graphics.setFont(new Font(Font.SANS_SERIF, Font.BOLD, ultra ? clampInt(layout.unit(), 7, 10) : clampInt(layout.unit() + 3, 13, 18)));
@@ -1931,7 +1944,6 @@ public final class MonitorSupportRuntime {
 		int arc = ultra ? 6 : clampInt(layout.unit() + 4, 10, 16);
 		Color fill = file.selected() ? new Color(219, 236, 255) : new Color(246, 247, 248);
 		fillRoundedRect(graphics, rect, arc, fill);
-		strokeRoundedRect(graphics, rect, arc, file.selected() ? 1.6F : 1.0F, file.selected() ? TINKOFF_BLUE : new Color(0, 16, 36, 18));
 
 		UiRect preview = supportGalleryFilePreviewRect(layout, rect);
 		if (file.preview() != null) {

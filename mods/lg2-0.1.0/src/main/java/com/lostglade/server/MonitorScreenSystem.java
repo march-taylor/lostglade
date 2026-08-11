@@ -4074,14 +4074,43 @@ public final class MonitorScreenSystem {
 
 	static void drawHomeAppCard(Graphics2D graphics, UiLayout layout, UiRect cardRect, MonitorApp app, int badgeCount) {
 		UiRect iconRect = homeAppIconRect(cardRect, layout);
-		drawAppIcon(graphics, app, iconRect, clampInt(layout.unit() / 3, 2, 12));
+		drawHomeAppIcon(graphics, layout, app, iconRect);
 		if (badgeCount > 0) {
 			drawNotificationBadge(graphics, homeAppNotificationBadgeRect(iconRect, layout), badgeCount, layout);
 		}
 
 		UiRect labelRect = homeAppLabelRect(layout, cardRect);
-		int textSize = clampInt(layout.unit() * 2 - 1, 9, 26);
-		drawCenteredTextFitted(graphics, app.title(), labelRect, new Color(248, 251, 255, 238), Font.BOLD, textSize, clampInt(layout.unit() - 1, 7, 14));
+		// Keep labels compact on larger displays, but do not let the 1x1 screen
+		// fall below a legible seven-pixel font.
+		int textSize = clampInt(layout.unit(), 7, 13);
+		drawCenteredTextEllipsized(graphics, app.title(), labelRect, new Color(248, 251, 255, 238), Font.BOLD, textSize);
+	}
+
+	/**
+	 * A neutral launcher container keeps every app icon equally sized without
+	 * introducing coloured outlines, shadows, or per-app card styling.
+	 */
+	static void drawHomeAppIcon(Graphics2D graphics, UiLayout layout, MonitorApp app, UiRect rect) {
+		if (graphics == null || layout == null || app == null || rect == null || rect.width() <= 0 || rect.height() <= 0) {
+			return;
+		}
+		int size = Math.min(rect.width(), rect.height());
+		UiRect circle = new UiRect(
+			rect.x() + (rect.width() - size) / 2,
+			rect.y() + (rect.height() - size) / 2,
+			size,
+			size
+		);
+		graphics.setColor(new Color(250, 250, 250));
+		graphics.fillOval(circle.x(), circle.y(), circle.width(), circle.height());
+
+		Shape previousClip = graphics.getClip();
+		graphics.clip(new Ellipse2D.Float(circle.x(), circle.y(), circle.width(), circle.height()));
+		try {
+			drawAppIcon(graphics, app, circle, clampInt(Math.round(size * 0.18F), 4, 18));
+		} finally {
+			graphics.setClip(previousClip);
+		}
 	}
 
 	static void drawNotificationBadge(Graphics2D graphics, UiRect rect, int count, UiLayout layout) {
@@ -6906,11 +6935,17 @@ public final class MonitorScreenSystem {
 	}
 
 	static UiRect homeAppIconRect(UiRect cardRect, UiLayout layout) {
-		int maxSize = Math.max(18, Math.min(cardRect.width() - layout.unit(), cardRect.height() - homeAppLabelHeight(layout) - layout.unit()));
-		int size = clampInt(Math.round(Math.min(cardRect.width(), cardRect.height()) * 0.48F), 18, maxSize);
+		UiRect label = homeAppLabelRect(layout, cardRect);
+		int topInset = clampInt(layout.unit() / 3, 1, 8);
+		int labelGap = clampInt(layout.unit() / 2, 2, 8);
+		int maxSize = Math.max(16, Math.min(
+				cardRect.width() - layout.unit(),
+				label.y() - (cardRect.y() + topInset) - labelGap
+		));
+		int size = clampInt(Math.round(Math.min(cardRect.width(), cardRect.height()) * 0.62F), 16, maxSize);
 		return new UiRect(
 				cardRect.x() + (cardRect.width() - size) / 2,
-				cardRect.y() + layout.unit() / 2,
+				cardRect.y() + topInset,
 				size,
 				size
 		);
@@ -6924,9 +6959,10 @@ public final class MonitorScreenSystem {
 
 	static UiRect homeAppLabelRect(UiLayout layout, UiRect cardRect) {
 		int labelHeight = homeAppLabelHeight(layout);
+		int bottomInset = clampInt(layout.unit() / 3, 2, 8);
 		return new UiRect(
 				cardRect.x() + clampInt(layout.unit() / 2, 4, 8),
-				cardRect.bottom() - labelHeight - clampInt(layout.unit() / 2, 4, 8),
+				cardRect.bottom() - labelHeight - bottomInset,
 				cardRect.width() - clampInt(layout.unit(), 8, 14),
 				labelHeight
 		);
@@ -8791,7 +8827,7 @@ public final class MonitorScreenSystem {
 	}
 
 	static int homeDesiredCardHeight(UiLayout layout) {
-		return homeDesiredCardWidth(layout) + homeAppLabelHeight(layout) + clampInt(layout.unit(), 4, 20);
+		return homeAppLabelHeight(layout) + clampInt((int) Math.round(layout.unit() * 7.0D), 28, 150);
 	}
 
 	static int homeAppCardWidth(UiLayout layout) {
@@ -8806,7 +8842,7 @@ public final class MonitorScreenSystem {
 		int rows = homeRowsPerPage(layout);
 		int gap = homeAppGap(layout);
 		int maxHeight = Math.max(32, (content.height() - Math.max(0, rows - 1) * gap) / Math.max(1, rows));
-		int desiredHeight = homeAppCardWidth(layout) + homeAppLabelHeight(layout) + clampInt(layout.unit(), 4, 20);
+		int desiredHeight = homeDesiredCardHeight(layout);
 		return Math.max(32, Math.min(maxHeight, desiredHeight));
 	}
 
@@ -8957,6 +8993,19 @@ public final class MonitorScreenSystem {
 		graphics.drawString(text, textX, textY);
 	}
 
+	static void drawCenteredTextEllipsized(Graphics2D graphics, String text, UiRect rect, Color color, int style, int size) {
+		if (graphics == null || rect == null || rect.width() <= 0 || rect.height() <= 0 || text == null || text.isBlank()) {
+			return;
+		}
+		graphics.setColor(color);
+		graphics.setFont(new Font(Font.SANS_SERIF, style, size));
+		var metrics = graphics.getFontMetrics();
+		String visibleText = truncateWithEllipsis(metrics, text, Math.max(1, rect.width() - 2));
+		int textX = rect.x() + (rect.width() - metrics.stringWidth(visibleText)) / 2;
+		int textY = rect.y() + (rect.height() - metrics.getHeight()) / 2 + metrics.getAscent();
+		graphics.drawString(visibleText, textX, textY);
+	}
+
 	static void drawVerticalText(Graphics2D graphics, String text, UiRect rect, Color color, int style, int size) {
 		graphics.setColor(color);
 		graphics.setFont(new Font(Font.SANS_SERIF, style, size));
@@ -9048,7 +9097,7 @@ public final class MonitorScreenSystem {
 		if (metrics.stringWidth(text) <= maxWidth) {
 			return text;
 		}
-		String ellipsis = "...";
+		String ellipsis = "…";
 		int ellipsisWidth = metrics.stringWidth(ellipsis);
 		StringBuilder builder = new StringBuilder();
 		for (int index = 0; index < text.length(); index++) {

@@ -16,6 +16,7 @@ public final class MonitorScreenTouchProjectionTest {
 		allHorizontalFacingsProjectConsistently();
 		multiTileOffsetIsPreserved();
 		mediaCanvasRespectsViewportSafeInset();
+		launcherUses2x2GridOnSmallestScreen();
 		mediaTimelineWidthTracksVisibleButtons();
 		timelineCounterWidthTracksLabelLength();
 		compactMusicPlayerKeepsControlsOnScreen();
@@ -106,6 +107,18 @@ public final class MonitorScreenTouchProjectionTest {
 		require(layout.viewportY() == MonitorScreenSystem.MONITOR_VIEWPORT_SAFE_INSET, "small screens should reserve bezel-safe vertical padding");
 		require(canvas.x() == layout.viewportX() && canvas.y() == layout.viewportY(), "media canvas should start inside the safe viewport");
 		require(canvas.width() == layout.viewportWidth() && canvas.height() == layout.viewportHeight(), "media canvas should match the safe viewport size");
+	}
+
+	private static void launcherUses2x2GridOnSmallestScreen() {
+		UiLayout layout = MonitorScreenSystem.createUiLayout(1, 1);
+		require(MonitorScreenSystem.homeColumns(layout) == 2, "1x1 launcher must retain two columns");
+		require(MonitorScreenSystem.homeRowsPerPage(layout) == 2, "1x1 launcher must fit two rows");
+		require(MonitorScreenSystem.homePageCapacity(layout) >= 4, "1x1 launcher must show four apps without scrolling");
+
+		UiRect card = MonitorScreenSystem.homeAppCardRect(layout, 0, 0);
+		UiRect icon = MonitorScreenSystem.homeAppIconRect(card, layout);
+		UiRect label = MonitorScreenSystem.homeAppLabelRect(layout, card);
+		require(label.y() - icon.bottom() <= 2, "launcher labels must stay close to their icons on 1x1 screens");
 	}
 
 	private static void mediaTimelineWidthTracksVisibleButtons() {
