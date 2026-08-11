@@ -19,6 +19,7 @@ public final class DroneScreenLinkPolicyTest {
 		poweredLinkedScreensKeepDronesLoadedWithoutLivePreview();
 		liveCameraScreenApplyUsesAsyncPreparedPatches();
 		droneLiveStreamUsesPoseUpdatesInsteadOfShadowEntityCamera();
+		rocketCameraHandoffKeepsExistingLiveStream();
 		shadowWorldChangesUseIncrementalPackets();
 		cameraAppOffersControlButtonForFreeDrone();
 		unloadedDroneControlUsesRememberedLocation();
@@ -158,6 +159,32 @@ public final class DroneScreenLinkPolicyTest {
 		require(
 				droneSystem.contains("public static boolean isDroneCameraAnchor(Entity entity)"),
 				"drone system must expose camera-anchor detection for renderer live stream pose updates"
+		);
+	}
+
+	private static void rocketCameraHandoffKeepsExistingLiveStream() throws Exception {
+		Path projectDir = Path.of("").toAbsolutePath();
+		String rocket = Files.readString(projectDir.resolve("src/main/java/com/lostglade/server/RocketLaunchEventSystem.java"));
+		String rendererBot = Files.readString(projectDir.resolve("src/main/java/com/lostglade/server/RendererBotCameraSystem.java"));
+
+		int deviceCapture = rocket.indexOf("rocket.captureMountedDevices(level);");
+		int anchorCreation = rocket.indexOf("updateRocketDeviceAnchors(level);", deviceCapture);
+		int handoff = rocket.indexOf("handoffRocketCameraStreams(level);", anchorCreation);
+		int blockRemoval = rocket.indexOf("level.setBlock(block.pos(), Blocks.AIR.defaultBlockState(), Block.UPDATE_CLIENTS);", handoff);
+		require(
+				deviceCapture >= 0 && anchorCreation > deviceCapture && handoff > anchorCreation && blockRemoval > handoff,
+				"rocket cameras must create an anchor and hand off streams before their source blocks are removed"
+		);
+		require(
+				rendererBot.contains("handoffLiveCameraStreamsToEntity(")
+						&& rendererBot.contains("current.renderSessionId()")
+						&& rendererBot.contains("stream.replaceSpec(new LiveStreamSpec(")
+						&& rendererBot.contains("null,\n\t\t\t\t\tx,"),
+				"rocket camera handoff must retain the live stream/session and clear the obsolete static camera position"
+		);
+		require(
+				!rendererBot.substring(rendererBot.indexOf("public static int handoffLiveCameraStreamsToEntity("), rendererBot.indexOf("private static boolean canReuseLiveStream(")).contains("stopLiveStreamInternal"),
+				"rocket camera handoff must not stop and restart an already-playing stream"
 		);
 	}
 

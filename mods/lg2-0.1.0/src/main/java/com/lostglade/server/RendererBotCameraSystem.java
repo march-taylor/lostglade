@@ -1163,6 +1163,75 @@ public final class RendererBotCameraSystem {
 		return true;
 	}
 
+	/**
+	 * Moves every active screen stream sourced from a fixed camera block onto a
+	 * moving entity without stopping the client stream.  Rocket materialisation
+	 * removes the block in the same tick, so waiting for the normal screen
+	 * refresh would leave the old static target alive long enough for the
+	 * renderer to stop producing frames.
+	 */
+	public static int handoffLiveCameraStreamsToEntity(
+			ServerLevel level,
+			BlockPos cameraPos,
+			UUID followEntityUuid,
+			double x,
+			double y,
+			double z,
+			float yaw,
+			float pitch
+	) {
+		if (level == null || cameraPos == null || followEntityUuid == null) {
+			return 0;
+		}
+		MinecraftServer server = level.getServer();
+		if (server == null) {
+			return 0;
+		}
+		int handedOff = 0;
+		for (ActiveLiveStream stream : ACTIVE_LIVE_STREAMS.values()) {
+			if (stream == null) {
+				continue;
+			}
+			LiveStreamSpec current = stream.spec();
+			if (current == null
+					|| current.followEntityUuid() != null
+					|| !level.dimension().equals(current.dimension())
+					|| !cameraPos.equals(current.cameraPos())) {
+				continue;
+			}
+			Set<UUID> hiddenEntities = new HashSet<>(current.hiddenEntityUuids());
+			hiddenEntities.add(followEntityUuid);
+			// Keep the stream and render-session identifiers intact.  The client can
+			// switch to explicit pose packets on the existing session, avoiding both
+			// the stop/start gap and a fresh shadow-world warm-up.
+			stream.replaceSpec(new LiveStreamSpec(
+					current.renderSessionId(),
+					current.dimension(),
+					null,
+					x,
+					y,
+					z,
+					yaw,
+					pitch,
+					followEntityUuid,
+					Set.copyOf(hiddenEntities),
+					true,
+					current.fullWidth(),
+					current.fullHeight(),
+					current.fovDegrees(),
+					current.targetFps()
+			));
+			ServerPlayer bot = server.getPlayerList().getPlayer(stream.botUuid());
+			if (bot != null && ServerPlayNetworking.canSend(bot, RendererBotPayloads.RendererBotLiveStreamPoseS2CPayload.TYPE)) {
+				ServerPlayNetworking.send(bot, new RendererBotPayloads.RendererBotLiveStreamPoseS2CPayload(
+						stream.streamId(), x, y, z, yaw, pitch, 0.0F
+				));
+			}
+			handedOff++;
+		}
+		return handedOff;
+	}
+
 	private static boolean canReuseLiveStream(ActiveLiveStream existing, ServerPlayer bot, LiveStreamSpec desiredSpec) {
 		if (existing == null || bot == null || desiredSpec == null || existing.isStale() || !existing.botUuid().equals(bot.getUUID())) {
 			return false;
@@ -5367,7 +5436,7 @@ public final class RendererBotCameraSystem {
 		private final UUID streamId;
 		private final String ownerKey;
 		private final UUID botUuid;
-		private final LiveStreamSpec spec;
+		private volatile LiveStreamSpec spec;
 		private final Consumer<LiveStreamFrame> onFrame;
 		private final Consumer<String> onFailure;
 		private final Object frameDeliveryLock = new Object();
@@ -5420,6 +5489,10 @@ public final class RendererBotCameraSystem {
 
 		private LiveStreamSpec spec() {
 			return this.spec;
+		}
+
+		private void replaceSpec(LiveStreamSpec spec) {
+			this.spec = spec;
 		}
 
 		private Consumer<LiveStreamFrame> onFrame() {

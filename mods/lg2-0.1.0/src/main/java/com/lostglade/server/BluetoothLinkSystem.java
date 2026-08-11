@@ -207,6 +207,16 @@ public final class BluetoothLinkSystem {
 		removeEndpoint(level, Endpoint.block(level == null ? null : level.dimension(), type, pos));
 	}
 
+	/** Removes an endpoint retained for an in-flight rocket after that rocket is
+	 * destroyed or has left the world.  This deliberately bypasses the ordinary
+	 * in-flight camera guard. */
+	public static void removeMountedBlockEndpoint(ServerLevel level, EndpointType type, BlockPos pos) {
+		if (type == null) {
+			return;
+		}
+		removeEndpoint(level, Endpoint.block(level == null ? null : level.dimension(), type, pos));
+	}
+
 	public static void removeDroneEndpoint(ServerLevel level, UUID droneUuid, BlockPos pos) {
 		removeEndpoint(level, droneEndpoint(level == null ? null : level.dimension(), pos == null ? BlockPos.ZERO : pos, droneUuid));
 	}

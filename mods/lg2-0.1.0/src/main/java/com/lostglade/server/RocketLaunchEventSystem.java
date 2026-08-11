@@ -41,6 +41,7 @@ import net.minecraft.server.permissions.Permissions;
 import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
+import net.minecraft.tags.BlockTags;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Display;
 import net.minecraft.world.entity.Entity;
@@ -810,6 +811,7 @@ public final class RocketLaunchEventSystem {
 	}
 
 	private static void completeLaunch(MinecraftServer server, ServerLevel level) {
+		removeRocketMountedDeviceEndpoints(level);
 		clearRocketDeviceAnchors(level);
 		clearRocketMountedScreens(level);
 		for (PersistedRocketBlock block : rocket.blocks) {
@@ -835,13 +837,15 @@ public final class RocketLaunchEventSystem {
 		for (PersistedRocketBlock block : rocket.blocks) {
 			discardRocketDisplay(level, block);
 		}
+		removeRocketMountedDeviceEndpoints(level);
 		clearRocketDeviceAnchors(level);
 		clearRocketMountedScreens(level);
 		clearAllRocketProjections(server);
 		discardLegacyRocketExhaustDisplays(level);
 
-		BlockPos craterCenter = impact == null ? BlockPos.containing(rocket.pivot().add(rocket.physicsOffset())) : impact;
+		BlockPos impactPosition = impact == null ? BlockPos.containing(rocket.pivot().add(rocket.physicsOffset())) : impact;
 		int craterRadius = rocketCrashRadius();
+		BlockPos craterCenter = resolveCraterGroundCenter(level, impactPosition);
 		long craterSeed = level.getSeed() ^ craterCenter.asLong() ^ rocket.launchElapsedTicks;
 		int fluidSurfaceY = fluidSurfaceY(level, craterCenter, craterRadius * 3);
 		boolean underwaterImpact = fluidSurfaceY >= craterCenter.getY();
@@ -888,8 +892,43 @@ public final class RocketLaunchEventSystem {
 		return highest;
 	}
 
+	/** A rocket can strike a tree trunk, fence, or other narrow obstruction above
+	 * the terrain. The blast may still occur there, but the excavated crater is
+	 * placed on the surrounding ground rather than left in the canopy. */
+	private static BlockPos resolveCraterGroundCenter(ServerLevel level, BlockPos impact) {
+		if (level == null || impact == null) {
+			return impact;
+		}
+		for (int y = Math.min(impact.getY(), level.getMaxY() - 1); y >= level.getMinY(); y--) {
+			BlockPos candidate = new BlockPos(impact.getX(), y, impact.getZ());
+			if (hasTerrainFoundation(level, candidate)) {
+				return candidate;
+			}
+		}
+		return impact;
+	}
+
+	/** A terrain cell needs a broad base, not just the vertical pole of a tree.
+	 * Foliage and other non-occluding blocks are never considered terrain. */
+	private static boolean hasTerrainFoundation(ServerLevel level, BlockPos pos) {
+		if (level == null || pos == null || !isStructuralImpactBlock(level.getBlockState(pos))) {
+			return false;
+		}
+		int horizontalNeighbours = 0;
+		for (Direction direction : Direction.Plane.HORIZONTAL) {
+			if (isStructuralImpactBlock(level.getBlockState(pos.relative(direction)))) {
+				horizontalNeighbours++;
+			}
+		}
+		return horizontalNeighbours >= 2;
+	}
+
 	private static void carveImpactCrater(ServerLevel level, BlockPos center, int radius, long seed, int fluidSurfaceY) {
-		int depth = craterDepth(radius);
+		// The explosion is a sphere whose centre is lifted above the terrain.
+		// Only its lower cap cuts into the ground; its upper volume clears trees,
+		// roofs and other blocks instead of leaving a buried "bowl".
+		double verticalRadius = Math.max(4.0D, radius * 0.72D);
+		double sphereCenterY = center.getY() + verticalRadius * 0.58D;
 		for (int z = center.getZ() - radius; z <= center.getZ() + radius; z++) {
 			for (int x = center.getX() - radius; x <= center.getX() + radius; x++) {
 				int dx = x - center.getX();
@@ -907,15 +946,16 @@ public final class RocketLaunchEventSystem {
 					continue;
 				}
 				double normalizedDistance = distance / Math.max(0.001D, localRadius);
-				int floorY = center.getY() - (int) Math.round(
-						depth * (1.0D - Math.pow(normalizedDistance, 1.55D)) + edgeNoise * 1.5D
-				);
-				int ceilingY = center.getY() + (normalizedDistance < 0.35D ? 1 : 0);
-				if (fluidSurfaceY >= center.getY()) {
-					// A submerged blast opens a temporary gas/bubble column from the
-					// seabed to the surface across the whole crater footprint.
-					ceilingY = Math.max(ceilingY, fluidSurfaceY);
+				double verticalExtent = verticalRadius * Math.sqrt(Math.max(0.0D, 1.0D - normalizedDistance * normalizedDistance));
+				if (verticalExtent < 0.5D) {
+					continue;
 				}
+				int floorY = Mth.floor(sphereCenterY - verticalExtent);
+				int ceilingY = Mth.ceil(sphereCenterY + verticalExtent);
+				BlockPos floor = new BlockPos(x, floorY, z);
+				boolean stableFloor = floorY <= center.getY()
+						&& isStructuralImpactBlock(level.getBlockState(floor))
+						&& isStructuralImpactBlock(level.getBlockState(floor.below()));
 				for (int y = floorY; y <= ceilingY; y++) {
 					BlockPos pos = new BlockPos(x, y, z);
 					BlockState state = level.getBlockState(pos);
@@ -923,8 +963,9 @@ public final class RocketLaunchEventSystem {
 						level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
 					}
 				}
-
-				BlockPos floor = new BlockPos(x, floorY, z);
+				if (!stableFloor) {
+					continue;
+				}
 				double scorch = craterNoise(x * 17, z * 17, seed ^ 0x6A09E667F3BCC909L);
 				if (fluidSurfaceY < center.getY() && normalizedDistance < 0.58D && scorch > -0.18D) {
 					level.setBlock(floor, Blocks.MAGMA_BLOCK.defaultBlockState(), 3);
@@ -1525,13 +1566,14 @@ public final class RocketLaunchEventSystem {
 		double energyScale = Mth.clamp(speed / 0.36D, 0.35D, 1.35D);
 		int radius = Mth.clamp((int) Math.round(rocketCrashRadius() * 0.30D * Math.cbrt(fraction) * energyScale), 1, Math.max(1, rocketCrashRadius() / 3));
 		long seed = level.getSeed() ^ impact.asLong() ^ (long) debris.age * 0x9E3779B97F4A7C15L;
-		int surfaceY = fluidSurfaceY(level, impact, radius * 3);
-		carveImpactCrater(level, impact, radius, seed, surfaceY);
-		level.sendParticles(ParticleTypes.EXPLOSION, impact.getX() + 0.5D, impact.getY() + 0.5D, impact.getZ() + 0.5D,
+		BlockPos craterCenter = resolveCraterGroundCenter(level, impact);
+		int surfaceY = fluidSurfaceY(level, craterCenter, radius * 3);
+		carveImpactCrater(level, craterCenter, radius, seed, surfaceY);
+		level.sendParticles(ParticleTypes.EXPLOSION, craterCenter.getX() + 0.5D, craterCenter.getY() + 0.5D, craterCenter.getZ() + 0.5D,
 				Mth.clamp(radius * 2, 2, 28), radius * 0.24D, radius * 0.18D, radius * 0.24D, 0.025D);
-		if (surfaceY >= impact.getY()) {
-			level.sendParticles(ParticleTypes.BUBBLE, impact.getX() + 0.5D, impact.getY() + 0.4D, impact.getZ() + 0.5D,
-					Mth.clamp(radius * 12, 8, 96), radius * 0.28D, Math.max(0.5D, surfaceY - impact.getY()), radius * 0.28D, 0.08D);
+		if (surfaceY >= craterCenter.getY()) {
+			level.sendParticles(ParticleTypes.BUBBLE, craterCenter.getX() + 0.5D, craterCenter.getY() + 0.4D, craterCenter.getZ() + 0.5D,
+					Mth.clamp(radius * 12, 8, 96), radius * 0.28D, Math.max(0.5D, surfaceY - craterCenter.getY()), radius * 0.28D, 0.08D);
 		}
 	}
 
@@ -1544,7 +1586,7 @@ public final class RocketLaunchEventSystem {
 		Set<BlockPos> supportedTargets = supportedDebrisTargets(level, debris, anchor, rotation);
 		for (DebrisBlock block : debris.blocks) {
 			BlockPos target = rotatedDebrisTarget(anchor, block, rotation);
-			if (supportedTargets.contains(target) && level.getBlockState(target).isAir()) {
+			if (supportedTargets.contains(target) && isDebrisPassThroughBlock(level.getBlockState(target))) {
 				level.setBlock(target, deserializeBlockState(block.state).rotate(blockRotation), 3);
 			}
 		}
@@ -1560,7 +1602,7 @@ public final class RocketLaunchEventSystem {
 		}
 		for (DebrisBlock block : debris.blocks) {
 			BlockPos target = rotatedDebrisTarget(anchor, block, rotation);
-			if (level.getBlockState(target).isAir()) {
+			if (isDebrisPassThroughBlock(level.getBlockState(target))) {
 				candidates.add(target);
 			}
 		}
@@ -1572,7 +1614,7 @@ public final class RocketLaunchEventSystem {
 				if (supported.contains(target)) {
 					continue;
 				}
-				if (!level.getBlockState(target.below()).isAir() || supported.contains(target.below())) {
+				if (isStructuralImpactBlock(level.getBlockState(target.below())) || supported.contains(target.below())) {
 					supported.add(target);
 					changed = true;
 				}
@@ -1829,7 +1871,18 @@ public final class RocketLaunchEventSystem {
 	}
 
 	private static boolean isStructuralImpactBlock(BlockState state) {
-		return state != null && !state.isAir() && state.getFluidState().isEmpty() && state.blocksMotion();
+		return state != null
+				&& !state.isAir()
+				&& state.getFluidState().isEmpty()
+				&& state.blocksMotion()
+				&& state.canOcclude()
+				&& !state.is(BlockTags.LEAVES);
+	}
+
+	/** Water, foliage, plants and non-occluding decoration cannot hold wreckage.
+	 * They are displaced only when a fragment has reached a solid floor. */
+	private static boolean isDebrisPassThroughBlock(BlockState state) {
+		return state == null || state.isAir() || !state.getFluidState().isEmpty() || !isStructuralImpactBlock(state);
 	}
 
 	private static double rocketFurthestBlockDistance() {
@@ -2023,6 +2076,22 @@ public final class RocketLaunchEventSystem {
 				anchor.discard();
 			}
 			device.anchorUuid = null;
+		}
+	}
+
+	/** The original block coordinates are intentionally retained during flight
+	 * so Bluetooth screens can follow a rocket camera.  Once the vehicle is
+	 * gone, remove those retained endpoints and notify every linked screen. */
+	private static void removeRocketMountedDeviceEndpoints(ServerLevel level) {
+		if (level == null || rocket == null || rocket.devices == null) {
+			return;
+		}
+		for (RocketMountedDevice device : rocket.devices) {
+			if (device.camera) {
+				BluetoothLinkSystem.removeMountedBlockEndpoint(level, BluetoothLinkSystem.EndpointType.CAMERA, device.pos());
+			} else if (device.microphone) {
+				BluetoothLinkSystem.removeMountedBlockEndpoint(level, BluetoothLinkSystem.EndpointType.MICROPHONE, device.pos());
+			}
 		}
 	}
 
@@ -2748,6 +2817,12 @@ public final class RocketLaunchEventSystem {
 		// removed/replaced while the rocket was armed.
 		rocket.initializePhysicsFromBlocks();
 		rocket.captureMountedDevices(level);
+		// Create the mobile camera endpoint before removing the source blocks and
+		// migrate every already-playing screen onto it in this same tick.  This
+		// keeps the renderer bot's stream id and shadow session alive through
+		// materialisation instead of waiting for the next screen health check.
+		updateRocketDeviceAnchors(level);
+		handoffRocketCameraStreams(level);
 		// The launch is rendered solely through per-player copies.  Retaining a
 		// server-world BlockDisplay as well created a second, slightly delayed
 		// model beside the client projection.
@@ -2766,6 +2841,34 @@ public final class RocketLaunchEventSystem {
 		rocket.materializationDropCleanupUntilTick = level.getGameTime() + 8L;
 		discardMaterializationComponentDrops(level);
 		return true;
+	}
+
+	private static void handoffRocketCameraStreams(ServerLevel level) {
+		if (level == null || rocket == null || rocket.devices == null) {
+			return;
+		}
+		for (RocketMountedDevice device : rocket.devices) {
+			if (!device.camera || device.anchorUuid == null || device.anchorUuid.isBlank()) {
+				continue;
+			}
+			try {
+				Entity anchor = level.getEntity(UUID.fromString(device.anchorUuid));
+				if (anchor != null) {
+					RendererBotCameraSystem.handoffLiveCameraStreamsToEntity(
+							level,
+							device.pos(),
+							anchor.getUUID(),
+							anchor.getX(),
+							anchor.getY(),
+							anchor.getZ(),
+							anchor.getYRot(),
+							anchor.getXRot()
+					);
+				}
+			} catch (IllegalArgumentException ignored) {
+				// The persisted UUID can only be malformed after a manual state edit.
+			}
+		}
 	}
 
 	private static void discardMaterializationComponentDrops(ServerLevel level) {
