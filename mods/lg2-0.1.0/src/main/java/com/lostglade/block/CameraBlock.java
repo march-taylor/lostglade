@@ -6,11 +6,14 @@ import com.lostglade.server.RocketLaunchEventSystem;
 import com.lostglade.server.CameraOrientationStore;
 import com.lostglade.server.BluetoothLinkSystem;
 import com.lostglade.server.PlacedDeviceNameStore;
+import eu.pb4.polymer.core.api.block.PolymerBlockUtils;
+import eu.pb4.polymer.core.api.block.PolymerHeadBlock;
 import eu.pb4.polymer.core.api.block.SimplePolymerBlock;
-import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.component.DataComponents;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.protocol.Packet;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
@@ -22,14 +25,13 @@ import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
-import net.minecraft.world.level.block.BedBlock;
 import net.minecraft.world.level.block.HorizontalDirectionalBlock;
 import net.minecraft.world.level.block.Mirror;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.StateDefinition;
-import net.minecraft.world.level.block.state.properties.BedPart;
+import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.redstone.Orientation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -42,7 +44,7 @@ import xyz.nucleoid.packettweaker.PacketContext;
 
 import java.util.List;
 
-public final class CameraBlock extends SimplePolymerBlock {
+public final class CameraBlock extends SimplePolymerBlock implements PolymerHeadBlock {
 	private final BlockState hitboxState;
 
 	public CameraBlock(BlockBehaviour.Properties properties) {
@@ -78,16 +80,28 @@ public final class CameraBlock extends SimplePolymerBlock {
 
 	@Override
 	public BlockState getPolymerBlockState(BlockState state, PacketContext context) {
-		if (!PolymerResourcePackUtils.hasMainPack(context)) {
-			return Blocks.STRUCTURE_VOID.defaultBlockState();
-		}
-		// The resource pack already makes vanilla brown beds transparent for the
-		// display-based bed implementation.  Reuse that invisible, colliding
-		// surrogate instead of a player head whose base skin becomes black.
-		return Blocks.BROWN_BED.defaultBlockState()
-				.setValue(BedBlock.FACING, state.getValue(HorizontalDirectionalBlock.FACING))
-				.setValue(BedBlock.PART, BedPart.FOOT)
-				.setValue(BedBlock.OCCUPIED, false);
+		return this.hitboxState;
+	}
+
+	@Override
+	public String getPolymerSkinValue(BlockState state, BlockPos pos, PacketContext context) {
+		// getPolymerHeadPacket below uses a local resource-pack texture instead.
+		return "";
+	}
+
+	@Override
+	public Packet<?> getPolymerHeadPacket(BlockState state, BlockPos pos, PacketContext context) {
+		CompoundTag blockEntityData = new CompoundTag();
+		blockEntityData.putString("id", "minecraft:skull");
+		CompoundTag profile = new CompoundTag();
+		// Since 1.21.11 profiles can override their skin with a resource-pack
+		// texture.  Unlike downloaded player skins its alpha stays transparent.
+		profile.putString("texture", "lg2:skin/camera_collision_head");
+		blockEntityData.put("profile", profile);
+		blockEntityData.putInt("x", pos.getX());
+		blockEntityData.putInt("y", pos.getY());
+		blockEntityData.putInt("z", pos.getZ());
+		return PolymerBlockUtils.createBlockEntityPacket(pos, BlockEntityType.SKULL, blockEntityData);
 	}
 
 	@Override
