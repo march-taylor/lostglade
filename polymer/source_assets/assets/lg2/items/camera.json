@@ -9,17 +9,18 @@
           "thirdperson_lefthand",
           "thirdperson_righthand",
           "firstperson_lefthand",
-          "firstperson_righthand"
+          "firstperson_righthand",
+          "fixed"
         ],
         "model": {
           "type": "minecraft:model",
-          "model": "lg2:item/camera_hand"
+          "model": "lg2:item/camera"
         }
       }
     ],
     "fallback": {
       "type": "minecraft:model",
-      "model": "lg2:item/camera"
+      "model": "lg2:item/camera_icon"
     }
   }
 }

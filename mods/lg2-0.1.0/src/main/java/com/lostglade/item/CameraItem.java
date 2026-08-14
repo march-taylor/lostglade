@@ -8,7 +8,6 @@ import com.lostglade.server.DroneSystem;
 import eu.pb4.polymer.core.api.item.PolymerBlockItem;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerPlayer;
@@ -18,7 +17,6 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
-import net.minecraft.world.item.component.CustomData;
 import net.minecraft.world.item.context.UseOnContext;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
@@ -26,9 +24,6 @@ import xyz.nucleoid.packettweaker.PacketContext;
 
 public final class CameraItem extends PolymerBlockItem {
 	private static final Identifier MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "camera");
-	private static final Identifier DISPLAY_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "camera_display");
-	private static final String DISPLAY_ROOT_TAG = "lg2_camera_display";
-	private static final String DISPLAY_ONLY_TAG = "display_only";
 
 	public CameraItem(CameraBlock block, Item.Properties settings) {
 		super(block, settings, Items.STICK, true);
@@ -41,9 +36,6 @@ public final class CameraItem extends PolymerBlockItem {
 
 	@Override
 	public Item getPolymerItem(ItemStack stack, PacketContext context) {
-		if (isDisplayOnly(stack) && !PolymerResourcePackUtils.hasMainPack(context)) {
-			return Items.AIR;
-		}
 		return Items.STICK;
 	}
 
@@ -52,14 +44,11 @@ public final class CameraItem extends PolymerBlockItem {
 		if (!PolymerResourcePackUtils.hasMainPack(context)) {
 			return null;
 		}
-		return isDisplayOnly(itemStack) ? DISPLAY_MODEL_ID : MODEL_ID;
+		return MODEL_ID;
 	}
 
 	@Override
 	public void modifyBasePolymerItemStack(ItemStack out, ItemStack original, PacketContext context) {
-		if (isDisplayOnly(original)) {
-			return;
-		}
 		CameraBlock.applyFallbackName(out, context);
 	}
 
@@ -126,23 +115,9 @@ public final class CameraItem extends PolymerBlockItem {
 		return false;
 	}
 
+	/** The placed camera uses the same canonical 3D item model as the handheld one. */
 	public static ItemStack createDisplayStack() {
-		ItemStack stack = new ItemStack(ModItems.CAMERA);
-		CustomData.update(DataComponents.CUSTOM_DATA, stack, tag -> {
-			var displayTag = tag.getCompoundOrEmpty(DISPLAY_ROOT_TAG);
-			displayTag.putBoolean(DISPLAY_ONLY_TAG, true);
-			tag.put(DISPLAY_ROOT_TAG, displayTag);
-		});
-		return stack;
+		return new ItemStack(ModItems.CAMERA);
 	}
 
-	private static boolean isDisplayOnly(ItemStack stack) {
-		CustomData customData = stack.get(DataComponents.CUSTOM_DATA);
-		if (customData == null) {
-			return false;
-		}
-		return customData.copyTag()
-				.getCompoundOrEmpty(DISPLAY_ROOT_TAG)
-				.getBooleanOr(DISPLAY_ONLY_TAG, false);
-	}
 }

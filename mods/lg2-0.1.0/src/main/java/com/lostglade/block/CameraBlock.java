@@ -7,6 +7,7 @@ import com.lostglade.server.CameraOrientationStore;
 import com.lostglade.server.BluetoothLinkSystem;
 import com.lostglade.server.PlacedDeviceNameStore;
 import eu.pb4.polymer.core.api.block.SimplePolymerBlock;
+import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
@@ -21,12 +22,14 @@ import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.BedBlock;
 import net.minecraft.world.level.block.HorizontalDirectionalBlock;
 import net.minecraft.world.level.block.Mirror;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.StateDefinition;
+import net.minecraft.world.level.block.state.properties.BedPart;
 import net.minecraft.world.level.redstone.Orientation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -40,12 +43,10 @@ import xyz.nucleoid.packettweaker.PacketContext;
 import java.util.List;
 
 public final class CameraBlock extends SimplePolymerBlock {
-	private final BlockState hiddenState;
 	private final BlockState hitboxState;
 
 	public CameraBlock(BlockBehaviour.Properties properties) {
 		super(properties, Blocks.STRUCTURE_VOID);
-		this.hiddenState = Blocks.STRUCTURE_VOID.defaultBlockState();
 		this.hitboxState = Blocks.PLAYER_HEAD.defaultBlockState();
 		this.registerDefaultState(this.stateDefinition.any().setValue(HorizontalDirectionalBlock.FACING, net.minecraft.core.Direction.NORTH));
 	}
@@ -77,7 +78,16 @@ public final class CameraBlock extends SimplePolymerBlock {
 
 	@Override
 	public BlockState getPolymerBlockState(BlockState state, PacketContext context) {
-		return this.hiddenState;
+		if (!PolymerResourcePackUtils.hasMainPack(context)) {
+			return Blocks.STRUCTURE_VOID.defaultBlockState();
+		}
+		// The resource pack already makes vanilla brown beds transparent for the
+		// display-based bed implementation.  Reuse that invisible, colliding
+		// surrogate instead of a player head whose base skin becomes black.
+		return Blocks.BROWN_BED.defaultBlockState()
+				.setValue(BedBlock.FACING, state.getValue(HorizontalDirectionalBlock.FACING))
+				.setValue(BedBlock.PART, BedPart.FOOT)
+				.setValue(BedBlock.OCCUPIED, false);
 	}
 
 	@Override
@@ -104,6 +114,10 @@ public final class CameraBlock extends SimplePolymerBlock {
 	protected void onPlace(BlockState state, Level level, BlockPos pos, BlockState oldState, boolean movedByPiston) {
 		super.onPlace(state, level, pos, oldState, movedByPiston);
 		if (level instanceof ServerLevel serverLevel) {
+			CameraOrientationStore.CameraPose pose = CameraOrientationStore.get(serverLevel, pos);
+			float yaw = pose != null ? pose.yaw() : state.getValue(HorizontalDirectionalBlock.FACING).toYRot();
+			float pitch = pose != null ? pose.pitch() : 0.0F;
+			CameraDisplayHelper.spawnOrUpdate(serverLevel, pos, yaw, pitch);
 			MonitorScreenSystem.onCameraNetworkChanged(serverLevel, pos);
 		}
 	}
@@ -148,6 +162,7 @@ public final class CameraBlock extends SimplePolymerBlock {
 			// the endpoint has already been preserved.
 			return;
 		}
+		CameraDisplayHelper.remove(level, pos);
 		CameraOrientationStore.remove(level, pos);
 		PlacedDeviceNameStore.removeCameraName(level, pos);
 		BluetoothLinkSystem.removeBlockEndpoint(level, BluetoothLinkSystem.EndpointType.CAMERA, pos);
@@ -229,6 +244,7 @@ public final class CameraBlock extends SimplePolymerBlock {
 			level.setBlock(pos, updatedState, Block.UPDATE_CLIENTS);
 		}
 		CameraOrientationStore.set(level, pos, yaw, pitch);
+		CameraDisplayHelper.spawnOrUpdate(level, pos, yaw, pitch);
 		MonitorScreenSystem.onCameraNetworkChanged(level, pos);
 		return true;
 	}
