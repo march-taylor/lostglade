@@ -45,13 +45,16 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 
 public final class RendererBotShadowWorldManager {
 	private static final Object LOCK = new Object();
 	private static final long ACTIVE_SESSION_TICK_WINDOW_MS = 2_500L;
+	private static final long SHADOW_DESTROY_GRACE_MS = 10_000L;
 	private static final Map<UUID, ShadowLevelSession> SHADOW_SESSIONS = new HashMap<>();
 	private static final Map<UUID, Long> LAST_RENDER_ACTIVITY_AT = new HashMap<>();
+	private static final Map<UUID, Long> PENDING_SESSION_DESTROY_AT = new HashMap<>();
 
 	private RendererBotShadowWorldManager() {
 	}
@@ -130,7 +133,8 @@ public final class RendererBotShadowWorldManager {
 					session.levelRenderer(),
 					session.featureRenderDispatcher(),
 					session.particleEngine(),
-					session.appliedViewDistance()
+					session.appliedViewDistance(),
+					session.contentRevision()
 			);
 		}
 	}
@@ -221,6 +225,7 @@ public final class RendererBotShadowWorldManager {
 			}
 			SHADOW_SESSIONS.clear();
 			LAST_RENDER_ACTIVITY_AT.clear();
+			PENDING_SESSION_DESTROY_AT.clear();
 		}
 	}
 
@@ -229,11 +234,17 @@ public final class RendererBotShadowWorldManager {
 			return;
 		}
 		List<ShadowLevelSession> sessions;
+		List<UUID> expiredSessionIds;
 		synchronized (LOCK) {
+			expiredSessionIds = expirePendingSessionDestroys(System.currentTimeMillis());
 			if (SHADOW_SESSIONS.isEmpty()) {
-				return;
+				sessions = List.of();
+			} else {
+				sessions = new ArrayList<>(SHADOW_SESSIONS.values());
 			}
-			sessions = new ArrayList<>(SHADOW_SESSIONS.values());
+		}
+		for (UUID sessionId : expiredSessionIds) {
+			RendererBotOffscreenWorldRenderer.releaseSession(sessionId);
 		}
 		for (ShadowLevelSession session : sessions) {
 			if (session == null || session.level() == null) {
@@ -274,7 +285,38 @@ public final class RendererBotShadowWorldManager {
 			return;
 		}
 		synchronized (LOCK) {
-			ShadowLevelSession existing = SHADOW_SESSIONS.remove(payload.sessionId());
+			ShadowLevelSession existing = SHADOW_SESSIONS.get(payload.sessionId());
+			PENDING_SESSION_DESTROY_AT.remove(payload.sessionId());
+			if (existing != null && existing.matchesWorld(payload)) {
+				// The server may repeat an init packet while it catches up its shadow
+				// synchronisation state.  It is not a new world in that case.  Rebuilding
+				// ClientLevel here drops every received chunk and forces the renderer to
+				// start compiling from zero again, so a continuous video never gets past
+				// the few nearest sections.
+				LAST_RENDER_ACTIVITY_AT.put(payload.sessionId(), System.currentTimeMillis());
+				applyState(
+						existing.level(),
+						payload.gameTime(),
+						payload.dayTime(),
+						payload.tickDayTime(),
+						payload.raining(),
+						payload.rainLevel(),
+						payload.thunderLevel()
+				);
+				// An init packet has no real cache centre (its 0,0 is only used for a
+				// freshly-created level).  Keep the centre supplied by ShadowView;
+				// moving an existing cache back to 0,0 would evict the camera area.
+				applyViewState(
+						client.getConnection(),
+						existing.level(),
+						payload.viewDistance(),
+						existing.appliedCenterChunkX(),
+						existing.appliedCenterChunkZ()
+				);
+				return;
+			}
+
+			SHADOW_SESSIONS.remove(payload.sessionId());
 			LAST_RENDER_ACTIVITY_AT.remove(payload.sessionId());
 			closeSession(existing);
 			ShadowLevelSession created = createShadowSession(client, payload);
@@ -345,11 +387,17 @@ public final class RendererBotShadowWorldManager {
 			return;
 		}
 		ClientboundLevelChunkWithLightPacket packet = RendererBotShadowPacketCodec.decodeChunkPacket(client.getConnection().registryAccess(), payload.packetBytes());
+		ChunkPos chunkPos = new ChunkPos(packet.getX(), packet.getZ());
+		if (!session.isChunkDataNew(chunkPos, payload.packetBytes())) {
+			return;
+		}
 		runWithShadowSession(client.getConnection(), session, () -> {
 			client.getConnection().handleLevelChunkWithLight(packet);
 			session.level().pollLightUpdates();
 		});
-		session.levelRenderer().onChunkReadyToRender(new ChunkPos(packet.getX(), packet.getZ()));
+		session.rememberChunkData(chunkPos, payload.packetBytes());
+		session.levelRenderer().onChunkReadyToRender(chunkPos);
+		session.markContentChanged();
 	}
 
 	private static void applyForgetChunk(Minecraft client, RendererBotPayloads.RendererBotShadowForgetChunkS2CPayload payload) {
@@ -368,6 +416,8 @@ public final class RendererBotShadowWorldManager {
 			client.getConnection().handleForgetLevelChunk(packet);
 			session.level().pollLightUpdates();
 		});
+		session.forgetChunk(packet.pos());
+		session.markContentChanged();
 	}
 
 	private static void applyEntityPackets(Minecraft client, RendererBotPayloads.RendererBotShadowEntityPacketsS2CPayload payload) {
@@ -396,11 +446,27 @@ public final class RendererBotShadowWorldManager {
 			return;
 		}
 		synchronized (LOCK) {
+			if (SHADOW_SESSIONS.containsKey(sessionId)) {
+				PENDING_SESSION_DESTROY_AT.put(sessionId, System.currentTimeMillis() + SHADOW_DESTROY_GRACE_MS);
+			}
+		}
+	}
+
+	private static List<UUID> expirePendingSessionDestroys(long now) {
+		List<UUID> expiredSessionIds = new ArrayList<>();
+		for (Map.Entry<UUID, Long> entry : new ArrayList<>(PENDING_SESSION_DESTROY_AT.entrySet())) {
+			UUID sessionId = entry.getKey();
+			Long destroyAt = entry.getValue();
+			if (sessionId == null || destroyAt == null || destroyAt > now) {
+				continue;
+			}
+			PENDING_SESSION_DESTROY_AT.remove(sessionId);
 			ShadowLevelSession removed = SHADOW_SESSIONS.remove(sessionId);
 			LAST_RENDER_ACTIVITY_AT.remove(sessionId);
 			closeSession(removed);
+			expiredSessionIds.add(sessionId);
 		}
-		RendererBotOffscreenWorldRenderer.releaseSession(sessionId);
+		return expiredSessionIds;
 	}
 
 	private static ShadowLevelSession createShadowSession(Minecraft client, RendererBotPayloads.RendererBotShadowLevelInitS2CPayload payload) {
@@ -460,6 +526,7 @@ public final class RendererBotShadowWorldManager {
 				payload.sessionId(),
 				payload.dimensionId(),
 				payload.dimensionTypeId(),
+				payload.seed(),
 				level,
 				levelRenderer,
 				featureRenderDispatcher,
@@ -657,7 +724,8 @@ public final class RendererBotShadowWorldManager {
 			LevelRenderer levelRenderer,
 			FeatureRenderDispatcher featureRenderDispatcher,
 			ParticleEngine particleEngine,
-			int viewDistance
+			int viewDistance,
+			long contentRevision
 	) {
 	}
 
@@ -665,20 +733,24 @@ public final class RendererBotShadowWorldManager {
 		private final UUID sessionId;
 		private final String dimensionId;
 		private final String dimensionTypeId;
+		private final long seed;
 		private final ClientLevel level;
 		private final LevelRenderer levelRenderer;
 		private final FeatureRenderDispatcher featureRenderDispatcher;
 		private final ParticleEngine particleEngine;
+		private final Map<Long, Long> chunkPacketFingerprints = new HashMap<>();
 		private Camera lastCamera;
 		private BlockPos audioBlockPos;
 		private int appliedViewDistance = Integer.MIN_VALUE;
 		private int appliedCenterChunkX = Integer.MIN_VALUE;
 		private int appliedCenterChunkZ = Integer.MIN_VALUE;
+		private long contentRevision;
 
 		private ShadowLevelSession(
 				UUID sessionId,
 				String dimensionId,
 				String dimensionTypeId,
+				long seed,
 				ClientLevel level,
 				LevelRenderer levelRenderer,
 				FeatureRenderDispatcher featureRenderDispatcher,
@@ -687,14 +759,67 @@ public final class RendererBotShadowWorldManager {
 			this.sessionId = sessionId;
 			this.dimensionId = dimensionId;
 			this.dimensionTypeId = dimensionTypeId;
+			this.seed = seed;
 			this.level = level;
 			this.levelRenderer = levelRenderer;
 			this.featureRenderDispatcher = featureRenderDispatcher;
 			this.particleEngine = particleEngine;
 		}
 
+		private long contentRevision() {
+			return this.contentRevision;
+		}
+
+		private void markContentChanged() {
+			this.contentRevision++;
+		}
+
+		/**
+		 * A LevelChunkWithLight packet replaces the client chunk and invalidates all
+		 * of its section meshes.  Shadow synchronisation may resend an unchanged
+		 * packet after recovering from a transient server-side state reset; applying
+		 * it would make an otherwise warm camera recompile the whole view forever.
+		 */
+		private boolean isChunkDataNew(ChunkPos chunkPos, byte[] packetBytes) {
+			if (chunkPos == null || packetBytes == null) {
+				return true;
+			}
+			long chunkLong = chunkPos.toLong();
+			long fingerprint = fingerprint(packetBytes);
+			Long previousFingerprint = this.chunkPacketFingerprints.get(chunkLong);
+			return previousFingerprint == null || previousFingerprint != fingerprint;
+		}
+
+		private void rememberChunkData(ChunkPos chunkPos, byte[] packetBytes) {
+			if (chunkPos != null && packetBytes != null) {
+				this.chunkPacketFingerprints.put(chunkPos.toLong(), fingerprint(packetBytes));
+			}
+		}
+
+		private void forgetChunk(ChunkPos chunkPos) {
+			if (chunkPos != null) {
+				this.chunkPacketFingerprints.remove(chunkPos.toLong());
+			}
+		}
+
+		private static long fingerprint(byte[] bytes) {
+			long hash = 0xcbf29ce484222325L;
+			for (byte value : bytes) {
+				hash ^= value & 0xFFL;
+				hash *= 0x100000001b3L;
+			}
+			return hash;
+		}
+
 		private UUID sessionId() {
 			return this.sessionId;
+		}
+
+		private boolean matchesWorld(RendererBotPayloads.RendererBotShadowLevelInitS2CPayload payload) {
+			return payload != null
+					&& Objects.equals(this.dimensionId, payload.dimensionId())
+					&& Objects.equals(this.dimensionTypeId, payload.dimensionTypeId())
+					&& this.seed == payload.seed();
 		}
 
 		private String dimensionId() {

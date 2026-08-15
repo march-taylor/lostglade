@@ -33,7 +33,7 @@
   "cameraRenderInFlightPixels": 1024,
   "cameraRenderSamplesPerAxis": 2,
   "cameraRendererBotPlayerName": "",
-  "cameraRendererBotTimeoutMs": 4000,
+  "cameraRendererBotTimeoutMs": 15000,
   "monitorRenderThreads": 12,
   "monitorMediaIoThreads": 4,
   "monitorTileQuantizerThreads": 12,
