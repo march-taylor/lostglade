@@ -295,6 +295,7 @@ public final class RaceConfig {
 		changed |= normalizeChance(ability.littleDictatorDecreePropagandaTradeDiscount, value -> ability.littleDictatorDecreePropagandaTradeDiscount = value);
 		changed |= normalizeNonNegative(ability.jetpackMaxRiseBlocks, value -> ability.jetpackMaxRiseBlocks = value);
 		changed |= normalizeChance(ability.repulsorNaturalLightningChargeChance, value -> ability.repulsorNaturalLightningChargeChance = value);
+		changed |= normalizeChance(ability.repulsorArmorIgnoreFraction, value -> ability.repulsorArmorIgnoreFraction = value);
 		changed |= normalizeNonNegative(ability.gennadiyDonkeyMaxAmmo, (java.util.function.IntConsumer) value -> ability.gennadiyDonkeyMaxAmmo = value);
 		changed |= normalizeNonNegative(ability.gennadiyDonkeyAmmoRegenAmount, (java.util.function.IntConsumer) value -> ability.gennadiyDonkeyAmmoRegenAmount = value);
 		changed |= normalizeNonNegative(ability.gennadiyRageHasteLevel, (java.util.function.IntConsumer) value -> ability.gennadiyRageHasteLevel = value);
@@ -302,6 +303,19 @@ public final class RaceConfig {
 		changed |= normalizeNonNegative(ability.repulsorMaxCharges, (java.util.function.IntConsumer) value -> ability.repulsorMaxCharges = value);
 		changed |= normalizeNonNegative(ability.repulsorCopperIngotChargeRestore, (java.util.function.IntConsumer) value -> ability.repulsorCopperIngotChargeRestore = value);
 		changed |= normalizeNonNegative(ability.repulsorNaturalLightningChargeRestore, (java.util.function.IntConsumer) value -> ability.repulsorNaturalLightningChargeRestore = value);
+		changed |= normalizeNonNegative(ability.ancientUkrAttackSwordCount, (java.util.function.IntConsumer) value -> ability.ancientUkrAttackSwordCount = value);
+		changed |= normalizeNonNegative(ability.ancientUkrAttackDurationSeconds, value -> ability.ancientUkrAttackDurationSeconds = value);
+			changed |= normalizeNonNegative(ability.ancientUkrDefenseSmokeRadius, value -> ability.ancientUkrDefenseSmokeRadius = value);
+			changed |= normalizeNonNegative(ability.ancientUkrDefenseSmokeDurationSeconds, value -> ability.ancientUkrDefenseSmokeDurationSeconds = value);
+			changed |= normalizeNonNegative(ability.ancientUkrUniqueHighlightSeconds, value -> ability.ancientUkrUniqueHighlightSeconds = value);
+			changed |= normalizeNonNegative(ability.ancientUkrShnyagaMaxDistanceBlocks, value -> ability.ancientUkrShnyagaMaxDistanceBlocks = value);
+			changed |= normalizeNonNegative(ability.ancientUkrCreditMaxActive, (java.util.function.IntConsumer) value -> ability.ancientUkrCreditMaxActive = value);
+			changed |= normalizeNonNegative(ability.ancientUkrCreditMaxPrincipalBitcoins, (java.util.function.IntConsumer) value -> ability.ancientUkrCreditMaxPrincipalBitcoins = value);
+			changed |= normalizeNonNegative(ability.ancientUkrCreditMinHourlyPercent, value -> ability.ancientUkrCreditMinHourlyPercent = value);
+			changed |= normalizeNonNegative(ability.ancientUkrCreditMaxHourlyPercent, value -> ability.ancientUkrCreditMaxHourlyPercent = value);
+			changed |= normalizeNonNegative(ability.ancientUkrCreditMaxDebtMultiplier, value -> ability.ancientUkrCreditMaxDebtMultiplier = value);
+			changed |= normalizeNonNegative(ability.ancientUkrStockPorkHungerMultiplier, value -> ability.ancientUkrStockPorkHungerMultiplier = value);
+			changed |= normalizeNonNegative(ability.ancientUkrStockPorkPoisonSeconds, value -> ability.ancientUkrStockPorkPoisonSeconds = value);
 		changed |= normalizeChance(ability.chance, value -> ability.chance = value);
 		if (ability.womanUniqueDropMaxSeconds < ability.womanUniqueDropMinSeconds) {
 			ability.womanUniqueDropMaxSeconds = ability.womanUniqueDropMinSeconds;
@@ -317,6 +331,10 @@ public final class RaceConfig {
 		}
 		if (ability.gennadiyDefenseMaxDamage < ability.gennadiyDefenseMinDamage) {
 			ability.gennadiyDefenseMaxDamage = ability.gennadiyDefenseMinDamage;
+			changed = true;
+		}
+		if (ability.ancientUkrCreditMaxHourlyPercent < ability.ancientUkrCreditMinHourlyPercent) {
+			ability.ancientUkrCreditMaxHourlyPercent = ability.ancientUkrCreditMinHourlyPercent;
 			changed = true;
 		}
 		return changed;
@@ -551,7 +569,21 @@ public final class RaceConfig {
 			addIntIfNonZero(json, "repulsorMaxCharges", ability.repulsorMaxCharges);
 			addIntIfNonZero(json, "repulsorCopperIngotChargeRestore", ability.repulsorCopperIngotChargeRestore);
 			addDoubleIfNonZero(json, "repulsorNaturalLightningChargeChance", ability.repulsorNaturalLightningChargeChance);
+			addDoubleIfNonZero(json, "repulsorArmorIgnoreFraction", ability.repulsorArmorIgnoreFraction);
 			addIntIfNonZero(json, "repulsorNaturalLightningChargeRestore", ability.repulsorNaturalLightningChargeRestore);
+			addIntIfNonZero(json, "ancientUkrAttackSwordCount", ability.ancientUkrAttackSwordCount);
+			addDoubleIfNonZero(json, "ancientUkrAttackDurationSeconds", ability.ancientUkrAttackDurationSeconds);
+		addDoubleIfNonZero(json, "ancientUkrDefenseSmokeRadius", ability.ancientUkrDefenseSmokeRadius);
+		addDoubleIfNonZero(json, "ancientUkrDefenseSmokeDurationSeconds", ability.ancientUkrDefenseSmokeDurationSeconds);
+		addDoubleIfNonZero(json, "ancientUkrUniqueHighlightSeconds", ability.ancientUkrUniqueHighlightSeconds);
+		addDoubleIfNonZero(json, "ancientUkrShnyagaMaxDistanceBlocks", ability.ancientUkrShnyagaMaxDistanceBlocks);
+		addIntIfNonZero(json, "ancientUkrCreditMaxActive", ability.ancientUkrCreditMaxActive);
+		addIntIfNonZero(json, "ancientUkrCreditMaxPrincipalBitcoins", ability.ancientUkrCreditMaxPrincipalBitcoins);
+		addDoubleIfNonZero(json, "ancientUkrCreditMinHourlyPercent", ability.ancientUkrCreditMinHourlyPercent);
+		addDoubleIfNonZero(json, "ancientUkrCreditMaxHourlyPercent", ability.ancientUkrCreditMaxHourlyPercent);
+		addDoubleIfNonZero(json, "ancientUkrCreditMaxDebtMultiplier", ability.ancientUkrCreditMaxDebtMultiplier);
+		addDoubleIfNonZero(json, "ancientUkrStockPorkHungerMultiplier", ability.ancientUkrStockPorkHungerMultiplier);
+		addDoubleIfNonZero(json, "ancientUkrStockPorkPoisonSeconds", ability.ancientUkrStockPorkPoisonSeconds);
 			addDoubleIfNonZero(json, "chance", ability.chance);
 			return json;
 		}
@@ -783,7 +815,21 @@ public final class RaceConfig {
 		public int repulsorMaxCharges = 0;
 		public int repulsorCopperIngotChargeRestore = 0;
 		public double repulsorNaturalLightningChargeChance = 0.0D;
+		public double repulsorArmorIgnoreFraction = 0.0D;
 		public int repulsorNaturalLightningChargeRestore = 0;
+		public int ancientUkrAttackSwordCount = 0;
+		public double ancientUkrAttackDurationSeconds = 0.0D;
+		public double ancientUkrDefenseSmokeRadius = 0.0D;
+		public double ancientUkrDefenseSmokeDurationSeconds = 0.0D;
+		public double ancientUkrUniqueHighlightSeconds = 0.0D;
+		public double ancientUkrShnyagaMaxDistanceBlocks = 0.0D;
+		public int ancientUkrCreditMaxActive = 0;
+		public int ancientUkrCreditMaxPrincipalBitcoins = 0;
+		public double ancientUkrCreditMinHourlyPercent = 0.0D;
+		public double ancientUkrCreditMaxHourlyPercent = 0.0D;
+		public double ancientUkrCreditMaxDebtMultiplier = 0.0D;
+		public double ancientUkrStockPorkHungerMultiplier = 0.0D;
+		public double ancientUkrStockPorkPoisonSeconds = 0.0D;
 		public double chance = 0.0D;
 
 		private RaceAbilityConfig() {

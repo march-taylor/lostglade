@@ -112,6 +112,7 @@ public final class CopperManGogglesSystem {
 	private static final String TITLE_OVERLAY_SHIFT = "\ue905";
 	private static final String TITLE_OVERLAY_RESET = "\ue940\ue940\ue941\ue943";
 	private static final int SCREEN_OVERLAY_X_OFFSET = -120;
+	private static final int SCREEN_OVERLAY_X_CORRECTION = -20;
 	private static final String[] SCREEN_OVERLAY_GLYPH_FRAMES = {
 			"\uef8a" + buildHorizontalAdvance(-1) + "\uef8b" + buildHorizontalAdvance(-1) + "\uef8c",
 			"\uef8d" + buildHorizontalAdvance(-1) + "\uef8e" + buildHorizontalAdvance(-1) + "\uef8f",
@@ -1695,7 +1696,9 @@ public final class CopperManGogglesSystem {
 		return Component.empty()
 				.append(Component.literal(buildHorizontalAdvance(SCREEN_OVERLAY_X_OFFSET)).withStyle(style -> style.withColor(0xFFFFFF).withItalic(false)))
 				.append(Component.literal(TITLE_OVERLAY_SHIFT).withStyle(style -> style.withColor(0xFFFFFF).withItalic(false)))
+				.append(Component.literal(buildHorizontalAdvance(SCREEN_OVERLAY_X_CORRECTION)).withStyle(style -> style.withColor(0xFFFFFF).withItalic(false)))
 				.append(glyph)
+				.append(Component.literal(buildHorizontalAdvance(-SCREEN_OVERLAY_X_CORRECTION)).withStyle(style -> style.withColor(0xFFFFFF).withItalic(false)))
 				.append(Component.literal(TITLE_OVERLAY_RESET).withStyle(style -> style.withColor(0xFFFFFF).withItalic(false)));
 	}
 

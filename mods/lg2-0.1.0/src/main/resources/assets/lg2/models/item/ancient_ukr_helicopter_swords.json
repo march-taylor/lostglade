@@ -1,0 +1,1196 @@
+{
+    "ambientocclusion":  false,
+    "gui_light":  "front",
+    "textures":  {
+                     "blade":  "minecraft:block/iron_block",
+                     "guard":  "minecraft:block/light_gray_concrete",
+                     "handle":  "minecraft:block/brown_concrete",
+                     "particle":  "minecraft:block/iron_block"
+                 },
+    "elements":  [
+                     {
+                         "from":  [
+                                      7.25,
+                                      7.7,
+                                      6
+                                  ],
+                         "to":  [
+                                    8.75,
+                                    8.3,
+                                    11
+                                ],
+                         "faces":  {
+                                       "down":  {
+                                                    "texture":  "#handle"
+                                                },
+                                       "up":  {
+                                                  "texture":  "#handle"
+                                              },
+                                       "north":  {
+                                                     "texture":  "#handle"
+                                                 },
+                                       "south":  {
+                                                     "texture":  "#handle"
+                                                 },
+                                       "west":  {
+                                                    "texture":  "#handle"
+                                                },
+                                       "east":  {
+                                                    "texture":  "#handle"
+                                                }
+                                   }
+                     },
+                     {
+                         "from":  [
+                                      4.5,
+                                      7.65,
+                                      10.5
+                                  ],
+                         "to":  [
+                                    11.5,
+                                    8.35,
+                                    12
+                                ],
+                         "faces":  {
+                                       "down":  {
+                                                    "texture":  "#guard"
+                                                },
+                                       "up":  {
+                                                  "texture":  "#guard"
+                                              },
+                                       "north":  {
+                                                     "texture":  "#guard"
+                                                 },
+                                       "south":  {
+                                                     "texture":  "#guard"
+                                                 },
+                                       "west":  {
+                                                    "texture":  "#guard"
+                                                },
+                                       "east":  {
+                                                    "texture":  "#guard"
+                                                }
+                                   }
+                     },
+                     {
+                         "from":  [
+                                      7,
+                                      7.75,
+                                      12
+                                  ],
+                         "to":  [
+                                    9,
+                                    8.25,
+                                    31
+                                ],
+                         "faces":  {
+                                       "down":  {
+                                                    "texture":  "#blade"
+                                                },
+                                       "up":  {
+                                                  "texture":  "#blade"
+                                              },
+                                       "north":  {
+                                                     "texture":  "#blade"
+                                                 },
+                                       "south":  {
+                                                     "texture":  "#blade"
+                                                 },
+                                       "west":  {
+                                                    "texture":  "#blade"
+                                                },
+                                       "east":  {
+                                                    "texture":  "#blade"
+                                                }
+                                   }
+                     },
+                     {
+                         "from":  [
+                                      7.5,
+                                      7.75,
+                                      31
+                                  ],
+                         "to":  [
+                                    8.5,
+                                    8.25,
+                                    32
+                                ],
+                         "faces":  {
+                                       "down":  {
+                                                    "texture":  "#blade"
+                                                },
+                                       "up":  {
+                                                  "texture":  "#blade"
+                                              },
+                                       "north":  {
+                                                     "texture":  "#blade"
+                                                 },
+                                       "south":  {
+                                                     "texture":  "#blade"
+                                                 },
+                                       "west":  {
+                                                    "texture":  "#blade"
+                                                },
+                                       "east":  {
+                                                    "texture":  "#blade"
+                                                }
+                                   }
+                     },
+                     {
+                         "from":  [
+                                      7.25,
+                                      7.7,
+                                      6
+                                  ],
+                         "to":  [
+                                    8.75,
+                                    8.3,
+                                    11
+                                ],
+                         "faces":  {
+                                       "down":  {
+                                                    "texture":  "#handle"
+                                                },
+                                       "up":  {
+                                                  "texture":  "#handle"
+                                              },
+                                       "north":  {
+                                                     "texture":  "#handle"
+                                                 },
+                                       "south":  {
+                                                     "texture":  "#handle"
+                                                 },
+                                       "west":  {
+                                                    "texture":  "#handle"
+                                                },
+                                       "east":  {
+                                                    "texture":  "#handle"
+                                                }
+                                   },
+                         "rotation":  {
+                                          "origin":  [
+                                                         8,
+                                                         8,
+                                                         8
+                                                     ],
+                                          "axis":  "y",
+                                          "angle":  45,
+                                          "rescale":  false
+                                      }
+                     },
+                     {
+                         "from":  [
+                                      4.5,
+                                      7.65,
+                                      10.5
+                                  ],
+                         "to":  [
+                                    11.5,
+                                    8.35,
+                                    12
+                                ],
+                         "faces":  {
+                                       "down":  {
+                                                    "texture":  "#guard"
+                                                },
+                                       "up":  {
+                                                  "texture":  "#guard"
+                                              },
+                                       "north":  {
+                                                     "texture":  "#guard"
+                                                 },
+                                       "south":  {
+                                                     "texture":  "#guard"
+                                                 },
+                                       "west":  {
+                                                    "texture":  "#guard"
+                                                },
+                                       "east":  {
+                                                    "texture":  "#guard"
+                                                }
+                                   },
+                         "rotation":  {
+                                          "origin":  [
+                                                         8,
+                                                         8,
+                                                         8
+                                                     ],
+                                          "axis":  "y",
+                                          "angle":  45,
+                                          "rescale":  false
+                                      }
+                     },
+                     {
+                         "from":  [
+                                      7,
+                                      7.75,
+                                      12
+                                  ],
+                         "to":  [
+                                    9,
+                                    8.25,
+                                    31
+                                ],
+                         "faces":  {
+                                       "down":  {
+                                                    "texture":  "#blade"
+                                                },
+                                       "up":  {
+                                                  "texture":  "#blade"
+                                              },
+                                       "north":  {
+                                                     "texture":  "#blade"
+                                                 },
+                                       "south":  {
+                                                     "texture":  "#blade"
+                                                 },
+                                       "west":  {
+                                                    "texture":  "#blade"
+                                                },
+                                       "east":  {
+                                                    "texture":  "#blade"
+                                                }
+                                   },
+                         "rotation":  {
+                                          "origin":  [
+                                                         8,
+                                                         8,
+                                                         8
+                                                     ],
+                                          "axis":  "y",
+                                          "angle":  45,
+                                          "rescale":  false
+                                      }
+                     },
+                     {
+                         "from":  [
+                                      7.5,
+                                      7.75,
+                                      31
+                                  ],
+                         "to":  [
+                                    8.5,
+                                    8.25,
+                                    32
+                                ],
+                         "faces":  {
+                                       "down":  {
+                                                    "texture":  "#blade"
+                                                },
+                                       "up":  {
+                                                  "texture":  "#blade"
+                                              },
+                                       "north":  {
+                                                     "texture":  "#blade"
+                                                 },
+                                       "south":  {
+                                                     "texture":  "#blade"
+                                                 },
+                                       "west":  {
+                                                    "texture":  "#blade"
+                                                },
+                                       "east":  {
+                                                    "texture":  "#blade"
+                                                }
+                                   },
+                         "rotation":  {
+                                          "origin":  [
+                                                         8,
+                                                         8,
+                                                         8
+                                                     ],
+                                          "axis":  "y",
+                                          "angle":  45,
+                                          "rescale":  false
+                                      }
+                     },
+                     {
+                         "from":  [
+                                      7.25,
+                                      7.7,
+                                      6
+                                  ],
+                         "to":  [
+                                    8.75,
+                                    8.3,
+                                    11
+                                ],
+                         "faces":  {
+                                       "down":  {
+                                                    "texture":  "#handle"
+                                                },
+                                       "up":  {
+                                                  "texture":  "#handle"
+                                              },
+                                       "north":  {
+                                                     "texture":  "#handle"
+                                                 },
+                                       "south":  {
+                                                     "texture":  "#handle"
+                                                 },
+                                       "west":  {
+                                                    "texture":  "#handle"
+                                                },
+                                       "east":  {
+                                                    "texture":  "#handle"
+                                                }
+                                   },
+                         "rotation":  {
+                                          "origin":  [
+                                                         8,
+                                                         8,
+                                                         8
+                                                     ],
+                                          "axis":  "y",
+                                          "angle":  -45,
+                                          "rescale":  false
+                                      }
+                     },
+                     {
+                         "from":  [
+                                      4.5,
+                                      7.65,
+                                      10.5
+                                  ],
+                         "to":  [
+                                    11.5,
+                                    8.35,
+                                    12
+                                ],
+                         "faces":  {
+                                       "down":  {
+                                                    "texture":  "#guard"
+                                                },
+                                       "up":  {
+                                                  "texture":  "#guard"
+                                              },
+                                       "north":  {
+                                                     "texture":  "#guard"
+                                                 },
+                                       "south":  {
+                                                     "texture":  "#guard"
+                                                 },
+                                       "west":  {
+                                                    "texture":  "#guard"
+                                                },
+                                       "east":  {
+                                                    "texture":  "#guard"
+                                                }
+                                   },
+                         "rotation":  {
+                                          "origin":  [
+                                                         8,
+                                                         8,
+                                                         8
+                                                     ],
+                                          "axis":  "y",
+                                          "angle":  -45,
+                                          "rescale":  false
+                                      }
+                     },
+                     {
+                         "from":  [
+                                      7,
+                                      7.75,
+                                      12
+                                  ],
+                         "to":  [
+                                    9,
+                                    8.25,
+                                    31
+                                ],
+                         "faces":  {
+                                       "down":  {
+                                                    "texture":  "#blade"
+                                                },
+                                       "up":  {
+                                                  "texture":  "#blade"
+                                              },
+                                       "north":  {
+                                                     "texture":  "#blade"
+                                                 },
+                                       "south":  {
+                                                     "texture":  "#blade"
+                                                 },
+                                       "west":  {
+                                                    "texture":  "#blade"
+                                                },
+                                       "east":  {
+                                                    "texture":  "#blade"
+                                                }
+                                   },
+                         "rotation":  {
+                                          "origin":  [
+                                                         8,
+                                                         8,
+                                                         8
+                                                     ],
+                                          "axis":  "y",
+                                          "angle":  -45,
+                                          "rescale":  false
+                                      }
+                     },
+                     {
+                         "from":  [
+                                      7.5,
+                                      7.75,
+                                      31
+                                  ],
+                         "to":  [
+                                    8.5,
+                                    8.25,
+                                    32
+                                ],
+                         "faces":  {
+                                       "down":  {
+                                                    "texture":  "#blade"
+                                                },
+                                       "up":  {
+                                                  "texture":  "#blade"
+                                              },
+                                       "north":  {
+                                                     "texture":  "#blade"
+                                                 },
+                                       "south":  {
+                                                     "texture":  "#blade"
+                                                 },
+                                       "west":  {
+                                                    "texture":  "#blade"
+                                                },
+                                       "east":  {
+                                                    "texture":  "#blade"
+                                                }
+                                   },
+                         "rotation":  {
+                                          "origin":  [
+                                                         8,
+                                                         8,
+                                                         8
+                                                     ],
+                                          "axis":  "y",
+                                          "angle":  -45,
+                                          "rescale":  false
+                                      }
+                     },
+                     {
+                         "from":  [
+                                      7.25,
+                                      7.7,
+                                      5
+                                  ],
+                         "to":  [
+                                    8.75,
+                                    8.3,
+                                    10
+                                ],
+                         "faces":  {
+                                       "down":  {
+                                                    "texture":  "#handle"
+                                                },
+                                       "up":  {
+                                                  "texture":  "#handle"
+                                              },
+                                       "north":  {
+                                                     "texture":  "#handle"
+                                                 },
+                                       "south":  {
+                                                     "texture":  "#handle"
+                                                 },
+                                       "west":  {
+                                                    "texture":  "#handle"
+                                                },
+                                       "east":  {
+                                                    "texture":  "#handle"
+                                                }
+                                   }
+                     },
+                     {
+                         "from":  [
+                                      4.5,
+                                      7.65,
+                                      4
+                                  ],
+                         "to":  [
+                                    11.5,
+                                    8.35,
+                                    5.5
+                                ],
+                         "faces":  {
+                                       "down":  {
+                                                    "texture":  "#guard"
+                                                },
+                                       "up":  {
+                                                  "texture":  "#guard"
+                                              },
+                                       "north":  {
+                                                     "texture":  "#guard"
+                                                 },
+                                       "south":  {
+                                                     "texture":  "#guard"
+                                                 },
+                                       "west":  {
+                                                    "texture":  "#guard"
+                                                },
+                                       "east":  {
+                                                    "texture":  "#guard"
+                                                }
+                                   }
+                     },
+                     {
+                         "from":  [
+                                      7,
+                                      7.75,
+                                      -15
+                                  ],
+                         "to":  [
+                                    9,
+                                    8.25,
+                                    4
+                                ],
+                         "faces":  {
+                                       "down":  {
+                                                    "texture":  "#blade"
+                                                },
+                                       "up":  {
+                                                  "texture":  "#blade"
+                                              },
+                                       "north":  {
+                                                     "texture":  "#blade"
+                                                 },
+                                       "south":  {
+                                                     "texture":  "#blade"
+                                                 },
+                                       "west":  {
+                                                    "texture":  "#blade"
+                                                },
+                                       "east":  {
+                                                    "texture":  "#blade"
+                                                }
+                                   }
+                     },
+                     {
+                         "from":  [
+                                      7.5,
+                                      7.75,
+                                      -16.0
+                                  ],
+                         "to":  [
+                                    8.5,
+                                    8.25,
+                                    -15
+                                ],
+                         "faces":  {
+                                       "down":  {
+                                                    "texture":  "#blade"
+                                                },
+                                       "up":  {
+                                                  "texture":  "#blade"
+                                              },
+                                       "north":  {
+                                                     "texture":  "#blade"
+                                                 },
+                                       "south":  {
+                                                     "texture":  "#blade"
+                                                 },
+                                       "west":  {
+                                                    "texture":  "#blade"
+                                                },
+                                       "east":  {
+                                                    "texture":  "#blade"
+                                                }
+                                   }
+                     },
+                     {
+                         "from":  [
+                                      7.25,
+                                      7.7,
+                                      5
+                                  ],
+                         "to":  [
+                                    8.75,
+                                    8.3,
+                                    10
+                                ],
+                         "faces":  {
+                                       "down":  {
+                                                    "texture":  "#handle"
+                                                },
+                                       "up":  {
+                                                  "texture":  "#handle"
+                                              },
+                                       "north":  {
+                                                     "texture":  "#handle"
+                                                 },
+                                       "south":  {
+                                                     "texture":  "#handle"
+                                                 },
+                                       "west":  {
+                                                    "texture":  "#handle"
+                                                },
+                                       "east":  {
+                                                    "texture":  "#handle"
+                                                }
+                                   },
+                         "rotation":  {
+                                          "origin":  [
+                                                         8,
+                                                         8,
+                                                         8
+                                                     ],
+                                          "axis":  "y",
+                                          "angle":  45,
+                                          "rescale":  false
+                                      }
+                     },
+                     {
+                         "from":  [
+                                      4.5,
+                                      7.65,
+                                      4
+                                  ],
+                         "to":  [
+                                    11.5,
+                                    8.35,
+                                    5.5
+                                ],
+                         "faces":  {
+                                       "down":  {
+                                                    "texture":  "#guard"
+                                                },
+                                       "up":  {
+                                                  "texture":  "#guard"
+                                              },
+                                       "north":  {
+                                                     "texture":  "#guard"
+                                                 },
+                                       "south":  {
+                                                     "texture":  "#guard"
+                                                 },
+                                       "west":  {
+                                                    "texture":  "#guard"
+                                                },
+                                       "east":  {
+                                                    "texture":  "#guard"
+                                                }
+                                   },
+                         "rotation":  {
+                                          "origin":  [
+                                                         8,
+                                                         8,
+                                                         8
+                                                     ],
+                                          "axis":  "y",
+                                          "angle":  45,
+                                          "rescale":  false
+                                      }
+                     },
+                     {
+                         "from":  [
+                                      7,
+                                      7.75,
+                                      -15
+                                  ],
+                         "to":  [
+                                    9,
+                                    8.25,
+                                    4
+                                ],
+                         "faces":  {
+                                       "down":  {
+                                                    "texture":  "#blade"
+                                                },
+                                       "up":  {
+                                                  "texture":  "#blade"
+                                              },
+                                       "north":  {
+                                                     "texture":  "#blade"
+                                                 },
+                                       "south":  {
+                                                     "texture":  "#blade"
+                                                 },
+                                       "west":  {
+                                                    "texture":  "#blade"
+                                                },
+                                       "east":  {
+                                                    "texture":  "#blade"
+                                                }
+                                   },
+                         "rotation":  {
+                                          "origin":  [
+                                                         8,
+                                                         8,
+                                                         8
+                                                     ],
+                                          "axis":  "y",
+                                          "angle":  45,
+                                          "rescale":  false
+                                      }
+                     },
+                     {
+                         "from":  [
+                                      7.5,
+                                      7.75,
+                                      -16.0
+                                  ],
+                         "to":  [
+                                    8.5,
+                                    8.25,
+                                    -15
+                                ],
+                         "faces":  {
+                                       "down":  {
+                                                    "texture":  "#blade"
+                                                },
+                                       "up":  {
+                                                  "texture":  "#blade"
+                                              },
+                                       "north":  {
+                                                     "texture":  "#blade"
+                                                 },
+                                       "south":  {
+                                                     "texture":  "#blade"
+                                                 },
+                                       "west":  {
+                                                    "texture":  "#blade"
+                                                },
+                                       "east":  {
+                                                    "texture":  "#blade"
+                                                }
+                                   },
+                         "rotation":  {
+                                          "origin":  [
+                                                         8,
+                                                         8,
+                                                         8
+                                                     ],
+                                          "axis":  "y",
+                                          "angle":  45,
+                                          "rescale":  false
+                                      }
+                     },
+                     {
+                         "from":  [
+                                      7.25,
+                                      7.7,
+                                      5
+                                  ],
+                         "to":  [
+                                    8.75,
+                                    8.3,
+                                    10
+                                ],
+                         "faces":  {
+                                       "down":  {
+                                                    "texture":  "#handle"
+                                                },
+                                       "up":  {
+                                                  "texture":  "#handle"
+                                              },
+                                       "north":  {
+                                                     "texture":  "#handle"
+                                                 },
+                                       "south":  {
+                                                     "texture":  "#handle"
+                                                 },
+                                       "west":  {
+                                                    "texture":  "#handle"
+                                                },
+                                       "east":  {
+                                                    "texture":  "#handle"
+                                                }
+                                   },
+                         "rotation":  {
+                                          "origin":  [
+                                                         8,
+                                                         8,
+                                                         8
+                                                     ],
+                                          "axis":  "y",
+                                          "angle":  -45,
+                                          "rescale":  false
+                                      }
+                     },
+                     {
+                         "from":  [
+                                      4.5,
+                                      7.65,
+                                      4
+                                  ],
+                         "to":  [
+                                    11.5,
+                                    8.35,
+                                    5.5
+                                ],
+                         "faces":  {
+                                       "down":  {
+                                                    "texture":  "#guard"
+                                                },
+                                       "up":  {
+                                                  "texture":  "#guard"
+                                              },
+                                       "north":  {
+                                                     "texture":  "#guard"
+                                                 },
+                                       "south":  {
+                                                     "texture":  "#guard"
+                                                 },
+                                       "west":  {
+                                                    "texture":  "#guard"
+                                                },
+                                       "east":  {
+                                                    "texture":  "#guard"
+                                                }
+                                   },
+                         "rotation":  {
+                                          "origin":  [
+                                                         8,
+                                                         8,
+                                                         8
+                                                     ],
+                                          "axis":  "y",
+                                          "angle":  -45,
+                                          "rescale":  false
+                                      }
+                     },
+                     {
+                         "from":  [
+                                      7,
+                                      7.75,
+                                      -15
+                                  ],
+                         "to":  [
+                                    9,
+                                    8.25,
+                                    4
+                                ],
+                         "faces":  {
+                                       "down":  {
+                                                    "texture":  "#blade"
+                                                },
+                                       "up":  {
+                                                  "texture":  "#blade"
+                                              },
+                                       "north":  {
+                                                     "texture":  "#blade"
+                                                 },
+                                       "south":  {
+                                                     "texture":  "#blade"
+                                                 },
+                                       "west":  {
+                                                    "texture":  "#blade"
+                                                },
+                                       "east":  {
+                                                    "texture":  "#blade"
+                                                }
+                                   },
+                         "rotation":  {
+                                          "origin":  [
+                                                         8,
+                                                         8,
+                                                         8
+                                                     ],
+                                          "axis":  "y",
+                                          "angle":  -45,
+                                          "rescale":  false
+                                      }
+                     },
+                     {
+                         "from":  [
+                                      7.5,
+                                      7.75,
+                                      -16.0
+                                  ],
+                         "to":  [
+                                    8.5,
+                                    8.25,
+                                    -15
+                                ],
+                         "faces":  {
+                                       "down":  {
+                                                    "texture":  "#blade"
+                                                },
+                                       "up":  {
+                                                  "texture":  "#blade"
+                                              },
+                                       "north":  {
+                                                     "texture":  "#blade"
+                                                 },
+                                       "south":  {
+                                                     "texture":  "#blade"
+                                                 },
+                                       "west":  {
+                                                    "texture":  "#blade"
+                                                },
+                                       "east":  {
+                                                    "texture":  "#blade"
+                                                }
+                                   },
+                         "rotation":  {
+                                          "origin":  [
+                                                         8,
+                                                         8,
+                                                         8
+                                                     ],
+                                          "axis":  "y",
+                                          "angle":  -45,
+                                          "rescale":  false
+                                      }
+                     },
+                     {
+                         "from":  [
+                                      6,
+                                      7.7,
+                                      7.25
+                                  ],
+                         "to":  [
+                                    11,
+                                    8.3,
+                                    8.75
+                                ],
+                         "faces":  {
+                                       "down":  {
+                                                    "texture":  "#handle"
+                                                },
+                                       "up":  {
+                                                  "texture":  "#handle"
+                                              },
+                                       "north":  {
+                                                     "texture":  "#handle"
+                                                 },
+                                       "south":  {
+                                                     "texture":  "#handle"
+                                                 },
+                                       "west":  {
+                                                    "texture":  "#handle"
+                                                },
+                                       "east":  {
+                                                    "texture":  "#handle"
+                                                }
+                                   }
+                     },
+                     {
+                         "from":  [
+                                      10.5,
+                                      7.65,
+                                      4.5
+                                  ],
+                         "to":  [
+                                    12,
+                                    8.35,
+                                    11.5
+                                ],
+                         "faces":  {
+                                       "down":  {
+                                                    "texture":  "#guard"
+                                                },
+                                       "up":  {
+                                                  "texture":  "#guard"
+                                              },
+                                       "north":  {
+                                                     "texture":  "#guard"
+                                                 },
+                                       "south":  {
+                                                     "texture":  "#guard"
+                                                 },
+                                       "west":  {
+                                                    "texture":  "#guard"
+                                                },
+                                       "east":  {
+                                                    "texture":  "#guard"
+                                                }
+                                   }
+                     },
+                     {
+                         "from":  [
+                                      12,
+                                      7.75,
+                                      7
+                                  ],
+                         "to":  [
+                                    31,
+                                    8.25,
+                                    9
+                                ],
+                         "faces":  {
+                                       "down":  {
+                                                    "texture":  "#blade"
+                                                },
+                                       "up":  {
+                                                  "texture":  "#blade"
+                                              },
+                                       "north":  {
+                                                     "texture":  "#blade"
+                                                 },
+                                       "south":  {
+                                                     "texture":  "#blade"
+                                                 },
+                                       "west":  {
+                                                    "texture":  "#blade"
+                                                },
+                                       "east":  {
+                                                    "texture":  "#blade"
+                                                }
+                                   }
+                     },
+                     {
+                         "from":  [
+                                      31,
+                                      7.75,
+                                      7.5
+                                  ],
+                         "to":  [
+                                    32,
+                                    8.25,
+                                    8.5
+                                ],
+                         "faces":  {
+                                       "down":  {
+                                                    "texture":  "#blade"
+                                                },
+                                       "up":  {
+                                                  "texture":  "#blade"
+                                              },
+                                       "north":  {
+                                                     "texture":  "#blade"
+                                                 },
+                                       "south":  {
+                                                     "texture":  "#blade"
+                                                 },
+                                       "west":  {
+                                                    "texture":  "#blade"
+                                                },
+                                       "east":  {
+                                                    "texture":  "#blade"
+                                                }
+                                   }
+                     },
+                     {
+                         "from":  [
+                                      5,
+                                      7.7,
+                                      7.25
+                                  ],
+                         "to":  [
+                                    10,
+                                    8.3,
+                                    8.75
+                                ],
+                         "faces":  {
+                                       "down":  {
+                                                    "texture":  "#handle"
+                                                },
+                                       "up":  {
+                                                  "texture":  "#handle"
+                                              },
+                                       "north":  {
+                                                     "texture":  "#handle"
+                                                 },
+                                       "south":  {
+                                                     "texture":  "#handle"
+                                                 },
+                                       "west":  {
+                                                    "texture":  "#handle"
+                                                },
+                                       "east":  {
+                                                    "texture":  "#handle"
+                                                }
+                                   }
+                     },
+                     {
+                         "from":  [
+                                      4,
+                                      7.65,
+                                      4.5
+                                  ],
+                         "to":  [
+                                    5.5,
+                                    8.35,
+                                    11.5
+                                ],
+                         "faces":  {
+                                       "down":  {
+                                                    "texture":  "#guard"
+                                                },
+                                       "up":  {
+                                                  "texture":  "#guard"
+                                              },
+                                       "north":  {
+                                                     "texture":  "#guard"
+                                                 },
+                                       "south":  {
+                                                     "texture":  "#guard"
+                                                 },
+                                       "west":  {
+                                                    "texture":  "#guard"
+                                                },
+                                       "east":  {
+                                                    "texture":  "#guard"
+                                                }
+                                   }
+                     },
+                     {
+                         "from":  [
+                                      -15,
+                                      7.75,
+                                      7
+                                  ],
+                         "to":  [
+                                    4,
+                                    8.25,
+                                    9
+                                ],
+                         "faces":  {
+                                       "down":  {
+                                                    "texture":  "#blade"
+                                                },
+                                       "up":  {
+                                                  "texture":  "#blade"
+                                              },
+                                       "north":  {
+                                                     "texture":  "#blade"
+                                                 },
+                                       "south":  {
+                                                     "texture":  "#blade"
+                                                 },
+                                       "west":  {
+                                                    "texture":  "#blade"
+                                                },
+                                       "east":  {
+                                                    "texture":  "#blade"
+                                                }
+                                   }
+                     },
+                     {
+                         "from":  [
+                                      -16.0,
+                                      7.75,
+                                      7.5
+                                  ],
+                         "to":  [
+                                    -15,
+                                    8.25,
+                                    8.5
+                                ],
+                         "faces":  {
+                                       "down":  {
+                                                    "texture":  "#blade"
+                                                },
+                                       "up":  {
+                                                  "texture":  "#blade"
+                                              },
+                                       "north":  {
+                                                     "texture":  "#blade"
+                                                 },
+                                       "south":  {
+                                                     "texture":  "#blade"
+                                                 },
+                                       "west":  {
+                                                    "texture":  "#blade"
+                                                },
+                                       "east":  {
+                                                    "texture":  "#blade"
+                                                }
+                                   }
+                     }
+                 ]
+}

@@ -18,6 +18,7 @@ public abstract class LivingEntityGennadiyDefenseEffectMixin {
 		if (ServerRaceSystem.shouldBlockGennadiyDefenseEffect(self, effect)
 				|| ServerRaceSystem.shouldBlockMarkStockRestorativeEffect(self, effect)
 				|| ServerRaceSystem.shouldBlockMilkStockPositiveEffect(self, effect)
+				|| ServerRaceSystem.shouldBlockAncientUkrGasEffect(self, effect)
 				|| PuroSanStockSystem.shouldBlockBlindness(self, effect)) {
 			cir.setReturnValue(false);
 		}
@@ -29,6 +30,7 @@ public abstract class LivingEntityGennadiyDefenseEffectMixin {
 		if (ServerRaceSystem.shouldBlockGennadiyDefenseEffect(self, effect)
 				|| ServerRaceSystem.shouldBlockMarkStockRestorativeEffect(self, effect)
 				|| ServerRaceSystem.shouldBlockMilkStockPositiveEffect(self, effect)
+				|| ServerRaceSystem.shouldBlockAncientUkrGasEffect(self, effect)
 				|| PuroSanStockSystem.shouldBlockBlindness(self, effect)) {
 			cir.setReturnValue(false);
 		}

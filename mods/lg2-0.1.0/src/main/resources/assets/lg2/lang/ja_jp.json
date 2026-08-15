@@ -160,5 +160,6 @@
   "message.lg2.monitor.gallery.rename_not_found": "ギャラリー: ファイルが見つかりません",
   "message.lg2.monitor.gallery.renamed": "ギャラリー: ファイル名を変更しました",
   "message.lg2.monitor.gallery.rename_unchanged": "ギャラリー: 名前は変更されていません",
-  "message.lg2.monitor.upgrade_locked": "先に %s を購入してください。"
+  "message.lg2.monitor.upgrade_locked": "先に %s を購入してください。",
+  "item.lg2.ancient_ukr_gas_mask": "\u30ac\u30b9\u30de\u30b9\u30af"
 }

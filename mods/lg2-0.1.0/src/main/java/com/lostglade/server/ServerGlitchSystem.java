@@ -227,6 +227,7 @@ public final class ServerGlitchSystem {
 	}
 
 	private static boolean onAllowChatMessage(PlayerChatMessage message, ServerPlayer sender, ChatType.Bound params) {
+		AncientUkrCreditorChatSystem.handlePlayerChatMessage(message, sender);
 		return handleBroadcastedPlayerMessage(message, sender, params);
 	}
 

@@ -45,6 +45,7 @@ public abstract class ServerGamePacketListenerCopperManGogglesMixin {
 		}
 		if (packet.getAction() == ServerboundPlayerActionPacket.Action.RELEASE_USE_ITEM) {
 			CopperManGogglesSystem.handleReleaseUsePacket(this.player);
+			CopperManRepulsorSystem.handleReleaseUsePacket(this.player);
 			return;
 		}
 		if (packet.getAction() == ServerboundPlayerActionPacket.Action.SWAP_ITEM_WITH_OFFHAND) {

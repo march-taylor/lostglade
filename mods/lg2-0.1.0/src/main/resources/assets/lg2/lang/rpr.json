@@ -160,5 +160,6 @@
   "message.lg2.monitor.gallery.rename_not_found": "Галерея: файлъ не найденъ",
   "message.lg2.monitor.gallery.renamed": "Галерея: файлъ переименованъ",
   "message.lg2.monitor.gallery.rename_unchanged": "Галерея: имя не измѣнено",
-  "message.lg2.monitor.upgrade_locked": "Сначала купи %s."
+  "message.lg2.monitor.upgrade_locked": "Сначала купи %s.",
+  "item.lg2.ancient_ukr_gas_mask": "\u041f\u0440\u043e\u0442\u0438\u0432\u043e\u0433\u0430\u0437\u044a"
 }

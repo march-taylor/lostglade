@@ -5,6 +5,7 @@ import com.lostglade.server.ServerRaceSystem;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.food.FoodProperties;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import org.spongepowered.asm.mixin.Mixin;
@@ -22,6 +23,11 @@ public abstract class LivingEntityCopperManFoodMixin {
 	private boolean lg2$pendingMarkStockFoodVoid;
 	private int lg2$markFoodLevelBeforeUse;
 	private float lg2$markSaturationBeforeUse;
+	private boolean lg2$pendingAncientUkrPorkAdjustment;
+	private int lg2$ancientUkrFoodLevelBeforeUse;
+	private float lg2$ancientUkrSaturationBeforeUse;
+	private int lg2$ancientUkrPorkNutrition;
+	private float lg2$ancientUkrPorkSaturation;
 
 	@Inject(method = "completeUsingItem", at = @At("HEAD"))
 	private void lg2$captureCopperManFoodState(CallbackInfo ci) {
@@ -37,6 +43,14 @@ public abstract class LivingEntityCopperManFoodMixin {
 		ServerRaceSystem.beginMilkStockEnchantedGoldenAppleEffects(player, useItem);
 		this.lg2$pendingWomanUniqueFoodUnlock = !useItem.isEmpty() && useItem.get(DataComponents.FOOD) != null;
 		this.lg2$pendingMarkStockFoodVoid = ServerRaceSystem.shouldVoidMarkStockFood(player, useItem);
+		this.lg2$pendingAncientUkrPorkAdjustment = ServerRaceSystem.shouldAdjustAncientUkrPork(player, useItem);
+		if (this.lg2$pendingAncientUkrPorkAdjustment) {
+			this.lg2$ancientUkrFoodLevelBeforeUse = player.getFoodData().getFoodLevel();
+			this.lg2$ancientUkrSaturationBeforeUse = player.getFoodData().getSaturationLevel();
+			FoodProperties food = useItem.get(DataComponents.FOOD);
+			this.lg2$ancientUkrPorkNutrition = food == null ? 0 : food.nutrition();
+			this.lg2$ancientUkrPorkSaturation = food == null ? 0.0F : food.saturation();
+		}
 		if (this.lg2$pendingMarkStockFoodVoid) {
 			this.lg2$markFoodLevelBeforeUse = player.getFoodData().getFoodLevel();
 			this.lg2$markSaturationBeforeUse = player.getFoodData().getSaturationLevel();
@@ -79,6 +93,17 @@ public abstract class LivingEntityCopperManFoodMixin {
 
 		this.lg2$pendingMarkStockFoodVoid = false;
 		ServerRaceSystem.restoreMarkStockFoodAfterEating(player, this.lg2$markFoodLevelBeforeUse, this.lg2$markSaturationBeforeUse);
+	}
+
+	@Inject(method = "completeUsingItem", at = @At("TAIL"))
+	private void lg2$adjustAncientUkrPorkRestore(CallbackInfo ci) {
+		LivingEntity self = (LivingEntity) (Object) this;
+		if (!this.lg2$pendingAncientUkrPorkAdjustment || !(self instanceof ServerPlayer player)) {
+			this.lg2$pendingAncientUkrPorkAdjustment = false;
+			return;
+		}
+		this.lg2$pendingAncientUkrPorkAdjustment = false;
+		ServerRaceSystem.adjustAncientUkrPorkAfterEating(player, this.lg2$ancientUkrFoodLevelBeforeUse, this.lg2$ancientUkrSaturationBeforeUse, this.lg2$ancientUkrPorkNutrition, this.lg2$ancientUkrPorkSaturation);
 	}
 
 	@Inject(method = "completeUsingItem", at = @At("TAIL"))

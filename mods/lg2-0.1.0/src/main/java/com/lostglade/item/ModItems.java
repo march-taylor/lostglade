@@ -55,6 +55,9 @@ public final class ModItems {
 	private static final Identifier GREATER_STABILITY_POTION_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "greater_stability_potion");
 	private static final Identifier STARTUP_BALLOON_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "startup_balloon");
 	private static final Identifier STARTUP_JACK_CLOWN_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "startup_jack_clown");
+	private static final Identifier ANCIENT_UKR_GAS_MASK_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "ancient_ukr_gas_mask");
+	private static final Identifier ANCIENT_UKR_HELICOPTER_SWORDS_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "ancient_ukr_helicopter_swords");
+	private static final Identifier ANCIENT_UKR_SMOKE_GRENADE_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "ancient_ukr_smoke_grenade");
 	private static final ResourceKey<Item> BITCOIN_KEY = ResourceKey.create(Registries.ITEM, BITCOIN_ID);
 	private static final ResourceKey<Item> SPECIAL_PICKAXE_KEY = ResourceKey.create(Registries.ITEM, SPECIAL_PICKAXE_ID);
 	private static final ResourceKey<Item> CAMERA_KEY = ResourceKey.create(Registries.ITEM, CAMERA_ID);
@@ -87,6 +90,9 @@ public final class ModItems {
 	private static final ResourceKey<Item> GREATER_STABILITY_POTION_KEY = ResourceKey.create(Registries.ITEM, GREATER_STABILITY_POTION_ID);
 	private static final ResourceKey<Item> STARTUP_BALLOON_KEY = ResourceKey.create(Registries.ITEM, STARTUP_BALLOON_ID);
 	private static final ResourceKey<Item> STARTUP_JACK_CLOWN_KEY = ResourceKey.create(Registries.ITEM, STARTUP_JACK_CLOWN_ID);
+	private static final ResourceKey<Item> ANCIENT_UKR_GAS_MASK_KEY = ResourceKey.create(Registries.ITEM, ANCIENT_UKR_GAS_MASK_ID);
+	private static final ResourceKey<Item> ANCIENT_UKR_HELICOPTER_SWORDS_KEY = ResourceKey.create(Registries.ITEM, ANCIENT_UKR_HELICOPTER_SWORDS_ID);
+	private static final ResourceKey<Item> ANCIENT_UKR_SMOKE_GRENADE_KEY = ResourceKey.create(Registries.ITEM, ANCIENT_UKR_SMOKE_GRENADE_ID);
 	private static final ResourceKey<CreativeModeTab> INGREDIENTS_TAB = ResourceKey.create(
 			Registries.CREATIVE_MODE_TAB,
 			Identifier.fromNamespaceAndPath("minecraft", "ingredients")
@@ -437,6 +443,36 @@ public final class ModItems {
 			)
 	);
 
+	public static final Item ANCIENT_UKR_HELICOPTER_SWORDS = Registry.register(
+			BuiltInRegistries.ITEM,
+			ANCIENT_UKR_HELICOPTER_SWORDS_ID,
+			new StartupRaceVisualItem(
+					new Item.Properties().setId(ANCIENT_UKR_HELICOPTER_SWORDS_KEY).stacksTo(1),
+					"ancient_ukr_helicopter_swords",
+					Items.IRON_SWORD
+			)
+	);
+	public static final Item ANCIENT_UKR_SMOKE_GRENADE = Registry.register(
+			BuiltInRegistries.ITEM,
+			ANCIENT_UKR_SMOKE_GRENADE_ID,
+			new StartupRaceVisualItem(
+					new Item.Properties().setId(ANCIENT_UKR_SMOKE_GRENADE_KEY).stacksTo(1),
+					"ancient_ukr_smoke_grenade",
+					Items.FIRE_CHARGE
+			)
+	);
+	public static final Item ANCIENT_UKR_GAS_MASK = Registry.register(
+			BuiltInRegistries.ITEM,
+			ANCIENT_UKR_GAS_MASK_ID,
+			new StartupRaceVisualItem(
+					new Item.Properties()
+							.setId(ANCIENT_UKR_GAS_MASK_KEY)
+							.stacksTo(1)
+							.equippableUnswappable(EquipmentSlot.HEAD),
+					"ancient_ukr_gas_mask",
+					Items.CARVED_PUMPKIN
+			)
+	);
 	private ModItems() {
 	}
 

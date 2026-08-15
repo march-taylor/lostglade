@@ -1,0 +1,18 @@
+{
+  "parent": "minecraft:item/generated",
+  "gui_light": "front",
+  "textures": {
+    "layer0": "lg2:item/ancient_ukr_smoke_grenade"
+  },
+  "display": {
+    "ground": {
+      "rotation": [0, 0, 0],
+      "translation": [0, 2, 0],
+      "scale": [0.42, 0.42, 0.42]
+    },
+    "fixed": {
+      "rotation": [0, 180, 0],
+      "scale": [0.55, 0.55, 0.55]
+    }
+  }
+}

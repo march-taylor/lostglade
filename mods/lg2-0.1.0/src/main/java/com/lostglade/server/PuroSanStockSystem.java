@@ -78,7 +78,8 @@ public final class PuroSanStockSystem {
 	private static final String AIM_WARNING_GLYPH = "\uef50" + buildHorizontalAdvance(-1) + "\uef51" + buildHorizontalAdvance(-1) + "\uef52";
 	private static final String TITLE_OVERLAY_SHIFT = "\ue905";
 	private static final String TITLE_OVERLAY_RESET = "\ue940\ue940\ue941\ue943";
-	private static final int TITLE_X_OFFSET = -167;
+	private static final int TITLE_X_OFFSET = -120;
+	private static final int TITLE_X_CORRECTION = -20;
 	private static final DustParticleOptions TRAIL_DARK_FIRE = new DustParticleOptions(0xD93212, 0.48F);
 	private static final DustParticleOptions TRAIL_BRIGHT_FIRE = new DustParticleOptions(0xFF8A18, 0.34F);
 	private static final Map<UUID, Vec3> LAST_TRAIL_POSITIONS = new HashMap<>();
@@ -293,6 +294,11 @@ public final class PuroSanStockSystem {
 	private static void damageEntitiesOnTrail(ServerLevel level, List<TrailPoint> points) {
 		Set<UUID> damaged = new HashSet<>();
 		for (TrailPoint point : points) {
+			ServerPlayer owner = level.getServer().getPlayerList().getPlayer(point.ownerId);
+			if (owner == null) {
+				continue;
+			}
+			DamageSource trailDamageSource = level.damageSources().source(DamageTypes.ON_FIRE, owner);
 			AABB area = new AABB(
 					point.position.x - TRAIL_DAMAGE_RADIUS,
 					point.position.y - 0.12D,
@@ -306,7 +312,8 @@ public final class PuroSanStockSystem {
 					continue;
 				}
 				if (point.damage > 0.0D) {
-					entity.hurtServer(level, level.damageSources().onFire(), (float) point.damage);
+					entity.setRemainingFireTicks(Math.max(1, entity.getRemainingFireTicks()));
+					entity.hurtServer(level, trailDamageSource, (float) point.damage);
 				}
 			}
 		}
@@ -399,10 +406,16 @@ public final class PuroSanStockSystem {
 		boolean targeted = radius > 0.0D && isTargetedByRangedWeapon(puro, radius);
 		AimWarningState state = AIM_WARNING_STATES.get(puro.getUUID());
 		if (!targeted) {
-			if (state != null) {
-				clearAimWarning(puro, state);
-				AIM_WARNING_STATES.remove(puro.getUUID());
+			if (state == null) {
+				return;
 			}
+			long elapsed = Math.max(0L, nowTick - state.cycleStartTick);
+			if (state.overlayVisible && elapsed < AIM_WARNING_VISIBLE_TICKS) {
+				// Let the title finish its configured fade-out instead of replacing it abruptly.
+				return;
+			}
+			clearAimWarning(puro, state);
+			AIM_WARNING_STATES.remove(puro.getUUID());
 			return;
 		}
 		if (state == null) {
@@ -532,10 +545,12 @@ public final class PuroSanStockSystem {
 						.withFont(AIM_WARNING_FONT)
 						.withShadowColor(0x00000000));
 		return Component.empty()
-				.append(Component.literal(buildHorizontalAdvance(TITLE_X_OFFSET)))
-				.append(Component.literal(TITLE_OVERLAY_SHIFT))
+				.append(Component.literal(buildHorizontalAdvance(TITLE_X_OFFSET)).withStyle(style -> style.withColor(0xFFFFFF).withItalic(false)))
+				.append(Component.literal(TITLE_OVERLAY_SHIFT).withStyle(style -> style.withColor(0xFFFFFF).withItalic(false)))
+				.append(Component.literal(buildHorizontalAdvance(TITLE_X_CORRECTION)).withStyle(style -> style.withColor(0xFFFFFF).withItalic(false)))
 				.append(glyph)
-				.append(Component.literal(TITLE_OVERLAY_RESET));
+				.append(Component.literal(buildHorizontalAdvance(-TITLE_X_CORRECTION)).withStyle(style -> style.withColor(0xFFFFFF).withItalic(false)))
+				.append(Component.literal(TITLE_OVERLAY_RESET).withStyle(style -> style.withColor(0xFFFFFF).withItalic(false)));
 	}
 
 	private static void clearAimWarning(ServerPlayer player, AimWarningState state) {
@@ -570,6 +585,7 @@ public final class PuroSanStockSystem {
 	private static void cleanupPlayer(ServerPlayer player) {
 		if (player != null) {
 			clearPlayerState(player);
+			TRAIL_POINTS.removeIf(point -> point.ownerId.equals(player.getUUID()));
 		}
 	}
 
@@ -627,41 +643,25 @@ public final class PuroSanStockSystem {
 		if (pixels == 0) {
 			return "";
 		}
+
 		int remaining = pixels;
 		StringBuilder result = new StringBuilder();
 		int[] values = remaining > 0
 				? new int[]{64, 32, 16, 8, 4, 2, 1}
 				: new int[]{-64, -32, -16, -8, -4, -2, -1};
-		for (int value : values) {
-			while ((remaining > 0 && value > 0 && remaining >= value)
-					|| (remaining < 0 && value < 0 && remaining <= value)) {
-				result.appendCodePoint(horizontalAdvanceCodePoint(value));
-				remaining -= value;
+		String[] glyphs = remaining > 0
+				? new String[]{"\ue94d", "\ue94c", "\ue94b", "\ue94a", "\ue949", "\ue948", "\ue947"}
+				: new String[]{"\ue940", "\ue941", "\ue942", "\ue943", "\ue944", "\ue945", "\ue946"};
+
+		for (int index = 0; index < values.length; index++) {
+			int step = values[index];
+			while ((remaining > 0 && remaining >= step) || (remaining < 0 && remaining <= step)) {
+				result.append(glyphs[index]);
+				remaining -= step;
 			}
 		}
 		return result.toString();
 	}
-
-	private static int horizontalAdvanceCodePoint(int advance) {
-		return switch (advance) {
-			case -64 -> 0xE900;
-			case -32 -> 0xE901;
-			case -16 -> 0xE902;
-			case -8 -> 0xE905;
-			case -4 -> 0xE906;
-			case -2 -> 0xE907;
-			case -1 -> 0xE908;
-			case 1 -> 0xE909;
-			case 2 -> 0xE90A;
-			case 4 -> 0xE90B;
-			case 8 -> 0xE90C;
-			case 16 -> 0xE90D;
-			case 32 -> 0xE90E;
-			case 64 -> 0xE90F;
-			default -> throw new IllegalArgumentException("Unsupported advance: " + advance);
-		};
-	}
-
 	private record TrailPoint(UUID ownerId, net.minecraft.resources.ResourceKey<net.minecraft.world.level.Level> dimension, Vec3 position, long endTick, double damage) {
 	}
 

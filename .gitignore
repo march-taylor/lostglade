@@ -57,3 +57,4 @@
 *.iml
 .DS_Store
 /.codex
+/server-secrets/*.properties

@@ -4,6 +4,7 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
 import com.lostglade.Lg2;
+import com.lostglade.mixin.LivingEntityTrackedDataAccessor;
 import com.lostglade.config.RaceConfig.PlayerRaceConfig;
 import com.lostglade.config.RaceConfig.RaceAbilityConfig;
 import com.lostglade.config.RaceConfig.RaceAbilitySlot;
@@ -30,10 +31,16 @@ import net.minecraft.ChatFormatting;
 import net.minecraft.core.Holder;
 import net.minecraft.core.particles.DustParticleOptions;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.FontDescription;
 import net.minecraft.network.chat.MutableComponent;
+import net.minecraft.network.syncher.EntityDataAccessor;
+import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.network.protocol.game.ClientboundEntityPositionSyncPacket;
+import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
+import net.minecraft.network.protocol.game.ClientboundSetEquipmentPacket;
+import net.minecraft.network.protocol.game.ClientboundContainerSetSlotPacket;
 import net.minecraft.network.protocol.game.ClientboundSoundPacket;
 import net.minecraft.network.protocol.game.ClientboundSetSubtitleTextPacket;
 import net.minecraft.network.protocol.game.ClientboundSetTitleTextPacket;
@@ -47,10 +54,20 @@ import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.Interaction;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.ai.attributes.AttributeInstance;
+import net.minecraft.world.entity.ai.attributes.AttributeModifier;
+import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.projectile.ProjectileUtil;
 import net.minecraft.world.entity.projectile.arrow.Arrow;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.ItemUseAnimation;
+import net.minecraft.world.item.component.Consumable;
+import net.minecraft.world.item.component.TooltipDisplay;
+import net.minecraft.world.inventory.AbstractContainerMenu;
+import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.phys.AABB;
@@ -89,10 +106,10 @@ public final class CopperManRepulsorSystem {
 	private static final int DEFAULT_MAX_CHARGES = 25;
 	private static final int DEFAULT_COPPER_INGOT_RESTORE = 5;
 	private static final double DEFAULT_NATURAL_LIGHTNING_RESTORE_CHANCE = 0.10D;
+	private static final double DEFAULT_ARMOR_IGNORE_FRACTION = 0.50D;
 	private static final int DEFAULT_NATURAL_LIGHTNING_RESTORE = 10;
 	private static final long AUTO_SHOT_INTERVAL_TICKS = 2L;
 	private static final long SINGLE_SHOT_INTERVAL_TICKS = 40L;
-	private static final long AUTO_INPUT_GRACE_TICKS = 4L;
 	private static final long HUD_UPDATE_INTERVAL_TICKS = 5L;
 	private static final long NATURAL_LIGHTNING_RECHARGE_DEDUP_TICKS = 200L;
 	private static final double AIR_TRIGGER_RAY_RANGE = 4.5D;
@@ -104,12 +121,23 @@ public final class CopperManRepulsorSystem {
 	private static final float AUTO_DAMAGE = 1.0F;
 	private static final float SINGLE_DAMAGE = 4.0F;
 	private static final int LASER_PARTICLE_COLOR = 0xFF2A2A;
+	private static final Identifier REPULSOR_ARMOR_PENETRATION_MODIFIER_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "repulsor_armor_penetration");
 	private static final float LASER_PARTICLE_SCALE = 0.75F;
 	private static final Identifier REPULSOR_SHOOT_SOUND_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "repulsor_shoot");
+	private static final Identifier REPULSOR_SHOOT_INVISIBLE_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "gui/button/invisible");
 	private static final Holder<SoundEvent> REPULSOR_SHOOT_SOUND = Holder.direct(SoundEvent.createVariableRangeEvent(REPULSOR_SHOOT_SOUND_ID));
 	private static final float REPULSOR_SHOOT_SOUND_VOLUME = 0.85F;
 	private static final float REPULSOR_SHOOT_SOUND_PITCH = 1.0F;
 	private static final float REPULSOR_SHOOT_FALLBACK_PITCH = 1.45F;
+private static final byte USING_ITEM_FLAG_MASK = 0x01;
+private static final byte USING_OFFHAND_FLAG_MASK = 0x02;
+private static final long REPULSOR_SINGLE_SHOOT_ANIMATION_TICKS = 8L;
+private static final Consumable REPULSOR_SHOOT_USE_ANIMATION = Consumable.builder()
+			.consumeSeconds(3600.0F)
+			.animation(ItemUseAnimation.TOOT_HORN)
+			.sound(BuiltInRegistries.SOUND_EVENT.wrapAsHolder(SoundEvents.EMPTY))
+			.hasConsumeParticles(false)
+			.build();
 	private static final int REPULSOR_MODE_PREFIX_COLOR = 0xC97B3B;
 	private static final String REPULSOR_SHIFT_GLYPH = "\uef80";
 	private static final String REPULSOR_SLOT_TO_AMMO_SHIFT_GLYPH = "\uef81";
@@ -139,6 +167,7 @@ public final class CopperManRepulsorSystem {
 	private static final Map<UUID, RepulsorState> STATES = new ConcurrentHashMap<>();
 	private static final Map<UUID, RepulsorMode> SAVED_MODES = new ConcurrentHashMap<>();
 	private static final Map<UUID, Long> NEXT_MODE_SWITCH_TICKS = new ConcurrentHashMap<>();
+private static final Map<UUID, Long> ACTIVE_SHOOT_ANIMATIONS = new ConcurrentHashMap<>();
 	private static final Map<String, Long> PROCESSED_NATURAL_LIGHTNING_HITS = new ConcurrentHashMap<>();
 
 	private CopperManRepulsorSystem() {
@@ -170,6 +199,7 @@ public final class CopperManRepulsorSystem {
 				clearHud(handler.player, state, true);
 				state.lastAutomaticInputTick = Long.MIN_VALUE;
 				state.lastSingleInputTick = Long.MIN_VALUE;
+				state.useHeld = false;
 				state.hudDirty = true;
 			}
 		});
@@ -179,6 +209,7 @@ public final class CopperManRepulsorSystem {
 			STATES.clear();
 			SAVED_MODES.clear();
 			NEXT_MODE_SWITCH_TICKS.clear();
+			ACTIVE_SHOOT_ANIMATIONS.clear();
 			PROCESSED_NATURAL_LIGHTNING_HITS.clear();
 		});
 	}
@@ -241,6 +272,8 @@ public final class CopperManRepulsorSystem {
 
 		if (state.mode == RepulsorMode.AUTOMATIC) {
 			state.lastAutomaticInputTick = nowTick;
+			state.useHeld = true;
+			startShootAnimation(player, nowTick);
 			if (nowTick >= state.nextShotTick) {
 				tryFire(player, state, nowTick);
 			}
@@ -249,7 +282,9 @@ public final class CopperManRepulsorSystem {
 
 		if (state.lastSingleInputTick != nowTick) {
 			state.lastSingleInputTick = nowTick;
-			tryFire(player, state, nowTick);
+			if (tryFire(player, state, nowTick)) {
+				startShootAnimation(player, nowTick);
+			}
 		}
 		return true;
 	}
@@ -313,6 +348,8 @@ public final class CopperManRepulsorSystem {
 		state.hudDirty = true;
 		if (state.mode == RepulsorMode.AUTOMATIC) {
 			state.lastAutomaticInputTick = nowTick;
+			state.useHeld = true;
+			startShootAnimation(player, nowTick);
 			if (nowTick >= state.nextShotTick) {
 				tryFire(player, state, nowTick);
 			}
@@ -321,7 +358,9 @@ public final class CopperManRepulsorSystem {
 
 		if (state.lastSingleInputTick != nowTick) {
 			state.lastSingleInputTick = nowTick;
-			tryFire(player, state, nowTick);
+			if (tryFire(player, state, nowTick)) {
+				startShootAnimation(player, nowTick);
+			}
 		}
 	}
 
@@ -389,6 +428,7 @@ public final class CopperManRepulsorSystem {
 	private static void tickServer(MinecraftServer server) {
 		long nowTick = server.overworld().getGameTime();
 		tickModeSwitchCooldowns(server);
+		tickShootAnimations(server, nowTick);
 		if (nowTick % 40L == 0L) {
 			PROCESSED_NATURAL_LIGHTNING_HITS.entrySet().removeIf(entry -> entry.getValue() < nowTick);
 		}
@@ -396,9 +436,9 @@ public final class CopperManRepulsorSystem {
 			RepulsorState state = state(player);
 			syncAirTriggerEntity(player, state);
 			if (state.mode == RepulsorMode.AUTOMATIC
+					&& state.useHeld
 					&& canUseRepulsor(player)
 					&& state.charges > 0
-					&& state.lastAutomaticInputTick + AUTO_INPUT_GRACE_TICKS >= nowTick
 					&& nowTick >= state.nextShotTick) {
 				tryFire(player, state, nowTick);
 			}
@@ -465,6 +505,130 @@ public final class CopperManRepulsorSystem {
 		playShootSound(level, player, start);
 	}
 
+	private static void tickShootAnimations(MinecraftServer server, long nowTick) {
+		if (server == null || ACTIVE_SHOOT_ANIMATIONS.isEmpty()) {
+			return;
+		}
+		for (Map.Entry<UUID, Long> entry : new ArrayList<>(ACTIVE_SHOOT_ANIMATIONS.entrySet())) {
+			UUID playerId = entry.getKey();
+			long endTick = entry.getValue() == null ? Long.MIN_VALUE : entry.getValue();
+			ServerPlayer player = server.getPlayerList().getPlayer(playerId);
+			if (player == null) {
+				ACTIVE_SHOOT_ANIMATIONS.remove(playerId);
+				continue;
+			}
+			RepulsorState state = STATES.get(playerId);
+			if (nowTick >= endTick
+					|| state == null
+					|| !state.useHeld
+					|| state.charges <= 0
+					|| !canDisplayShootAnimationCarrier(player)) {
+				if (state != null) {
+					state.useHeld = false;
+				}
+				sendShootAnimationVisual(player, false);
+				ACTIVE_SHOOT_ANIMATIONS.remove(playerId, endTick);
+			}
+		}
+	}
+
+	private static void startShootAnimation(ServerPlayer player, long nowTick) {
+		if (!canDisplayShootAnimationCarrier(player)) {
+			return;
+		}
+		RepulsorState state = state(player);
+		state.useHeld = true;
+		long endTick = state.mode == RepulsorMode.AUTOMATIC
+				? Long.MAX_VALUE
+				: nowTick + REPULSOR_SINGLE_SHOOT_ANIMATION_TICKS;
+		if (ACTIVE_SHOOT_ANIMATIONS.put(player.getUUID(), endTick) == null) {
+			sendShootAnimationVisual(player, true);
+		}
+	}
+
+	private static boolean canDisplayShootAnimationCarrier(ServerPlayer player) {
+		return canUseRepulsor(player)
+				&& player.getInventory().getSelectedSlot() == 0
+				&& player.getMainHandItem().isEmpty()
+				&& player.containerMenu == player.inventoryMenu;
+	}
+
+	public static void handleReleaseUsePacket(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		RepulsorState state = STATES.get(player.getUUID());
+		if (state != null) {
+			state.useHeld = false;
+		}
+		if (ACTIVE_SHOOT_ANIMATIONS.remove(player.getUUID()) != null) {
+			sendShootAnimationVisual(player, false);
+		}
+	}
+
+	private static void sendShootAnimationVisual(ServerPlayer player, boolean active) {
+		if (player == null) {
+			return;
+		}
+		ItemStack visualStack = active ? buildRepulsorShootAnimationStack(player) : player.getMainHandItem().copy();
+		ClientboundSetEquipmentPacket equipmentPacket = new ClientboundSetEquipmentPacket(
+				player.getId(),
+				List.of(com.mojang.datafixers.util.Pair.of(EquipmentSlot.MAINHAND, visualStack))
+		);
+		EntityDataAccessor<Byte> accessor = LivingEntityTrackedDataAccessor.lg2$getDataLivingEntityFlags();
+		byte flags = player.getEntityData().get(accessor);
+		byte updatedFlags = active
+				? (byte) ((flags | USING_ITEM_FLAG_MASK) & ~USING_OFFHAND_FLAG_MASK)
+				: (byte) (flags & ~USING_ITEM_FLAG_MASK & ~USING_OFFHAND_FLAG_MASK);
+		ClientboundSetEntityDataPacket flagsPacket = new ClientboundSetEntityDataPacket(
+				player.getId(),
+				List.of(SynchedEntityData.DataValue.create(accessor, updatedFlags))
+		);
+		if (!(player.level() instanceof ServerLevel level)) {
+			return;
+		}
+		for (ServerPlayer viewer : level.players()) {
+			viewer.connection.send(equipmentPacket);
+			viewer.connection.send(flagsPacket);
+		}
+		if (!active) {
+			sendActualRepulsorSlot(player);
+		}
+	}
+
+	private static ItemStack buildRepulsorShootAnimationStack(ServerPlayer player) {
+		ItemStack carrier = new ItemStack(Items.PAPER);
+		carrier.set(DataComponents.ITEM_MODEL, REPULSOR_SHOOT_INVISIBLE_MODEL_ID);
+		carrier.set(DataComponents.CUSTOM_NAME, Component.literal(" "));
+		carrier.set(DataComponents.CONSUMABLE, REPULSOR_SHOOT_USE_ANIMATION);
+		carrier.set(DataComponents.TOOLTIP_DISPLAY, new TooltipDisplay(true, new java.util.LinkedHashSet<>()));
+		return carrier;
+	}
+
+	private static void sendActualRepulsorSlot(ServerPlayer player) {
+		if (player == null) {
+			return;
+		}
+		AbstractContainerMenu menu = player.inventoryMenu;
+		int menuSlot = -1;
+		for (int index = 0; index < menu.slots.size(); index++) {
+			Slot slot = menu.getSlot(index);
+			if (slot.container == player.getInventory() && slot.getContainerSlot() == 0) {
+				menuSlot = index;
+				break;
+			}
+		}
+		if (menuSlot < 0) {
+			return;
+		}
+		player.connection.send(new ClientboundContainerSetSlotPacket(
+				menu.containerId,
+				menu.incrementStateId(),
+				menuSlot,
+				player.getInventory().getItem(0).copy()
+		));
+	}
+
 	private static void playShootSound(ServerLevel level, ServerPlayer shooter, Vec3 origin) {
 		if (level == null || shooter == null || origin == null) {
 			return;
@@ -511,8 +675,29 @@ public final class CopperManRepulsorSystem {
 	private static void damageEntity(ServerLevel level, ServerPlayer player, Entity entity, float damage) {
 		Arrow arrow = new Arrow(level, player, new ItemStack(Items.ARROW), new ItemStack(Items.BOW));
 		arrow.setPos(player.getEyePosition());
-		entity.hurtServer(level, level.damageSources().arrow(arrow, player), damage);
-		arrow.discard();
+		Vec3 previousDelta = entity.getDeltaMovement();
+		boolean previousHurtMarked = entity.hurtMarked;
+		AttributeInstance armor = entity instanceof LivingEntity living ? living.getAttribute(Attributes.ARMOR) : null;
+		try {
+			if (armor != null) {
+				armor.removeModifier(REPULSOR_ARMOR_PENETRATION_MODIFIER_ID);
+				armor.addTransientModifier(new AttributeModifier(
+						REPULSOR_ARMOR_PENETRATION_MODIFIER_ID,
+						-getArmorIgnoreFraction(player),
+						AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL
+				));
+			}
+			entity.invulnerableTime = 0;
+			entity.hurtServer(level, level.damageSources().arrow(arrow, player), damage);
+		} finally {
+			if (armor != null) {
+				armor.removeModifier(REPULSOR_ARMOR_PENETRATION_MODIFIER_ID);
+			}
+			entity.invulnerableTime = 0;
+			entity.setDeltaMovement(previousDelta);
+			entity.hurtMarked = previousHurtMarked;
+			arrow.discard();
+		}
 	}
 
 	private static void spawnLaserParticles(ServerLevel level, Vec3 start, Vec3 end) {
@@ -615,6 +800,10 @@ public final class CopperManRepulsorSystem {
 		state.nextShotTick = 0L;
 		state.lastAutomaticInputTick = Long.MIN_VALUE;
 		state.lastSingleInputTick = Long.MIN_VALUE;
+		state.useHeld = false;
+		if (ACTIVE_SHOOT_ANIMATIONS.remove(player.getUUID()) != null) {
+			sendShootAnimationVisual(player, false);
+		}
 		state.hudDirty = true;
 	}
 
@@ -818,6 +1007,14 @@ public final class CopperManRepulsorSystem {
 		return DEFAULT_NATURAL_LIGHTNING_RESTORE_CHANCE;
 	}
 
+	private static double getArmorIgnoreFraction(ServerPlayer player) {
+		RaceAbilityConfig ability = ServerRaceSystem.getAbility(player, RaceAbilitySlot.ATTACK).orElse(null);
+		if (ability != null && ability.repulsorArmorIgnoreFraction > 0.0D) {
+			return Math.clamp(ability.repulsorArmorIgnoreFraction, 0.0D, 1.0D);
+		}
+		return DEFAULT_ARMOR_IGNORE_FRACTION;
+	}
+
 	private static int getNaturalLightningChargeRestore(ServerPlayer player) {
 		RaceAbilityConfig ability = ServerRaceSystem.getAbility(player, RaceAbilitySlot.ATTACK).orElse(null);
 		return ability != null && ability.repulsorNaturalLightningChargeRestore > 0
@@ -905,6 +1102,7 @@ public final class CopperManRepulsorSystem {
 		private boolean hudVisible = false;
 		private String lastHudText = "";
 		private boolean lastHudPack = false;
+		private boolean useHeld = false;
 		private Interaction airTriggerEntity;
 	}
 }

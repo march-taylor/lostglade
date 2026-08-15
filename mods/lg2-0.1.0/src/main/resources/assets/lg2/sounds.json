@@ -478,4 +478,14 @@
                                                       }
                                                   ]
                                    }
-}
+,
+    "ancient_ukr_smoke_spread": {
+        "sounds": [
+            {
+                "name": "lg2:ancient_ukr_smoke_spread",
+                "stream": false,
+                "preload": true,
+                "attenuation_distance": 32
+            }
+        ]
+    }}

@@ -124,6 +124,7 @@
         "repulsorMaxCharges": 35,
         "repulsorCopperIngotChargeRestore": 5,
         "repulsorNaturalLightningChargeChance": 0.1,
+        "repulsorArmorIgnoreFraction": 0.25,
         "repulsorNaturalLightningChargeRestore": 10
       },
       "defense": {
@@ -484,7 +485,7 @@
         "enabled": true,
         "abilityId": "little_dictator_defense",
         "name": "Роскомнадзор",
-        "description": "",
+        "description": "Создаёт вокруг врагов эффект «плохого интернета» — лаги, откаты и полная блокировка. Можно настроить белый список.",
         "priceBitcoins": 600,
         "cooldownSeconds": 900.0,
         "littleDictatorDefenseRadiusBlocks": 32.0,
@@ -496,7 +497,7 @@
         "enabled": true,
         "abilityId": "little_dictator_unique",
         "name": "Культ личности",
-        "description": "",
+        "description": "Диктатор вырастает, получает суперзащиту, но не может двигаться. Все вокруг смотрят в пол и получают урон. Диктатор высасывает опыт и сытость.",
         "priceBitcoins": 1000,
         "cooldownSeconds": 900.0,
         "littleDictatorUniqueRadiusBlocks": 96.0,
@@ -511,7 +512,7 @@
         "enabled": true,
         "abilityId": "little_dictator_shnyaga",
         "name": "Указы",
-        "description": "",
+        "description": "При убийстве игрока в инвентарь падает случайный указ. Активируй его — получи санкции для врага, налоги с жертвы или пропаганду для себя.",
         "priceBitcoins": 1500,
         "littleDictatorDecreeSanctionsDurationSeconds": 3600.0,
         "littleDictatorDecreeSanctionsDropChance": 0.75,
@@ -537,7 +538,7 @@
         "enabled": true,
         "abilityId": "kilka_attack",
         "name": "Радиационный выборс",
-        "description": "",
+        "description": "Зарядка 5 секунд — потом ядерный взрыв вокруг себя. Всех отбрасывает, врагам отключает способности на 2.5 минуты. Если ударили во время зарядки — сброс без КД.",
         "priceBitcoins": 300,
         "cooldownSeconds": 900.0,
         "kilkaAttackChargeSeconds": 5.0,
@@ -554,7 +555,7 @@
         "enabled": true,
         "abilityId": "kilka_defense",
         "name": "Водный шар",
-        "description": "",
+        "description": "Создаёт водяную сферу вокруг себя на 25 секунд. Снаряды тонут, падение не страшно, урон извне не проходит. Враги могут атаковать только изнутри.",
         "priceBitcoins": 600,
         "cooldownSeconds": 600.0,
         "kilkaDefenseRadiusBlocks": 3.0,
@@ -564,7 +565,7 @@
         "enabled": true,
         "abilityId": "kilka_unique",
         "name": "Истинный облик",
-        "description": "",
+        "description": "Превращение в лосося: быстрее плывёшь, мобы не трогают, ник не видно.",
         "priceBitcoins": 1000,
         "cooldownSeconds": 5.0,
         "kilkaSalmonSprintSwimMultiplier": 2.0
@@ -573,7 +574,7 @@
         "enabled": true,
         "abilityId": "kilka_shnyaga",
         "name": "Зона 51",
-        "description": "",
+        "description": "Ставь до 5 маяков в воде. Внутри их территории получаешь баффы: силу, скорость, спешку и регенерацию.",
         "priceBitcoins": 1500,
         "kilkaSeaBeaconLinkRangeBlocks": 100.0,
         "kilkaSeaBorderVisibilityBlocks": 1.8
@@ -589,8 +590,8 @@
       "enabled": true,
       "id": "puro_san",
       "displayName": "Пуро-Сан",
-      "ownerNickname": "Rajas_YT",
-      "description": "",
+      "ownerNickname": "",
+      "description": "Прыжок назад с взрывной волной — наносит урон, оглушает и отбрасывает врагов.",
       "attack": {
         "enabled": true,
         "abilityId": "puro_san_attack",
@@ -607,7 +608,7 @@
         "enabled": true,
         "abilityId": "puro_san_defense",
         "name": "Прыжок в небо",
-        "description": "",
+        "description": "Резко взлетает на 10 блоков вверх. При приземлении не получает урона от падения.",
         "priceBitcoins": 600,
         "cooldownSeconds": 60.0,
         "puroSanDefenseJumpBlocks": 10.0
@@ -616,7 +617,7 @@
         "enabled": true,
         "abilityId": "puro_san_unique",
         "name": "Рывок",
-        "description": "",
+        "description": "Мгновенный рывок вперёд на 3 блока. КД 10 секунд.",
         "priceBitcoins": 1000,
         "cooldownSeconds": 30.0,
         "puroSanUniqueDashBlocks": 3.0
@@ -625,7 +626,7 @@
         "enabled": true,
         "abilityId": "puro_san_shnyaga",
         "name": "Разгон",
-        "description": "",
+        "description": "Если бежать 5 секунд без урона и атак — входишь в Разгон: +20% скорости, щит, прыжки от стен и неуязвимость к падениям. Заканчивается, если остановился или получил урон.",
         "priceBitcoins": 1500,
         "cooldownSeconds": 300.0,
         "puroSanShnyagaChargeSeconds": 5.0,
@@ -644,6 +645,63 @@
         "puroSanStockMeleeDamagePenaltyRatio": 0.25,
         "puroSanStockMeleeVulnerabilityRatio": 0.25,
         "puroSanStockMaxHealthHearts": 8.0
+      }
+    },
+    {
+      "enabled": true,
+      "id": "ancient_ukr",
+      "displayName": "Древний укр",
+      "ownerNickname": "Rajas_YT",
+      "description": "",
+      "attack": {
+        "enabled": true,
+        "abilityId": "ancient_ukr_attack",
+        "name": "Вертолётик",
+        "description": "",
+        "priceBitcoins": 300,
+        "cooldownSeconds": 900.0,
+        "ancientUkrAttackSwordCount": 8,
+        "ancientUkrAttackDurationSeconds": 20.0
+      },
+      "defense": {
+        "enabled": true,
+        "abilityId": "ancient_ukr_defense",
+        "name": "Ухилянт",
+        "description": "",
+        "priceBitcoins": 600,
+        "cooldownSeconds": 600.0,
+        "ancientUkrDefenseSmokeRadius": 7.0,
+        "ancientUkrDefenseSmokeDurationSeconds": 8.0
+      },
+      "uniqueAbility": {
+        "enabled": true,
+        "abilityId": "ancient_ukr_unique",
+        "name": "Чуйка на ленд-лиз",
+        "description": "",
+        "priceBitcoins": 1000,
+        "cooldownSeconds": 900.0,
+        "ancientUkrUniqueHighlightSeconds": 30.0
+      },
+      "shnyaga": {
+        "enabled": true,
+        "abilityId": "ancient_ukr_shnyaga",
+        "name": "Проклятый кредит",
+        "description": "",
+        "priceBitcoins": 1500,
+        "ancientUkrShnyagaMaxDistanceBlocks": 48.0,
+        "ancientUkrCreditMaxActive": 3,
+        "ancientUkrCreditMaxPrincipalBitcoins": 1000,
+        "ancientUkrCreditMinHourlyPercent": 5.0,
+        "ancientUkrCreditMaxHourlyPercent": 10.0,
+        "ancientUkrCreditMaxDebtMultiplier": 3.0
+      },
+      "stock": {
+        "enabled": true,
+        "abilityId": "ancient_ukr_stock",
+        "name": "Сток",
+        "description": "",
+        "ancientUkrStockPorkHungerMultiplier": 0.5,
+        "ancientUkrStockPorkPoisonSeconds": 10.0
       }
     }
   ]
