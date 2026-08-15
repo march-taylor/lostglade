@@ -19,6 +19,7 @@ import net.minecraft.client.particle.ParticleEngine;
 import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.client.renderer.RenderBuffers;
 import net.minecraft.client.renderer.SubmitNodeStorage;
+import net.minecraft.client.renderer.chunk.SectionRenderDispatcher;
 import net.minecraft.client.renderer.CloudRenderer;
 import net.minecraft.client.renderer.feature.FeatureRenderDispatcher;
 import net.minecraft.client.renderer.state.LevelRenderState;
@@ -29,12 +30,14 @@ import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
 import net.minecraft.network.protocol.game.ClientboundForgetLevelChunkPacket;
 import net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket;
+import net.minecraft.network.protocol.game.ClientboundRemoveEntitiesPacket;
 import net.minecraft.network.protocol.game.ClientboundSetChunkCacheCenterPacket;
 import net.minecraft.network.protocol.game.ClientboundSetChunkCacheRadiusPacket;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.packs.resources.ResourceManager;
 import net.minecraft.util.profiling.InactiveProfiler;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.Difficulty;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
@@ -88,6 +91,10 @@ public final class RendererBotShadowWorldManager {
 				(payload, context) -> context.client().execute(() -> applyForgetChunk(context.client(), payload))
 		);
 		ClientPlayNetworking.registerGlobalReceiver(
+				RendererBotPayloads.RendererBotShadowContentReadyS2CPayload.TYPE,
+				(payload, context) -> context.client().execute(() -> applyContentReady(payload))
+		);
+		ClientPlayNetworking.registerGlobalReceiver(
 				RendererBotPayloads.RendererBotShadowEntityPacketsS2CPayload.TYPE,
 				(payload, context) -> context.client().execute(() -> applyEntityPackets(context.client(), payload))
 		);
@@ -134,9 +141,101 @@ public final class RendererBotShadowWorldManager {
 					session.featureRenderDispatcher(),
 					session.particleEngine(),
 					session.appliedViewDistance(),
-					session.contentRevision()
+					session.contentRevision(),
+					session.isContentReady(),
+					session.currentContentRendered()
 			);
 		}
+	}
+
+	/**
+	 * Returns the renderer's own completion signal for a shadow-world camera.
+	 * A frame is safe to publish only after vanilla has built and uploaded every
+	 * visible section, and no new chunk packet has changed the shadow level
+	 * between consecutive checks.
+	 */
+	public static RenderReadiness inspectRenderReadiness(UUID sessionId) {
+		ShadowRenderSession session = resolveRenderSession(sessionId);
+		if (session == null || session.levelRenderer() == null) {
+			return RenderReadiness.unavailable();
+		}
+		try {
+			LevelRenderer levelRenderer = session.levelRenderer();
+			SectionRenderDispatcher dispatcher = levelRenderer.getSectionRenderDispatcher();
+			if (dispatcher == null) {
+				return RenderReadiness.unavailable();
+			}
+			boolean contentReady = session.contentReady();
+			boolean currentContentRendered = session.currentContentRendered();
+			boolean allSectionsRendered = levelRenderer.hasRenderedAllSections();
+			int compileQueueSize = dispatcher.getCompileQueueSize();
+			int uploadQueueSize = dispatcher.getToUpload();
+			int visibleSections = levelRenderer.countRenderedSections();
+			return new RenderReadiness(
+					contentReady && currentContentRendered && allSectionsRendered && compileQueueSize == 0 && uploadQueueSize == 0,
+					session.contentRevision(),
+					visibleSections,
+					contentReady,
+					currentContentRendered,
+					allSectionsRendered,
+					compileQueueSize,
+					uploadQueueSize
+			);
+		} catch (Throwable ignored) {
+			return RenderReadiness.unavailable();
+		}
+	}
+
+	/** Marks a completed off-screen render for the current shadow-world data. */
+	public static void markFrameRendered(UUID sessionId) {
+		if (sessionId == null) {
+			return;
+		}
+		synchronized (LOCK) {
+			ShadowLevelSession session = SHADOW_SESSIONS.get(sessionId);
+			if (session != null) {
+				session.markCurrentContentRendered();
+			}
+		}
+	}
+
+	/**
+	 * Removes an entity that occupies a first-person static camera from this
+	 * shadow world. The normal client hides its own camera entity automatically,
+	 * but a frozen photo uses a separate marker as its camera entity.
+	 */
+	public static void hideEntityFromSession(UUID sessionId, UUID entityUuid) {
+		if (sessionId == null || entityUuid == null) {
+			return;
+		}
+		Minecraft client = Minecraft.getInstance();
+		ClientPacketListener connection = client.getConnection();
+		if (connection == null) {
+			return;
+		}
+		ShadowLevelSession session;
+		synchronized (LOCK) {
+			session = SHADOW_SESSIONS.get(sessionId);
+		}
+		if (session == null || session.level() == null) {
+			return;
+		}
+		Entity entity = session.level().getPlayerByUUID(entityUuid);
+		if (entity == null) {
+			for (Entity candidate : session.level().entitiesForRendering()) {
+				if (entityUuid.equals(candidate.getUUID())) {
+					entity = candidate;
+					break;
+				}
+			}
+		}
+		if (entity == null) {
+			return;
+		}
+		int entityId = entity.getId();
+		runWithShadowSession(connection, session, () ->
+				connection.handleRemoveEntities(new ClientboundRemoveEntitiesPacket(new int[]{entityId}))
+		);
 	}
 
 	public static void updateCameraContext(UUID sessionId, Camera camera) {
@@ -372,6 +471,11 @@ public final class RendererBotShadowWorldManager {
 		if (session == null) {
 			return;
 		}
+		if (session.appliedViewDistance() != payload.viewDistance()
+				|| session.appliedCenterChunkX() != payload.centerChunkX()
+				|| session.appliedCenterChunkZ() != payload.centerChunkZ()) {
+			session.invalidateContentReady();
+		}
 		applyViewState(client.getConnection(), session.level(), payload.viewDistance(), payload.centerChunkX(), payload.centerChunkZ());
 	}
 
@@ -418,6 +522,19 @@ public final class RendererBotShadowWorldManager {
 		});
 		session.forgetChunk(packet.pos());
 		session.markContentChanged();
+	}
+
+	private static void applyContentReady(RendererBotPayloads.RendererBotShadowContentReadyS2CPayload payload) {
+		if (payload == null || payload.sessionId() == null) {
+			return;
+		}
+		ShadowLevelSession session;
+		synchronized (LOCK) {
+			session = SHADOW_SESSIONS.get(payload.sessionId());
+		}
+		if (session != null) {
+			session.markContentReady(payload.revision());
+		}
 	}
 
 	private static void applyEntityPackets(Minecraft client, RendererBotPayloads.RendererBotShadowEntityPacketsS2CPayload payload) {
@@ -525,8 +642,6 @@ public final class RendererBotShadowWorldManager {
 		return new ShadowLevelSession(
 				payload.sessionId(),
 				payload.dimensionId(),
-				payload.dimensionTypeId(),
-				payload.seed(),
 				level,
 				levelRenderer,
 				featureRenderDispatcher,
@@ -725,15 +840,30 @@ public final class RendererBotShadowWorldManager {
 			FeatureRenderDispatcher featureRenderDispatcher,
 			ParticleEngine particleEngine,
 			int viewDistance,
-			long contentRevision
+			long contentRevision,
+			boolean contentReady,
+			boolean currentContentRendered
 	) {
+	}
+
+	public record RenderReadiness(
+			boolean settled,
+			long contentRevision,
+			int visibleSections,
+			boolean contentReady,
+			boolean currentContentRendered,
+			boolean allSectionsRendered,
+			int compileQueueSize,
+			int uploadQueueSize
+	) {
+		private static RenderReadiness unavailable() {
+			return new RenderReadiness(false, -1L, 0, false, false, false, -1, -1);
+		}
 	}
 
 	private static final class ShadowLevelSession {
 		private final UUID sessionId;
 		private final String dimensionId;
-		private final String dimensionTypeId;
-		private final long seed;
 		private final ClientLevel level;
 		private final LevelRenderer levelRenderer;
 		private final FeatureRenderDispatcher featureRenderDispatcher;
@@ -745,12 +875,13 @@ public final class RendererBotShadowWorldManager {
 		private int appliedCenterChunkX = Integer.MIN_VALUE;
 		private int appliedCenterChunkZ = Integer.MIN_VALUE;
 		private long contentRevision;
+		private long renderedContentRevision = Long.MIN_VALUE;
+		private long serverReadyContentRevision = Long.MIN_VALUE;
+		private long serverReadyRevision = Long.MIN_VALUE;
 
 		private ShadowLevelSession(
 				UUID sessionId,
 				String dimensionId,
-				String dimensionTypeId,
-				long seed,
 				ClientLevel level,
 				LevelRenderer levelRenderer,
 				FeatureRenderDispatcher featureRenderDispatcher,
@@ -758,8 +889,6 @@ public final class RendererBotShadowWorldManager {
 		) {
 			this.sessionId = sessionId;
 			this.dimensionId = dimensionId;
-			this.dimensionTypeId = dimensionTypeId;
-			this.seed = seed;
 			this.level = level;
 			this.levelRenderer = levelRenderer;
 			this.featureRenderDispatcher = featureRenderDispatcher;
@@ -772,6 +901,32 @@ public final class RendererBotShadowWorldManager {
 
 		private void markContentChanged() {
 			this.contentRevision++;
+			this.renderedContentRevision = Long.MIN_VALUE;
+			this.invalidateContentReady();
+		}
+
+		private void markCurrentContentRendered() {
+			this.renderedContentRevision = this.contentRevision;
+		}
+
+		private boolean currentContentRendered() {
+			return this.renderedContentRevision == this.contentRevision;
+		}
+
+		private void invalidateContentReady() {
+			this.serverReadyContentRevision = Long.MIN_VALUE;
+		}
+
+		private void markContentReady(long revision) {
+			if (revision < this.serverReadyRevision) {
+				return;
+			}
+			this.serverReadyRevision = revision;
+			this.serverReadyContentRevision = this.contentRevision;
+		}
+
+		private boolean isContentReady() {
+			return this.serverReadyContentRevision == this.contentRevision;
 		}
 
 		/**
@@ -816,19 +971,16 @@ public final class RendererBotShadowWorldManager {
 		}
 
 		private boolean matchesWorld(RendererBotPayloads.RendererBotShadowLevelInitS2CPayload payload) {
-			return payload != null
-					&& Objects.equals(this.dimensionId, payload.dimensionId())
-					&& Objects.equals(this.dimensionTypeId, payload.dimensionTypeId())
-					&& this.seed == payload.seed();
+			// A render-session id is the stable identity of the shadow world. Server
+			// init packets may repeat while the normal client is still joining, and
+			// some dimension metadata can be reconstructed differently on either side.
+			// Replacing a same-dimension session for that metadata would drop all
+			// chunks every second. A real dimension change uses another session id.
+			return payload != null && Objects.equals(this.dimensionId, payload.dimensionId());
 		}
 
 		private String dimensionId() {
 			return this.dimensionId;
-		}
-
-		@SuppressWarnings("unused")
-		private String dimensionTypeId() {
-			return this.dimensionTypeId;
 		}
 
 		private ClientLevel level() {

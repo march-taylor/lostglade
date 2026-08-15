@@ -112,6 +112,7 @@
   "message.lg2.camera.busy": "Камера вже обробляє попередній знімок.",
   "message.lg2.camera.prepare_failed": "Не вдалося підготувати знімок.",
   "message.lg2.camera.no_renderer": "Немає активного renderer-клієнта для знімка.",
+  "message.lg2.camera.captured": "Знімок зроблено.",
   "message.lg2.camera.capture_completed": "Знімок готовий.",
   "message.lg2.camera.queued": "Знімок поставлено в рендер.",
   "message.lg2.camera.queued_more": "Знімок додано до черги рендера.",

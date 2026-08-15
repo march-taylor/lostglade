@@ -15,7 +15,7 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class RendererBotPayloads {
-	public static final int PROTOCOL_VERSION = 19;
+	public static final int PROTOCOL_VERSION = 22;
 	private static final int MAX_CAPTURE_PAYLOAD_BYTES = 1_048_576;
 	private static final int MAX_SHADOW_PAYLOAD_BYTES = 2_097_152;
 	private static final AtomicBoolean REGISTERED = new AtomicBoolean(false);
@@ -34,6 +34,7 @@ public final class RendererBotPayloads {
 		PayloadTypeRegistry.playC2S().registerLarge(RendererBotLiveFrameC2SPayload.TYPE, RendererBotLiveFrameC2SPayload.STREAM_CODEC, MAX_CAPTURE_PAYLOAD_BYTES);
 		PayloadTypeRegistry.playC2S().registerLarge(RendererBotMapTileC2SPayload.TYPE, RendererBotMapTileC2SPayload.STREAM_CODEC, MAX_CAPTURE_PAYLOAD_BYTES);
 		PayloadTypeRegistry.playC2S().registerLarge(RendererBotItemIconC2SPayload.TYPE, RendererBotItemIconC2SPayload.STREAM_CODEC, MAX_CAPTURE_PAYLOAD_BYTES);
+		PayloadTypeRegistry.playC2S().register(RendererBotVideoRecordingStartedC2SPayload.TYPE, RendererBotVideoRecordingStartedC2SPayload.STREAM_CODEC);
 		PayloadTypeRegistry.playC2S().registerLarge(RendererBotVideoRecordingCompleteC2SPayload.TYPE, RendererBotVideoRecordingCompleteC2SPayload.STREAM_CODEC, MAX_CAPTURE_PAYLOAD_BYTES);
 		PayloadTypeRegistry.playC2S().register(RendererBotAudioFrameC2SPayload.TYPE, RendererBotAudioFrameC2SPayload.STREAM_CODEC);
 		PayloadTypeRegistry.playC2S().register(RendererBotCaptureFailureC2SPayload.TYPE, RendererBotCaptureFailureC2SPayload.STREAM_CODEC);
@@ -57,6 +58,7 @@ public final class RendererBotPayloads {
 		PayloadTypeRegistry.playS2C().register(RendererBotShadowLevelDestroyS2CPayload.TYPE, RendererBotShadowLevelDestroyS2CPayload.STREAM_CODEC);
 		PayloadTypeRegistry.playS2C().registerLarge(RendererBotShadowChunkDataS2CPayload.TYPE, RendererBotShadowChunkDataS2CPayload.STREAM_CODEC, MAX_SHADOW_PAYLOAD_BYTES);
 		PayloadTypeRegistry.playS2C().register(RendererBotShadowForgetChunkS2CPayload.TYPE, RendererBotShadowForgetChunkS2CPayload.STREAM_CODEC);
+		PayloadTypeRegistry.playS2C().register(RendererBotShadowContentReadyS2CPayload.TYPE, RendererBotShadowContentReadyS2CPayload.STREAM_CODEC);
 		PayloadTypeRegistry.playS2C().registerLarge(RendererBotShadowEntityPacketsS2CPayload.TYPE, RendererBotShadowEntityPacketsS2CPayload.STREAM_CODEC, MAX_SHADOW_PAYLOAD_BYTES);
 	}
 
@@ -89,6 +91,7 @@ public final class RendererBotPayloads {
 			float expectedYaw,
 			float expectedPitch,
 			UUID followEntityUuid,
+			UUID hiddenEntityUuid,
 			int previewWidth,
 			int previewHeight,
 			int fullWidth,
@@ -110,6 +113,7 @@ public final class RendererBotPayloads {
 					buffer.readFloat(),
 					buffer.readFloat(),
 					buffer.readBoolean() ? buffer.readUUID() : null,
+					buffer.readBoolean() ? buffer.readUUID() : null,
 					buffer.readVarInt(),
 					buffer.readVarInt(),
 					buffer.readVarInt(),
@@ -130,6 +134,10 @@ public final class RendererBotPayloads {
 			buffer.writeBoolean(this.followEntityUuid != null);
 			if (this.followEntityUuid != null) {
 				buffer.writeUUID(this.followEntityUuid);
+			}
+			buffer.writeBoolean(this.hiddenEntityUuid != null);
+			if (this.hiddenEntityUuid != null) {
+				buffer.writeUUID(this.hiddenEntityUuid);
 			}
 			buffer.writeVarInt(this.previewWidth);
 			buffer.writeVarInt(this.previewHeight);
@@ -757,6 +765,26 @@ public final class RendererBotPayloads {
 		}
 	}
 
+	/** Sent only after the renderer client has written the first real video frame. */
+	public record RendererBotVideoRecordingStartedC2SPayload(UUID requestId) implements CustomPacketPayload {
+		public static final Type<RendererBotVideoRecordingStartedC2SPayload> TYPE = new Type<>(id("renderer_bot_video_recording_started"));
+		public static final StreamCodec<FriendlyByteBuf, RendererBotVideoRecordingStartedC2SPayload> STREAM_CODEC =
+				CustomPacketPayload.codec(RendererBotVideoRecordingStartedC2SPayload::write, RendererBotVideoRecordingStartedC2SPayload::new);
+
+		public RendererBotVideoRecordingStartedC2SPayload(FriendlyByteBuf buffer) {
+			this(buffer.readUUID());
+		}
+
+		private void write(FriendlyByteBuf buffer) {
+			buffer.writeUUID(this.requestId);
+		}
+
+		@Override
+		public Type<RendererBotVideoRecordingStartedC2SPayload> type() {
+			return TYPE;
+		}
+	}
+
 	public record RendererBotVideoRecordingCompleteC2SPayload(
 			UUID requestId,
 			long durationMs,
@@ -978,6 +1006,31 @@ public final class RendererBotPayloads {
 
 		@Override
 		public Type<RendererBotShadowChunkDataS2CPayload> type() {
+			return TYPE;
+		}
+	}
+
+	/**
+	 * Sent after every required chunk packet for a camera view has been queued to
+	 * the renderer client. The stream is ordered, so receiving this marker means
+	 * all preceding shadow chunk changes for the revision are already applied.
+	 */
+	public record RendererBotShadowContentReadyS2CPayload(UUID sessionId, long revision) implements CustomPacketPayload {
+		public static final Type<RendererBotShadowContentReadyS2CPayload> TYPE = new Type<>(id("renderer_bot_shadow_content_ready"));
+		public static final StreamCodec<FriendlyByteBuf, RendererBotShadowContentReadyS2CPayload> STREAM_CODEC =
+				CustomPacketPayload.codec(RendererBotShadowContentReadyS2CPayload::write, RendererBotShadowContentReadyS2CPayload::new);
+
+		public RendererBotShadowContentReadyS2CPayload(FriendlyByteBuf buffer) {
+			this(buffer.readUUID(), buffer.readVarLong());
+		}
+
+		private void write(FriendlyByteBuf buffer) {
+			buffer.writeUUID(this.sessionId);
+			buffer.writeVarLong(this.revision);
+		}
+
+		@Override
+		public Type<RendererBotShadowContentReadyS2CPayload> type() {
 			return TYPE;
 		}
 	}

@@ -122,8 +122,31 @@ public final class CameraVideoRecordingSystem {
 				server.execute(() -> finishRecording(server, state, result, throwable));
 			}
 		});
-		Lg2Messages.actionBar(player, "message.lg2.camera.video.started");
+		// The renderer still has to warm its shadow world. The definitive "started"
+		// feedback is sent only after the first real frame reaches the encoder.
+		Lg2Messages.actionBar(player, "message.lg2.camera.video.starting");
 		return true;
+	}
+
+	/**
+	 * Renderer-bot confirmation that an actual video frame has been captured and
+	 * written. This is deliberately separate from creating the recording request.
+	 */
+	public static void notifyRecordingStarted(MinecraftServer server, UUID requestId) {
+		if (server == null || requestId == null) {
+			return;
+		}
+		for (ActiveRecording recording : RECORDINGS_BY_PLAYER.values()) {
+			if (recording == null || !requestId.equals(recording.requestId()) || !recording.markStartedFeedbackSent()) {
+				continue;
+			}
+			ServerPlayer player = server.getPlayerList().getPlayer(recording.playerId());
+			if (player != null) {
+				Lg2Messages.actionBar(player, "message.lg2.camera.video.started");
+				CameraCaptureSystem.notifyShutterCaptured(player);
+			}
+			return;
+		}
 	}
 
 	public static void stopForDroneControl(ServerPlayer player) {
@@ -383,6 +406,7 @@ public final class CameraVideoRecordingSystem {
 		private final long startedAtMs;
 		private final HandCameraAudioTrack audioTrack;
 		private volatile boolean stopRequested;
+		private boolean startedFeedbackSent;
 
 		private ActiveRecording(
 				UUID playerId,
@@ -407,6 +431,7 @@ public final class CameraVideoRecordingSystem {
 			this.startedAtMs = startedAtMs;
 			this.audioTrack = audioTrack;
 			this.stopRequested = false;
+			this.startedFeedbackSent = false;
 		}
 
 		private UUID playerId() {
@@ -451,6 +476,14 @@ public final class CameraVideoRecordingSystem {
 
 		private void markStopRequested() {
 			this.stopRequested = true;
+		}
+
+		private synchronized boolean markStartedFeedbackSent() {
+			if (this.startedFeedbackSent) {
+				return false;
+			}
+			this.startedFeedbackSent = true;
+			return true;
 		}
 
 		private Path finishAudioCapture() throws IOException {

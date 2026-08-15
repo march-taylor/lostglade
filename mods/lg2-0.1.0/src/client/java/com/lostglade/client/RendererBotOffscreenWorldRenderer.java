@@ -48,7 +48,6 @@ import java.util.function.Consumer;
 public final class RendererBotOffscreenWorldRenderer {
 	private static final Object LOCK = new Object();
 	private static final double STATIC_CAMERA_EYE_HEIGHT = 1.62D;
-	private static final int MIN_READY_CHUNK_RADIUS = 2;
 	private static final double TOP_DOWN_CAMERA_HEADROOM_BLOCKS = 16.0D;
 	private static final long MAP_RENDER_GAME_TIME = 0L;
 	private static final Map<UUID, OffscreenSessionState> SESSION_STATES = new HashMap<>();
@@ -182,7 +181,7 @@ public final class RendererBotOffscreenWorldRenderer {
 			TextureTarget renderTarget = ensureRenderTarget(sessionState, request.renderWidth(), request.renderHeight());
 			Entity followTarget = resolveFollowTarget(renderLevel, request.followEntityUuid());
 			CameraState cameraState = resolveCameraState(client, renderLevel, request, sessionState, followTarget);
-			if (cameraState == null || !isWorldReady(renderLevel, cameraState, request)) {
+			if (cameraState == null || !isWorldReady(renderLevel, cameraState)) {
 				sessionState.renderInProgress = false;
 				return false;
 			}
@@ -196,7 +195,6 @@ public final class RendererBotOffscreenWorldRenderer {
 			Entity previousCameraEntity = client.getCameraEntity();
 			Camera previousMainCamera = client.gameRenderer.getMainCamera();
 			boolean previousSmartCull = client.smartCull;
-			boolean screenshotQueued = false;
 
 			try {
 				offscreenRenderActive = true;
@@ -226,8 +224,8 @@ public final class RendererBotOffscreenWorldRenderer {
 						cameraState,
 						renderTarget
 				);
+				RendererBotShadowWorldManager.markFrameRendered(request.sessionId());
 				renderTargetConsumer.accept(renderTarget);
-				screenshotQueued = true;
 				return true;
 			} catch (Throwable throwable) {
 				Lg2.LOGGER.warn("Renderer bot offscreen render failed for {}", request, throwable);
@@ -450,23 +448,23 @@ public final class RendererBotOffscreenWorldRenderer {
 		state.staticAnchor = null;
 	}
 
-	private static boolean isWorldReady(ClientLevel renderLevel, CameraState cameraState, RenderRequest request) {
+	/**
+	 * This is deliberately only a start gate, not a completeness test.  A static
+	 * camera receives a directional set of chunks, while its visible-section
+	 * renderer is the authority on when that set has finished compiling.  Waiting
+	 * here for a square around the camera can therefore ask for chunks that were
+	 * intentionally not sent (behind or far beside the camera) and prevent the
+	 * first render from ever starting.
+	 */
+	private static boolean isWorldReady(ClientLevel renderLevel, CameraState cameraState) {
 		if (renderLevel == null || cameraState == null || cameraState.camera() == null) {
 			return false;
 		}
 		Vec3 position = cameraState.camera().position();
 		int centerChunkX = SectionPos.blockToSectionCoord(Mth.floor(position.x));
 		int centerChunkZ = SectionPos.blockToSectionCoord(Mth.floor(position.z));
-		int readyChunkRadius = request != null && (request.absoluteCameraPosition() || request.topDownMap()) ? 0 : MIN_READY_CHUNK_RADIUS;
-		for (int dx = -readyChunkRadius; dx <= readyChunkRadius; dx++) {
-			for (int dz = -readyChunkRadius; dz <= readyChunkRadius; dz++) {
-				LevelChunk chunk = renderLevel.getChunkSource().getChunk(centerChunkX + dx, centerChunkZ + dz, ChunkStatus.FULL, false);
-				if (chunk == null) {
-					return false;
-				}
-			}
-		}
-		return true;
+		LevelChunk centerChunk = renderLevel.getChunkSource().getChunk(centerChunkX, centerChunkZ, ChunkStatus.FULL, false);
+		return centerChunk != null;
 	}
 
 	public record RenderRequest(

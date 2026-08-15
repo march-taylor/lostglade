@@ -112,6 +112,7 @@
   "message.lg2.camera.busy": "カメラは前の写真をまだ処理中です。",
   "message.lg2.camera.prepare_failed": "写真の準備に失敗しました。",
   "message.lg2.camera.no_renderer": "写真用のアクティブな renderer クライアントがいません。",
+  "message.lg2.camera.captured": "写真を撮影しました。",
   "message.lg2.camera.capture_completed": "写真の準備ができました。",
   "message.lg2.camera.queued": "写真をレンダーに送信しました。",
   "message.lg2.camera.queued_more": "写真をレンダー待ちキューに追加しました。",

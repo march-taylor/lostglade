@@ -35,7 +35,7 @@ public final class RendererBotClientVideoRecording {
 		return thread;
 	});
 	private static final String DEFAULT_FFMPEG_BIN = "ffmpeg";
-	private static final int DEFAULT_WARMUP_FRAMES = Math.max(1, Integer.getInteger("lg2.rendererBotVideoWarmupFrames", 3));
+	private static final int REQUIRED_SETTLED_RENDERS = Math.max(1, Integer.getInteger("lg2.rendererBotStableCaptureProbes", 2));
 	private static final long FINISH_TIMEOUT_MS = Long.getLong("lg2.rendererBotVideoFinishTimeoutMs", 30_000L);
 	private static final int MIN_RECORDING_FRAMES = Math.max(2, Integer.getInteger("lg2.rendererBotVideoMinFrames", 2));
 	private static final int MAX_CATCH_UP_SECONDS = Math.max(1, Integer.getInteger("lg2.rendererBotVideoMaxCatchUpSeconds", 3));
@@ -51,6 +51,16 @@ public final class RendererBotClientVideoRecording {
 	private static final Map<UUID, PendingRecording> RECORDINGS = new HashMap<>();
 
 	private RendererBotClientVideoRecording() {
+	}
+
+	/**
+	 * Camera capture uses one shared off-screen target. Background render jobs
+	 * must stay out while a hand-held recording is warming up or writing frames.
+	 */
+	public static boolean hasActiveRecording() {
+		synchronized (LOCK) {
+			return !RECORDINGS.isEmpty();
+		}
 	}
 
 	public static void register() {
@@ -87,19 +97,18 @@ public final class RendererBotClientVideoRecording {
 						tempPath,
 						finalPath,
 						captureWidth,
-						captureHeight,
-						DEFAULT_WARMUP_FRAMES,
-						System.currentTimeMillis()
+						captureHeight
 				));
 			}
 			Lg2.LOGGER.info(
-					"Renderer bot started video recording {} at {} fps {}x{} (capture {}x{})",
+					"Renderer bot preparing video recording {} at {} fps {}x{} (capture {}x{}, settledRenders={})",
 					payload.requestId(),
 					targetFps,
 					payload.fullWidth(),
 					payload.fullHeight(),
 					captureWidth,
-					captureHeight
+					captureHeight,
+					REQUIRED_SETTLED_RENDERS
 			);
 		} catch (Exception exception) {
 			sendFailure(payload.requestId(), exception.getMessage());
@@ -132,14 +141,14 @@ public final class RendererBotClientVideoRecording {
 			if (current == null) {
 				continue;
 			}
-			long elapsedMs = now - current.startedAtMs();
-			if (elapsedMs >= current.payload().maxDurationSeconds() * 1_000L) {
+			long elapsedMs = current.recordingStartedAtMs == 0L ? 0L : now - current.recordingStartedAtMs;
+			if (current.recordingStartedAtMs != 0L && elapsedMs >= current.payload().maxDurationSeconds() * 1_000L) {
 				current.stopRequested = true;
 				if (current.stopRequestedAtNanos == 0L) {
 					current.stopRequestedAtNanos = System.nanoTime();
 				}
 			}
-			if (current.stopRequested && !current.frameInFlight && !current.finishScheduled) {
+			if (current.stopRequested && current.canFinish() && !current.frameInFlight && !current.finishScheduled) {
 				scheduleFinish(client, current);
 			}
 		}
@@ -150,22 +159,45 @@ public final class RendererBotClientVideoRecording {
 		if (client == null || client.level == null || RendererBotOffscreenWorldRenderer.isOffscreenRenderActive()) {
 			return;
 		}
-		List<PendingRecording> recordingsToRender = new ArrayList<>();
+		PendingRecording warmupToRender = null;
+		PendingRecording recordingToRender = null;
 		synchronized (LOCK) {
 			for (PendingRecording current : RECORDINGS.values()) {
-				if (current == null || current.stopRequested || current.frameInFlight || current.finishScheduled) {
+				if (current == null || current.frameInFlight || current.finishScheduled) {
 					continue;
 				}
-				if (current.remainingWarmupFrames > 0) {
-					current.remainingWarmupFrames--;
-					continue;
+				if (!current.recordingStarted()) {
+					// One shared target can safely service only one warm-up/frame per
+					// tick. Prefer warm-up so a just-stopped short video can become
+					// valid without waiting behind an older recording.
+					if (warmupToRender == null) {
+						warmupToRender = current;
+					}
+				} else if (!current.stopRequested || !current.canFinish()) {
+					if (recordingToRender == null) {
+						recordingToRender = current;
+					}
 				}
-				recordingsToRender.add(current);
 			}
 		}
-		for (PendingRecording recording : recordingsToRender) {
+		if (warmupToRender != null) {
+			PendingRecording recording = warmupToRender;
+			if (markRecordingWarmupInFlight(recording.payload().requestId())) {
+				boolean rendered = RendererBotOffscreenWorldRenderer.renderToTarget(
+						client,
+						recordingRenderRequest(recording.payload(), recording.captureWidth, recording.captureHeight),
+						renderTarget -> completeRecordingWarmup(recording)
+				);
+				if (!rendered) {
+					clearRecordingFrameInFlight(recording.payload().requestId());
+				}
+			}
+			return;
+		}
+		if (recordingToRender != null) {
+			PendingRecording recording = recordingToRender;
 			if (!markRecordingFrameInFlight(recording.payload().requestId(), nowNanos)) {
-				continue;
+				return;
 			}
 			boolean rendered = RendererBotOffscreenWorldRenderer.renderToTarget(
 					client,
@@ -185,7 +217,7 @@ public final class RendererBotClientVideoRecording {
 			CompletableFuture<byte[]> fullFuture;
 			synchronized (LOCK) {
 				PendingRecording active = RECORDINGS.get(recording.payload().requestId());
-				if (active == null || active != recording || active.stopRequested) {
+				if (active == null || active != recording || (active.stopRequested && active.canFinish())) {
 					sourceFuture.thenAccept(image -> {
 						if (image != null) {
 							image.close();
@@ -230,6 +262,7 @@ public final class RendererBotClientVideoRecording {
 	}
 
 	private static void processCapturedFrame(Minecraft client, List<PendingRecording> recordings, NativeImage image) {
+		List<PendingRecording> recordingsStartedNow = new ArrayList<>();
 		try {
 			int width = image.getWidth();
 			int height = image.getHeight();
@@ -246,8 +279,12 @@ public final class RendererBotClientVideoRecording {
 						current.firstFullFrame = quantizeScaledFrame(pixels, width, height, current.payload().fullWidth(), current.payload().fullHeight());
 					}
 					writeFrameCopiesLocked(current, rgb);
+					if (current.markRecordingStartNotified()) {
+						recordingsStartedNow.add(current);
+					}
 				}
 			}
+			notifyRecordingStarts(client, recordingsStartedNow);
 		} catch (Exception exception) {
 			client.execute(() -> {
 				for (PendingRecording current : recordings) {
@@ -264,7 +301,7 @@ public final class RendererBotClientVideoRecording {
 						PendingRecording active = RECORDINGS.get(current.payload().requestId());
 						if (active != null && active == current) {
 							active.frameInFlight = false;
-							if (active.stopRequested && !active.finishScheduled) {
+								if (active.stopRequested && active.canFinish() && !active.finishScheduled) {
 								scheduleFinish(client, active);
 							}
 						}
@@ -281,6 +318,7 @@ public final class RendererBotClientVideoRecording {
 			byte[] previewFrame,
 			byte[] fullFrame
 	) {
+		List<PendingRecording> recordingsStartedNow = new ArrayList<>();
 		try {
 			int[] pixels = image.makePixelArray();
 			byte[] rgb = argbToRgb(pixels);
@@ -299,8 +337,12 @@ public final class RendererBotClientVideoRecording {
 								: quantizeScaledFrame(pixels, image.getWidth(), image.getHeight(), current.payload().fullWidth(), current.payload().fullHeight());
 					}
 					writeFrameCopiesLocked(current, rgb);
+					if (current.markRecordingStartNotified()) {
+						recordingsStartedNow.add(current);
+					}
 				}
 			}
+			notifyRecordingStarts(client, recordingsStartedNow);
 		} catch (Exception exception) {
 			client.execute(() -> {
 				for (PendingRecording current : recordings) {
@@ -317,7 +359,7 @@ public final class RendererBotClientVideoRecording {
 						PendingRecording active = RECORDINGS.get(current.payload().requestId());
 						if (active != null && active == current) {
 							active.frameInFlight = false;
-							if (active.stopRequested && !active.finishScheduled) {
+								if (active.stopRequested && active.canFinish() && !active.finishScheduled) {
 								scheduleFinish(client, active);
 							}
 						}
@@ -357,6 +399,26 @@ public final class RendererBotClientVideoRecording {
 			abortRecording(recording.payload().requestId(), "Renderer bot failed during video frame encoding");
 		});
 		Lg2.LOGGER.warn("Renderer bot video recording GPU path failed for {}", recording.payload().requestId(), throwable);
+	}
+
+	private static void notifyRecordingStarts(Minecraft client, List<PendingRecording> recordings) {
+		if (client == null || recordings == null || recordings.isEmpty()) {
+			return;
+		}
+		client.execute(() -> {
+			for (PendingRecording recording : recordings) {
+				if (recording == null || recording.payload().requestId() == null) {
+					continue;
+				}
+				try {
+					ClientPlayNetworking.send(new RendererBotPayloads.RendererBotVideoRecordingStartedC2SPayload(
+							recording.payload().requestId()
+					));
+				} catch (RuntimeException exception) {
+					Lg2.LOGGER.debug("Renderer bot could not confirm start of video recording {}", recording.payload().requestId(), exception);
+				}
+			}
+		});
 	}
 
 	private static CompletableFuture<NativeImage> takeScreenshotFuture(RenderTarget renderTarget) {
@@ -521,10 +583,58 @@ public final class RendererBotClientVideoRecording {
 		return rgb;
 	}
 
+	private static boolean markRecordingWarmupInFlight(UUID requestId) {
+		synchronized (LOCK) {
+			PendingRecording recording = RECORDINGS.get(requestId);
+			if (recording == null
+					|| recording.frameInFlight
+					|| recording.finishScheduled
+					|| recording.recordingStarted()) {
+				return false;
+			}
+			recording.frameInFlight = true;
+			return true;
+		}
+	}
+
+	private static void completeRecordingWarmup(PendingRecording recording) {
+		if (recording == null || recording.payload().requestId() == null) {
+			return;
+		}
+		RendererBotShadowWorldManager.RenderReadiness readiness =
+				RendererBotShadowWorldManager.inspectRenderReadiness(recording.payload().renderSessionId());
+		boolean started = false;
+		int probeCount = 0;
+		synchronized (LOCK) {
+			PendingRecording active = RECORDINGS.get(recording.payload().requestId());
+			if (active != recording) {
+				return;
+			}
+			active.frameInFlight = false;
+			if (active.observeReadinessProbe(readiness)) {
+				active.markRecordingStarted(System.currentTimeMillis());
+				started = true;
+				probeCount = active.readinessProbeCount;
+			}
+		}
+		if (started) {
+			Lg2.LOGGER.info(
+					"Renderer bot started video recording {} after {} settled renders (visibleSections={})",
+					recording.payload().requestId(),
+					probeCount,
+					readiness.visibleSections()
+			);
+		}
+	}
+
 	private static boolean markRecordingFrameInFlight(UUID requestId, long nowNanos) {
 		synchronized (LOCK) {
 			PendingRecording recording = RECORDINGS.get(requestId);
-			if (recording == null || recording.stopRequested || recording.frameInFlight || recording.finishScheduled) {
+			if (recording == null
+					|| recording.frameInFlight
+					|| recording.finishScheduled
+					|| !recording.recordingStarted()
+					|| (recording.stopRequested && recording.canFinish())) {
 				return false;
 			}
 			int frameCopies = reserveDueFrameCopiesLocked(recording, nowNanos, true);
@@ -740,10 +850,12 @@ public final class RendererBotClientVideoRecording {
 		private final Path finalPath;
 		private final int captureWidth;
 		private final int captureHeight;
-		private final long startedAtMs;
 		private byte[] firstPreviewFrame;
 		private byte[] firstFullFrame;
-		private int remainingWarmupFrames;
+		private int readinessProbeCount;
+		private int settledRenderCount;
+		private long settledContentRevision = Long.MIN_VALUE;
+		private long recordingStartedAtMs;
 		private volatile boolean stopRequested;
 		private volatile boolean frameInFlight;
 		private volatile boolean finishScheduled;
@@ -753,6 +865,7 @@ public final class RendererBotClientVideoRecording {
 		private long scheduledFrameCount;
 		private long stopRequestedAtNanos;
 		private byte[] lastRgbFrame;
+		private boolean recordingStartNotified;
 
 		private PendingRecording(
 				RendererBotPayloads.RendererBotVideoRecordingStartS2CPayload payload,
@@ -761,9 +874,7 @@ public final class RendererBotClientVideoRecording {
 				Path tempPath,
 				Path finalPath,
 				int captureWidth,
-				int captureHeight,
-				int remainingWarmupFrames,
-				long startedAtMs
+				int captureHeight
 		) {
 			this.payload = payload;
 			this.encoderProcess = encoderProcess;
@@ -772,8 +883,6 @@ public final class RendererBotClientVideoRecording {
 			this.finalPath = finalPath;
 			this.captureWidth = captureWidth;
 			this.captureHeight = captureHeight;
-			this.remainingWarmupFrames = remainingWarmupFrames;
-			this.startedAtMs = startedAtMs;
 		}
 
 		private RendererBotPayloads.RendererBotVideoRecordingStartS2CPayload payload() {
@@ -788,8 +897,42 @@ public final class RendererBotClientVideoRecording {
 			return this.finalPath;
 		}
 
-		private long startedAtMs() {
-			return this.startedAtMs;
+		private boolean recordingStarted() {
+			return this.recordingStartedAtMs != 0L;
+		}
+
+		private boolean canFinish() {
+			return this.frameCount >= MIN_RECORDING_FRAMES
+					&& this.firstPreviewFrame != null
+					&& this.firstFullFrame != null;
+		}
+
+		private boolean markRecordingStartNotified() {
+			if (this.recordingStartNotified || this.frameCount <= 0) {
+				return false;
+			}
+			this.recordingStartNotified = true;
+			return true;
+		}
+
+		private boolean observeReadinessProbe(RendererBotShadowWorldManager.RenderReadiness readiness) {
+			this.readinessProbeCount++;
+			if (readiness == null || !readiness.settled()) {
+				this.settledRenderCount = 0;
+				this.settledContentRevision = Long.MIN_VALUE;
+				return false;
+			}
+			if (this.settledContentRevision != readiness.contentRevision()) {
+				this.settledContentRevision = readiness.contentRevision();
+				this.settledRenderCount = 1;
+				return this.settledRenderCount >= REQUIRED_SETTLED_RENDERS;
+			}
+			this.settledRenderCount++;
+			return this.settledRenderCount >= REQUIRED_SETTLED_RENDERS;
+		}
+
+		private void markRecordingStarted(long startedAtMs) {
+			this.recordingStartedAtMs = startedAtMs;
 		}
 	}
 

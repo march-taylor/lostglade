@@ -136,8 +136,6 @@ public final class CameraCaptureSystem {
 			player.displayClientMessage(capturePrepareFailedMessage(player), true);
 			return false;
 		}
-		playShutterFeedback(player);
-
 		boolean started = MapImageRenderSystem.startRender(player, createCompletedPhotoName(player.level().getServer()), provider);
 		if (!started) {
 			return false;
@@ -181,6 +179,35 @@ public final class CameraCaptureSystem {
 		return Lg2Messages.tr("message.lg2.camera.capture_completed");
 	}
 
+	/**
+	 * Called after the renderer client has captured the final photo frame, rather
+	 * than when the player merely presses the camera button.
+	 */
+	public static void notifyPhotoCaptured(ServerPlayer player) {
+		notifyPhotoCaptured(player, null);
+	}
+
+	/**
+	 * Confirms a photo from the position where its final camera frame was taken.
+	 * The optional origin keeps the shutter sound aligned with a frozen shot even
+	 * when its owner has already turned around or walked away.
+	 */
+	public static void notifyPhotoCaptured(ServerPlayer player, Vec3 shutterOrigin) {
+		if (player == null || !(player.level() instanceof ServerLevel)) {
+			return;
+		}
+		Lg2Messages.actionBar(player, "message.lg2.camera.captured");
+		playShutterFeedback(player, shutterOrigin);
+	}
+
+	/** Plays the same shutter sound without changing the player's photo status. */
+	public static void notifyShutterCaptured(ServerPlayer player) {
+		if (player == null || !(player.level() instanceof ServerLevel)) {
+			return;
+		}
+		playShutterFeedback(player);
+	}
+
 	public static Component queuedForRenderMessage(ServerPlayer player) {
 		return Lg2Messages.tr("message.lg2.camera.queued");
 	}
@@ -191,7 +218,14 @@ public final class CameraCaptureSystem {
 
 	private static void playShutterFeedback(ServerPlayer player) {
 		ServerLevel level = (ServerLevel) player.level();
-		Vec3 origin = player.getEyePosition().add(player.getLookAngle().normalize().scale(0.35D));
+		playShutterFeedback(player, player.getEyePosition().add(player.getLookAngle().normalize().scale(0.35D)));
+	}
+
+	private static void playShutterFeedback(ServerPlayer player, Vec3 shutterOrigin) {
+		ServerLevel level = (ServerLevel) player.level();
+		Vec3 origin = shutterOrigin != null
+				? shutterOrigin
+				: player.getEyePosition().add(player.getLookAngle().normalize().scale(0.35D));
 		long seed = level.getRandom().nextLong();
 
 		for (ServerPlayer viewer : level.players()) {

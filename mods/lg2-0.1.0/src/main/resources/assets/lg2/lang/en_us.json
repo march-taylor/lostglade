@@ -114,6 +114,7 @@
   "message.lg2.camera.busy": "The camera is still processing the previous photo.",
   "message.lg2.camera.prepare_failed": "Couldn't prepare the photo.",
   "message.lg2.camera.no_renderer": "No active renderer client is available for photos.",
+  "message.lg2.camera.captured": "Photo captured.",
   "message.lg2.camera.capture_completed": "Photo ready.",
   "message.lg2.camera.queued": "Photo sent to render.",
   "message.lg2.camera.queued_more": "Photo added to the render queue.",
