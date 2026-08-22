@@ -1,6 +1,5 @@
 package com.lostglade.mixin;
 
-import com.lostglade.server.AncientUkrCreditSystem;
 import com.lostglade.server.CopperManGogglesSystem;
 import com.lostglade.server.ServerRaceSystem;
 import net.minecraft.server.level.ServerPlayer;
@@ -26,10 +25,6 @@ public abstract class AbstractContainerMenuCopperGogglesMixin {
 			return;
 		}
 		AbstractContainerMenu menu = (AbstractContainerMenu) (Object) this;
-		if (AncientUkrCreditSystem.handleInventoryBitcoinThrow(serverPlayer, menu, slotIndex, clickType, button)) {
-			ci.cancel();
-			return;
-		}
 		if (ServerRaceSystem.shouldBlockAncientUkrGasMaskInventoryClick(serverPlayer, menu, slotIndex, clickType, button)) {
 			menu.sendAllDataToRemote();
 			ci.cancel();

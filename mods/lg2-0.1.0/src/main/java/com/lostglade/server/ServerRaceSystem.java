@@ -318,6 +318,17 @@ public final class ServerRaceSystem {
 	private static final String KILKA_RACE_ID = "kilka";
 	private static final String PURO_SAN_RACE_ID = "puro_san";
 	private static final String ANCIENT_UKR_RACE_ID = "ancient_ukr";
+	private static final String ORTHODOX_RACE_ID = "orthodox";
+	private static final double ORTHODOX_ATTACK_DEFAULT_TARGET_RANGE_BLOCKS = 32.0D;
+	private static final double ORTHODOX_ATTACK_DEFAULT_VISIBILITY_RADIUS_BLOCKS = 50.0D;
+	private static final double ORTHODOX_ATTACK_DEFAULT_DURATION_SECONDS = 600.0D;
+	private static final double ORTHODOX_ATTACK_DEFAULT_REMAINING_HEALTH_HEARTS = 0.5D;
+	private static final double ORTHODOX_ATTACK_DEFAULT_BLINDNESS_SECONDS = 10.0D;
+	private static final double ORTHODOX_ATTACK_DEFAULT_COOLDOWN_SECONDS = 1800.0D;
+	private static final double ORTHODOX_DEFENSE_DEFAULT_DURATION_SECONDS = 20.0D;
+	private static final double ORTHODOX_DEFENSE_DEFAULT_COOLDOWN_SECONDS = 1200.0D;
+	private static final double ORTHODOX_UNIQUE_DEFAULT_RADIUS_BLOCKS = 15.0D;
+	private static final double ORTHODOX_UNIQUE_DEFAULT_COOLDOWN_SECONDS = 1200.0D;
 	private static final double ANCIENT_UKR_ATTACK_DEFAULT_DURATION_SECONDS = 20.0D;
 	private static final int ANCIENT_UKR_ATTACK_DEFAULT_SWORD_COUNT = 8;
 	private static final double ANCIENT_UKR_ATTACK_SWORD_DAMAGE = 6.0D;
@@ -2430,6 +2441,22 @@ private static int togglePuroSanOverdriveBar(ServerPlayer player) {
 		}
 
 		String raceId = sanitizePath(race.id);
+		if (ORTHODOX_RACE_ID.equals(raceId) && Level.NETHER.equals(player.level().dimension())) {
+			player.displayClientMessage(
+					Component.literal("\u0412 \u0410\u0434\u0443 \u043d\u0435\u043b\u044c\u0437\u044f \u0430\u043a\u0442\u0438\u0432\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u0441\u043f\u043e\u0441\u043e\u0431\u043d\u043e\u0441\u0442\u0438")
+							.withStyle(ChatFormatting.RED),
+					true
+			);
+			return 0;
+		}
+		if (OrthodoxDefenseSystem.isActive(player)) {
+			player.displayClientMessage(
+					Component.literal("\u0412\u043e \u0432\u0440\u0435\u043c\u044f \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u044f \u0421\u0432\u044f\u0442\u043e\u0433\u043e \u0434\u0443\u0445\u0430 \u0441\u043f\u043e\u0441\u043e\u0431\u043d\u043e\u0441\u0442\u0438 \u043d\u0435\u0434\u043e\u0441\u0442\u0443\u043f\u043d\u044b")
+							.withStyle(ChatFormatting.GOLD),
+					true
+			);
+			return 0;
+		}
 		if (slot != RaceAbilitySlot.STOCK && displayKilkaIrradiationAbilityBlock(player)) {
 			return 0;
 		}
@@ -2562,6 +2589,15 @@ private static int togglePuroSanOverdriveBar(ServerPlayer player) {
 		if (slot == RaceAbilitySlot.SHNYAGA && KILKA_RACE_ID.equals(raceId)) {
 			return useKilkaShnyaga(player, race, ability);
 		}
+		if (slot == RaceAbilitySlot.ATTACK && ORTHODOX_RACE_ID.equals(raceId)) {
+			return useOrthodoxAttack(player, race, ability);
+		}
+		if (slot == RaceAbilitySlot.DEFENSE && ORTHODOX_RACE_ID.equals(raceId)) {
+			return useOrthodoxDefense(player, race, ability);
+		}
+		if (slot == RaceAbilitySlot.UNIQUE_ABILITY && ORTHODOX_RACE_ID.equals(raceId)) {
+			return useOrthodoxUnique(player, race, ability);
+		}
 
 		if ("startup_race".equals(raceId)) {
 			int result = StartupRaceAbilitySystem.useAbility(player, slot);
@@ -2573,6 +2609,86 @@ private static int togglePuroSanOverdriveBar(ServerPlayer player) {
 
 		startGenericAbilityCooldown(player, slot, ability);
 		Lg2.LOGGER.info("Player {} used race ability '{}' from race '{}'", player.getGameProfile().name(), ability.abilityId, race.id);
+		return 1;
+	}
+
+	private static int useOrthodoxAttack(ServerPlayer caster, PlayerRaceConfig race, RaceAbilityConfig ability) {
+		if (caster == null || race == null || ability == null || !caster.isAlive() || caster.isSpectator()) return 0;
+		if (OrthodoxAttackSystem.isObserving(caster.getUUID())) {
+			caster.displayClientMessage(
+					Component.literal("\u0411\u043e\u0436\u0435\u0441\u0442\u0432\u0435\u043d\u043d\u044b\u0439 \u0432\u0437\u043e\u0440 \u0443\u0436\u0435 \u043d\u0430\u0431\u043b\u044e\u0434\u0430\u0435\u0442")
+							.withStyle(ChatFormatting.GOLD),
+					true
+			);
+			return 0;
+		}
+		if (displayGenericAbilityCooldown(caster, RaceAbilitySlot.ATTACK)) return 0;
+
+		double range = positiveOrDefault(ability.activationRangeBlocks, ORTHODOX_ATTACK_DEFAULT_TARGET_RANGE_BLOCKS);
+		LivingEntity lookedAt = findLookTarget(caster, range);
+		if (!(lookedAt instanceof ServerPlayer target) || target == caster || !target.isAlive() || target.isSpectator()) {
+			displayTargetNotSelected(caster);
+			return 0;
+		}
+
+		long durationTicks = Math.max(1L, asTicks(positiveOrDefault(
+				ability.orthodoxAttackDurationSeconds,
+				ORTHODOX_ATTACK_DEFAULT_DURATION_SECONDS
+		)));
+		double visibilityRadius = positiveOrDefault(
+				ability.orthodoxAttackEyeVisibilityRadiusBlocks,
+				ORTHODOX_ATTACK_DEFAULT_VISIBILITY_RADIUS_BLOCKS
+		);
+		double remainingHealthHearts = positiveOrDefault(
+				ability.orthodoxAttackRemainingHealthHearts,
+				ORTHODOX_ATTACK_DEFAULT_REMAINING_HEALTH_HEARTS
+		);
+		long blindnessTicks = Math.max(1L, asTicks(positiveOrDefault(
+				ability.orthodoxAttackBlindnessSeconds,
+				ORTHODOX_ATTACK_DEFAULT_BLINDNESS_SECONDS
+		)));
+		if (!OrthodoxAttackSystem.activate(
+				caster, target, durationTicks, visibilityRadius, remainingHealthHearts, blindnessTicks
+		)) {
+			return 0;
+		}
+		startGenericAbilityCooldownSeconds(
+				caster,
+				RaceAbilitySlot.ATTACK,
+				positiveOrDefault(ability.cooldownSeconds, ORTHODOX_ATTACK_DEFAULT_COOLDOWN_SECONDS)
+		);
+		Lg2.LOGGER.info("Player {} activated orthodox divine gaze on {}", caster.getGameProfile().name(), target.getGameProfile().name());
+		return 1;
+	}
+
+	private static int useOrthodoxDefense(ServerPlayer caster, PlayerRaceConfig race, RaceAbilityConfig ability) {
+		if (caster == null || race == null || ability == null || !caster.isAlive() || caster.isSpectator()) return 0;
+		if (displayGenericAbilityCooldown(caster, RaceAbilitySlot.DEFENSE)) return 0;
+		long durationTicks = Math.max(1L, asTicks(positiveOrDefault(
+				ability.orthodoxDefenseDurationSeconds,
+				ORTHODOX_DEFENSE_DEFAULT_DURATION_SECONDS
+		)));
+		if (!OrthodoxDefenseSystem.activate(caster, durationTicks)) return 0;
+		startGenericAbilityCooldownSeconds(
+				caster,
+				RaceAbilitySlot.DEFENSE,
+				positiveOrDefault(ability.cooldownSeconds, ORTHODOX_DEFENSE_DEFAULT_COOLDOWN_SECONDS)
+		);
+		Lg2.LOGGER.info("Player {} activated orthodox holy spirit", caster.getGameProfile().name());
+		return 1;
+	}
+
+	private static int useOrthodoxUnique(ServerPlayer caster, PlayerRaceConfig race, RaceAbilityConfig ability) {
+		if (caster == null || race == null || ability == null || !caster.isAlive() || caster.isSpectator()) return 0;
+		if (displayGenericAbilityCooldown(caster, RaceAbilitySlot.UNIQUE_ABILITY)) return 0;
+		double radius = positiveOrDefault(ability.orthodoxUniqueRadiusBlocks, ORTHODOX_UNIQUE_DEFAULT_RADIUS_BLOCKS);
+		if (!OrthodoxUniqueSystem.activate(caster, radius)) return 0;
+		startGenericAbilityCooldownSeconds(
+				caster,
+				RaceAbilitySlot.UNIQUE_ABILITY,
+				positiveOrDefault(ability.cooldownSeconds, ORTHODOX_UNIQUE_DEFAULT_COOLDOWN_SECONDS)
+		);
+		Lg2.LOGGER.info("Player {} activated orthodox divine light", caster.getGameProfile().name());
 		return 1;
 	}
 
@@ -2834,6 +2950,11 @@ private static int togglePuroSanOverdriveBar(ServerPlayer player) {
 					|| slot == RaceAbilitySlot.DEFENSE
 					|| slot == RaceAbilitySlot.UNIQUE_ABILITY
 					|| slot == RaceAbilitySlot.SHNYAGA;
+		}
+		if (ORTHODOX_RACE_ID.equals(raceId)) {
+			return slot == RaceAbilitySlot.ATTACK
+					|| slot == RaceAbilitySlot.DEFENSE
+					|| slot == RaceAbilitySlot.UNIQUE_ABILITY;
 		}
 		return false;
 	}

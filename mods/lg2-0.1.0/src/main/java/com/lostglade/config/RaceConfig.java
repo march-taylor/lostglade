@@ -314,8 +314,14 @@ public final class RaceConfig {
 			changed |= normalizeNonNegative(ability.ancientUkrCreditMinHourlyPercent, value -> ability.ancientUkrCreditMinHourlyPercent = value);
 			changed |= normalizeNonNegative(ability.ancientUkrCreditMaxHourlyPercent, value -> ability.ancientUkrCreditMaxHourlyPercent = value);
 			changed |= normalizeNonNegative(ability.ancientUkrCreditMaxDebtMultiplier, value -> ability.ancientUkrCreditMaxDebtMultiplier = value);
-			changed |= normalizeNonNegative(ability.ancientUkrStockPorkHungerMultiplier, value -> ability.ancientUkrStockPorkHungerMultiplier = value);
-			changed |= normalizeNonNegative(ability.ancientUkrStockPorkPoisonSeconds, value -> ability.ancientUkrStockPorkPoisonSeconds = value);
+		changed |= normalizeNonNegative(ability.ancientUkrStockPorkHungerMultiplier, value -> ability.ancientUkrStockPorkHungerMultiplier = value);
+		changed |= normalizeNonNegative(ability.ancientUkrStockPorkPoisonSeconds, value -> ability.ancientUkrStockPorkPoisonSeconds = value);
+		changed |= normalizeNonNegative(ability.orthodoxAttackEyeVisibilityRadiusBlocks, value -> ability.orthodoxAttackEyeVisibilityRadiusBlocks = value);
+		changed |= normalizeNonNegative(ability.orthodoxAttackDurationSeconds, value -> ability.orthodoxAttackDurationSeconds = value);
+		changed |= normalizeNonNegative(ability.orthodoxAttackRemainingHealthHearts, value -> ability.orthodoxAttackRemainingHealthHearts = value);
+		changed |= normalizeNonNegative(ability.orthodoxAttackBlindnessSeconds, value -> ability.orthodoxAttackBlindnessSeconds = value);
+		changed |= normalizeNonNegative(ability.orthodoxDefenseDurationSeconds, value -> ability.orthodoxDefenseDurationSeconds = value);
+		changed |= normalizeNonNegative(ability.orthodoxUniqueRadiusBlocks, value -> ability.orthodoxUniqueRadiusBlocks = value);
 		changed |= normalizeChance(ability.chance, value -> ability.chance = value);
 		if (ability.womanUniqueDropMaxSeconds < ability.womanUniqueDropMinSeconds) {
 			ability.womanUniqueDropMaxSeconds = ability.womanUniqueDropMinSeconds;
@@ -584,6 +590,12 @@ public final class RaceConfig {
 		addDoubleIfNonZero(json, "ancientUkrCreditMaxDebtMultiplier", ability.ancientUkrCreditMaxDebtMultiplier);
 		addDoubleIfNonZero(json, "ancientUkrStockPorkHungerMultiplier", ability.ancientUkrStockPorkHungerMultiplier);
 		addDoubleIfNonZero(json, "ancientUkrStockPorkPoisonSeconds", ability.ancientUkrStockPorkPoisonSeconds);
+		addDoubleIfNonZero(json, "orthodoxAttackEyeVisibilityRadiusBlocks", ability.orthodoxAttackEyeVisibilityRadiusBlocks);
+		addDoubleIfNonZero(json, "orthodoxAttackDurationSeconds", ability.orthodoxAttackDurationSeconds);
+		addDoubleIfNonZero(json, "orthodoxAttackRemainingHealthHearts", ability.orthodoxAttackRemainingHealthHearts);
+		addDoubleIfNonZero(json, "orthodoxAttackBlindnessSeconds", ability.orthodoxAttackBlindnessSeconds);
+		addDoubleIfNonZero(json, "orthodoxDefenseDurationSeconds", ability.orthodoxDefenseDurationSeconds);
+		addDoubleIfNonZero(json, "orthodoxUniqueRadiusBlocks", ability.orthodoxUniqueRadiusBlocks);
 			addDoubleIfNonZero(json, "chance", ability.chance);
 			return json;
 		}
@@ -830,6 +842,12 @@ public final class RaceConfig {
 		public double ancientUkrCreditMaxDebtMultiplier = 0.0D;
 		public double ancientUkrStockPorkHungerMultiplier = 0.0D;
 		public double ancientUkrStockPorkPoisonSeconds = 0.0D;
+		public double orthodoxAttackEyeVisibilityRadiusBlocks = 0.0D;
+		public double orthodoxAttackDurationSeconds = 0.0D;
+		public double orthodoxAttackRemainingHealthHearts = 0.0D;
+		public double orthodoxAttackBlindnessSeconds = 0.0D;
+		public double orthodoxDefenseDurationSeconds = 0.0D;
+		public double orthodoxUniqueRadiusBlocks = 0.0D;
 		public double chance = 0.0D;
 
 		private RaceAbilityConfig() {

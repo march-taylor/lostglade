@@ -35,9 +35,6 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.inventory.AbstractContainerMenu;
-import net.minecraft.world.inventory.ClickType;
-import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.level.storage.LevelResource;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.scores.DisplaySlot;
@@ -195,26 +192,6 @@ public final class AncientUkrCreditSystem {
         return ownerId != null && REPAYMENTS.containsKey(ownerId);
     }
 
-    public static boolean handleInventoryBitcoinThrow(ServerPlayer player, AbstractContainerMenu menu,
-                                                       int slotIndex, ClickType clickType, int button) {
-        if (player == null || menu == null || clickType != ClickType.THROW
-                || ServerRaceSystem.getActiveAncientUkrCreditorId(player.getUUID()) == null
-                || (button != 0 && button != 1) || !menu.isValidSlotIndex(slotIndex)) {
-            return false;
-        }
-        Slot slot = menu.getSlot(slotIndex);
-        ItemStack source = slot.getItem();
-        if (source.isEmpty() || !source.is(ModItems.BITCOIN) || !slot.mayPickup(player)) return false;
-
-        int count = button == 0 ? 1 : source.getCount();
-        ItemStack dropped = source.split(Math.min(count, source.getCount()));
-        if (dropped.isEmpty()) return false;
-        ItemEntity item = player.drop(dropped, true);
-        if (item == null) source.grow(dropped.getCount());
-        slot.setChanged();
-        menu.sendAllDataToRemote();
-        return true;
-    }
     static ActionResolution applyAiAction(MinecraftServer server, UUID ownerId, String actionType,
                                           Integer creditNumber, List<Integer> creditNumbers,
                                           Integer amount, String modelReply) {
@@ -517,7 +494,7 @@ public final class AncientUkrCreditSystem {
         if (!(creditor.level() instanceof ServerLevel level) || credits.isEmpty()) return 0;
         List<ItemEntity> items = level.getEntitiesOfClass(ItemEntity.class,
                 creditor.getBoundingBox().inflate(1.0D, 0.5D, 1.0D),
-                item -> item.isAlive() && !item.hasPickUpDelay()
+                item -> item.isAlive()
                         && !item.getTags().contains(LOAN_PAYOUT_ITEM_TAG)
                         && item.getItem().is(ModItems.BITCOIN));
         items.sort(Comparator.comparingDouble(item -> item.distanceToSqr(creditor)));

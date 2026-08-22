@@ -3,6 +3,8 @@ package com.lostglade.mixin;
 import com.lostglade.server.ServerMilkPocketDimensionSystem;
 import com.lostglade.server.ServerRaceSystem;
 import com.lostglade.server.PuroSanStockSystem;
+import com.lostglade.server.OrthodoxAttackSystem;
+import com.lostglade.server.OrthodoxDefenseSystem;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.damagesource.DamageSource;
@@ -16,6 +18,12 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(LivingEntity.class)
 public abstract class LivingEntityCartelDefenseMixin {
+	@ModifyVariable(method = "setHealth", at = @At("HEAD"), argsOnly = true)
+	private float lg2$protectOrthodoxDefenseHealth(float health) {
+		LivingEntity self = (LivingEntity) (Object) this;
+		return OrthodoxDefenseSystem.protectHealthChange(self, health);
+	}
+
 	@ModifyVariable(method = "hurtServer", at = @At("HEAD"), argsOnly = true)
 	private float lg2$applyRaceDamageModifiers(float damage, ServerLevel level, DamageSource damageSource) {
 		LivingEntity victim = (LivingEntity) (Object) this;
@@ -29,6 +37,10 @@ public abstract class LivingEntityCartelDefenseMixin {
 			float damage,
 			CallbackInfoReturnable<Boolean> cir
 	) {
+		if (OrthodoxDefenseSystem.shouldCancelDamage((LivingEntity) (Object) this)) {
+			cir.setReturnValue(false);
+			return;
+		}
 		if (PuroSanStockSystem.shouldCancelFallDamage((LivingEntity) (Object) this, damageSource)) {
 			cir.setReturnValue(false);
 			return;
@@ -79,6 +91,9 @@ public abstract class LivingEntityCartelDefenseMixin {
 		ServerRaceSystem.handleKilkaIncomingDamage(level, (LivingEntity) (Object) this, damageSource, damage, cir.getReturnValueZ());
 		ServerRaceSystem.handlePuroSanOverdriveCombatDamage(level, (LivingEntity) (Object) this, damageSource, damage, cir.getReturnValueZ());
 		ServerRaceSystem.handleMilkDefenseDodge(level, (LivingEntity) (Object) this, damageSource, damage, cir.getReturnValueZ());
+		if (cir.getReturnValueZ()) {
+			OrthodoxAttackSystem.onSuccessfulDamage(level, (LivingEntity) (Object) this, damageSource, damage);
+		}
 		if (cir.getReturnValueZ() && damage > 0.0F && (Object) this instanceof ServerPlayer player) {
 			ServerMilkPocketDimensionSystem.recordPlayerDamage(player);
 		}
@@ -90,6 +105,7 @@ public abstract class LivingEntityCartelDefenseMixin {
 		if (self.level() instanceof ServerLevel level) {
 			ServerRaceSystem.handleMarkRageKill(level, self, damageSource);
 			ServerRaceSystem.handleLittleDictatorPlayerKill(level, self, damageSource);
+			OrthodoxAttackSystem.onLivingDeath(level, self, damageSource);
 		}
 	}
 }

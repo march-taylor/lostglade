@@ -84,6 +84,8 @@ public final class CocaineHallucinationSystem {
 			EntityType.GIANT
 	);
 	private static final Map<UUID, ActiveHallucinationState> ACTIVE_STATES = new HashMap<>();
+	private static final Map<Class<?>, EntityIdAccessor> ENTITY_ID_ACCESSORS = new java.util.concurrent.ConcurrentHashMap<>();
+	private static final EntityIdAccessor MISSING_ENTITY_ID_ACCESSOR = packet -> Integer.MIN_VALUE;
 	private static List<EntityType<?>> mobPool;
 
 	private CocaineHallucinationSystem() {
@@ -654,11 +656,43 @@ public final class CocaineHallucinationSystem {
 	}
 
 	private static int extractEntityId(Packet<?> packet) {
-		Object value = invokeNoArgs(packet, "getId", "getEntityId", "getEntity");
-		if (!(value instanceof Number)) {
-			value = readFieldValue(packet, "id", "entityId", "entity");
+		if (packet == null) return Integer.MIN_VALUE;
+		return ENTITY_ID_ACCESSORS.computeIfAbsent(packet.getClass(), CocaineHallucinationSystem::createEntityIdAccessor)
+				.read(packet);
+	}
+
+	private static EntityIdAccessor createEntityIdAccessor(Class<?> packetType) {
+		for (String fieldName : List.of("id", "entityId", "entity")) {
+			Class<?> type = packetType;
+			while (type != null) {
+				try {
+					java.lang.reflect.Field field = type.getDeclaredField(fieldName);
+					field.setAccessible(true);
+					return packet -> numberValue(() -> field.get(packet));
+				} catch (NoSuchFieldException ignored) {
+					type = type.getSuperclass();
+				} catch (RuntimeException ignored) {
+					break;
+				}
+			}
 		}
-		return value instanceof Number number ? number.intValue() : Integer.MIN_VALUE;
+		for (String methodName : List.of("getId", "getEntityId", "getEntity")) {
+			try {
+				java.lang.reflect.Method method = packetType.getMethod(methodName);
+				return packet -> numberValue(() -> method.invoke(packet));
+			} catch (ReflectiveOperationException ignored) {
+			}
+		}
+		return MISSING_ENTITY_ID_ACCESSOR;
+	}
+
+	private static int numberValue(ReflectiveValueReader reader) {
+		try {
+			Object value = reader.read();
+			return value instanceof Number number ? number.intValue() : Integer.MIN_VALUE;
+		} catch (ReflectiveOperationException | RuntimeException ignored) {
+			return Integer.MIN_VALUE;
+		}
 	}
 
 	private static Object invokeNoArgs(Object target, String... methodNames) {
@@ -698,6 +732,16 @@ public final class CocaineHallucinationSystem {
 	@SuppressWarnings("unchecked")
 	private static Packet<? super ClientGamePacketListener> castGamePacket(Packet<?> packet) {
 		return (Packet<? super ClientGamePacketListener>) packet;
+	}
+
+	@FunctionalInterface
+	private interface EntityIdAccessor {
+		int read(Packet<?> packet);
+	}
+
+	@FunctionalInterface
+	private interface ReflectiveValueReader {
+		Object read() throws ReflectiveOperationException;
 	}
 
 	private static MovementType pickMovementType(RandomSource random) {

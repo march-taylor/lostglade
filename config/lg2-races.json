@@ -651,7 +651,7 @@
       "enabled": true,
       "id": "ancient_ukr",
       "displayName": "Древний укр",
-      "ownerNickname": "Rajas_YT",
+      "ownerNickname": "",
       "description": "",
       "attack": {
         "enabled": true,
@@ -702,6 +702,57 @@
         "description": "",
         "ancientUkrStockPorkHungerMultiplier": 0.5,
         "ancientUkrStockPorkPoisonSeconds": 10.0
+      }
+    },
+    {
+      "enabled": true,
+      "id": "orthodox",
+      "displayName": "Православный",
+      "ownerNickname": "Rajas_YT",
+      "description": "На 50% верит в бога",
+      "attack": {
+        "enabled": true,
+        "abilityId": "orthodox_attack",
+        "name": "Божественный взор",
+        "description": "На врага наводится божественный взор, и в небе над ним появляется огромный глаз. Если тот убьёт невинного — его ждёт наказание: останется полсердца и наступит слепота.",
+        "priceBitcoins": 300,
+        "cooldownSeconds": 1600.0,
+        "activationRangeBlocks": 32.0,
+        "orthodoxAttackEyeVisibilityRadiusBlocks": 50.0,
+        "orthodoxAttackDurationSeconds": 600.0,
+        "orthodoxAttackRemainingHealthHearts": 0.5,
+        "orthodoxAttackBlindnessSeconds": 10.0
+      },
+      "defense": {
+        "enabled": true,
+        "abilityId": "orthodox_defense",
+        "name": "Святой дух",
+        "description": "На 20 секунд появляются светящиеся ангельские крылья. Православный становится полностью неуязвимым и может свободно летать, но не может взаимодействовать с окружающим миром.",
+        "priceBitcoins": 600,
+        "cooldownSeconds": 1200.0,
+        "orthodoxDefenseDurationSeconds": 20.0
+      },
+      "uniqueAbility": {
+        "enabled": true,
+        "abilityId": "orthodox_unique",
+        "name": "Божественный свет",
+        "description": "Плавная волна света выращивает посаженные растения и снимает с игроков негативные эффекты. Нежить и коренные адские мобы испепеляются без дропа.",
+        "priceBitcoins": 1000,
+        "cooldownSeconds": 1200.0,
+        "orthodoxUniqueRadiusBlocks": 32.0
+      },
+      "shnyaga": {
+        "enabled": true,
+        "abilityId": "orthodox_shnyaga",
+        "name": "Шкала святости",
+        "description": "Совершай добрые дела — святость растёт. Греши — падает. Если святость опустится до нуля — ты потеряешь все свои силы и станешь обычным человеком.",
+        "priceBitcoins": 1500
+      },
+      "stock": {
+        "enabled": true,
+        "abilityId": "orthodox_stock",
+        "name": "Сияние праведника",
+        "description": ""
       }
     }
   ]

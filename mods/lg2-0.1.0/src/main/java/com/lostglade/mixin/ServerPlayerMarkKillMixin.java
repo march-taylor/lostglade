@@ -1,6 +1,7 @@
 package com.lostglade.mixin;
 
 import com.lostglade.server.ServerRaceSystem;
+import com.lostglade.server.OrthodoxAttackSystem;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.damagesource.DamageSource;
@@ -17,6 +18,7 @@ public abstract class ServerPlayerMarkKillMixin {
 		if (self.level() instanceof ServerLevel level) {
 			ServerRaceSystem.handleMarkRageKill(level, self, damageSource);
 			ServerRaceSystem.handleLittleDictatorPlayerKill(level, self, damageSource);
+			OrthodoxAttackSystem.onLivingDeath(level, self, damageSource);
 		}
 	}
 }

@@ -46,6 +46,10 @@ import com.lostglade.server.ServerMechanicsGateSystem;
 import com.lostglade.server.ServerRespectSystem;
 import com.lostglade.server.ServerRaceSystem;
 import com.lostglade.server.PuroSanStockSystem;
+import com.lostglade.server.OrthodoxAttackSystem;
+import com.lostglade.server.OrthodoxDefenseSystem;
+import com.lostglade.server.OrthodoxStockSystem;
+import com.lostglade.server.OrthodoxUniqueSystem;
 import com.lostglade.server.StartupRaceAbilitySystem;
 import com.lostglade.server.SeasonStartSystem;
 import com.lostglade.server.SeasonStartVoiceSystem;
@@ -94,6 +98,7 @@ public class Lg2 implements ModInitializer {
 		ModRecipeSerializers.register();
 		ModItems.register();
 		ModBlocks.register();
+		OrthodoxDefenseSystem.register();
 		CameraOrientationStore.register();
 		PlacedDeviceNameStore.register();
 		YandexMapMarkerStore.register();
@@ -136,6 +141,9 @@ public class Lg2 implements ModInitializer {
 		CopperManRepulsorSystem.registerLateInteractions();
 		ServerRaceSystem.register();
 		PuroSanStockSystem.register();
+		OrthodoxStockSystem.register();
+		OrthodoxAttackSystem.register();
+		OrthodoxUniqueSystem.register();
 		StartupRaceAbilitySystem.register();
 		ServerUnusedMobSpawnSystem.register();
 		SeasonStartVoiceSystem.register();

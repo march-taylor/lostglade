@@ -1,0 +1,1105 @@
+﻿{
+    "ambientocclusion":  false,
+    "gui_light":  "front",
+    "textures":  {
+                     "eye":  "lg2:item/orthodox_divine_eye",
+                     "halo":  "lg2:item/orthodox_eye_halo",
+                     "iris":  "lg2:item/orthodox_eye_iris",
+                     "pupil":  "lg2:item/orthodox_eye_pupil",
+                     "gold":  "lg2:item/orthodox_sacred_gold",
+                     "particle":  "lg2:item/orthodox_eye_iris"
+                 },
+    "elements":  [
+                     {
+                         "from":  [
+                                      0,
+                                      11.6,
+                                      0
+                                  ],
+                         "to":  [
+                                    16,
+                                    11.8,
+                                    16
+                                ],
+                         "shade":  false,
+                         "faces":  {
+                                       "down":  {
+                                                    "uv":  [
+                                                               0,
+                                                               16,
+                                                               16,
+                                                               0
+                                                           ],
+                                                    "texture":  "#halo"
+                                                },
+                                       "up":  {
+                                                  "uv":  [
+                                                             0,
+                                                             0,
+                                                             16,
+                                                             16
+                                                         ],
+                                                  "texture":  "#halo"
+                                              }
+                                   }
+                     },
+                     {
+                         "from":  [
+                                      0.35,
+                                      4.2,
+                                      0.35
+                                  ],
+                         "to":  [
+                                    15.65,
+                                    11.5,
+                                    15.65
+                                ],
+                         "shade":  false,
+                         "faces":  {
+                                       "down":  {
+                                                    "uv":  [
+                                                               0,
+                                                               16,
+                                                               16,
+                                                               0
+                                                           ],
+                                                    "texture":  "#eye"
+                                                },
+                                       "up":  {
+                                                  "uv":  [
+                                                             0,
+                                                             0,
+                                                             16,
+                                                             16
+                                                         ],
+                                                  "texture":  "#eye"
+                                              }
+                                   }
+                     },
+                     {
+                         "from":  [
+                                      4.65,
+                                      2.6,
+                                      4.65
+                                  ],
+                         "to":  [
+                                    11.35,
+                                    10,
+                                    11.35
+                                ],
+                         "shade":  false,
+                         "faces":  {
+                                       "down":  {
+                                                    "uv":  [
+                                                               0,
+                                                               16,
+                                                               16,
+                                                               0
+                                                           ],
+                                                    "texture":  "#iris"
+                                                },
+                                       "up":  {
+                                                  "uv":  [
+                                                             0,
+                                                             0,
+                                                             16,
+                                                             16
+                                                         ],
+                                                  "texture":  "#iris"
+                                              },
+                                       "north":  {
+                                                     "uv":  [
+                                                                0,
+                                                                0,
+                                                                16,
+                                                                16
+                                                            ],
+                                                     "texture":  "#gold"
+                                                 },
+                                       "east":  {
+                                                    "uv":  [
+                                                               0,
+                                                               0,
+                                                               16,
+                                                               16
+                                                           ],
+                                                    "texture":  "#gold"
+                                                },
+                                       "south":  {
+                                                     "uv":  [
+                                                                0,
+                                                                0,
+                                                                16,
+                                                                16
+                                                            ],
+                                                     "texture":  "#gold"
+                                                 },
+                                       "west":  {
+                                                    "uv":  [
+                                                               0,
+                                                               0,
+                                                               16,
+                                                               16
+                                                           ],
+                                                    "texture":  "#gold"
+                                                }
+                                   }
+                     },
+                     {
+                         "from":  [
+                                      6.35,
+                                      1,
+                                      6.35
+                                  ],
+                         "to":  [
+                                    9.65,
+                                    7.2,
+                                    9.65
+                                ],
+                         "shade":  false,
+                         "faces":  {
+                                       "north":  {
+                                                     "uv":  [
+                                                                0,
+                                                                0,
+                                                                16,
+                                                                16
+                                                            ],
+                                                     "texture":  "#pupil"
+                                                 },
+                                       "east":  {
+                                                    "uv":  [
+                                                               0,
+                                                               0,
+                                                               16,
+                                                               16
+                                                           ],
+                                                    "texture":  "#pupil"
+                                                },
+                                       "south":  {
+                                                     "uv":  [
+                                                                16,
+                                                                0,
+                                                                0,
+                                                                16
+                                                            ],
+                                                     "texture":  "#pupil"
+                                                 },
+                                       "west":  {
+                                                    "uv":  [
+                                                               16,
+                                                               0,
+                                                               0,
+                                                               16
+                                                           ],
+                                                    "texture":  "#pupil"
+                                                },
+                                       "up":  {
+                                                  "uv":  [
+                                                             0,
+                                                             0,
+                                                             16,
+                                                             16
+                                                         ],
+                                                  "texture":  "#pupil"
+                                              },
+                                       "down":  {
+                                                    "uv":  [
+                                                               0,
+                                                               16,
+                                                               16,
+                                                               0
+                                                           ],
+                                                    "texture":  "#pupil"
+                                                }
+                                   }
+                     },
+                     {
+                         "from":  [
+                                      4.2,
+                                      3.2,
+                                      4.2
+                                  ],
+                         "to":  [
+                                    11.8,
+                                    6,
+                                    5
+                                ],
+                         "shade":  false,
+                         "faces":  {
+                                       "north":  {
+                                                     "uv":  [
+                                                                0,
+                                                                0,
+                                                                16,
+                                                                16
+                                                            ],
+                                                     "texture":  "#gold"
+                                                 },
+                                       "east":  {
+                                                    "uv":  [
+                                                               0,
+                                                               0,
+                                                               16,
+                                                               16
+                                                           ],
+                                                    "texture":  "#gold"
+                                                },
+                                       "south":  {
+                                                     "uv":  [
+                                                                16,
+                                                                0,
+                                                                0,
+                                                                16
+                                                            ],
+                                                     "texture":  "#gold"
+                                                 },
+                                       "west":  {
+                                                    "uv":  [
+                                                               16,
+                                                               0,
+                                                               0,
+                                                               16
+                                                           ],
+                                                    "texture":  "#gold"
+                                                },
+                                       "up":  {
+                                                  "uv":  [
+                                                             0,
+                                                             0,
+                                                             16,
+                                                             16
+                                                         ],
+                                                  "texture":  "#gold"
+                                              },
+                                       "down":  {
+                                                    "uv":  [
+                                                               0,
+                                                               16,
+                                                               16,
+                                                               0
+                                                           ],
+                                                    "texture":  "#gold"
+                                                }
+                                   }
+                     },
+                     {
+                         "from":  [
+                                      4.2,
+                                      3.2,
+                                      11
+                                  ],
+                         "to":  [
+                                    11.8,
+                                    6,
+                                    11.8
+                                ],
+                         "shade":  false,
+                         "faces":  {
+                                       "north":  {
+                                                     "uv":  [
+                                                                0,
+                                                                0,
+                                                                16,
+                                                                16
+                                                            ],
+                                                     "texture":  "#gold"
+                                                 },
+                                       "east":  {
+                                                    "uv":  [
+                                                               0,
+                                                               0,
+                                                               16,
+                                                               16
+                                                           ],
+                                                    "texture":  "#gold"
+                                                },
+                                       "south":  {
+                                                     "uv":  [
+                                                                16,
+                                                                0,
+                                                                0,
+                                                                16
+                                                            ],
+                                                     "texture":  "#gold"
+                                                 },
+                                       "west":  {
+                                                    "uv":  [
+                                                               16,
+                                                               0,
+                                                               0,
+                                                               16
+                                                           ],
+                                                    "texture":  "#gold"
+                                                },
+                                       "up":  {
+                                                  "uv":  [
+                                                             0,
+                                                             0,
+                                                             16,
+                                                             16
+                                                         ],
+                                                  "texture":  "#gold"
+                                              },
+                                       "down":  {
+                                                    "uv":  [
+                                                               0,
+                                                               16,
+                                                               16,
+                                                               0
+                                                           ],
+                                                    "texture":  "#gold"
+                                                }
+                                   }
+                     },
+                     {
+                         "from":  [
+                                      3.7,
+                                      4,
+                                      5.1
+                                  ],
+                         "to":  [
+                                    4.45,
+                                    9,
+                                    10.9
+                                ],
+                         "shade":  false,
+                         "faces":  {
+                                       "north":  {
+                                                     "uv":  [
+                                                                0,
+                                                                0,
+                                                                16,
+                                                                16
+                                                            ],
+                                                     "texture":  "#gold"
+                                                 },
+                                       "east":  {
+                                                    "uv":  [
+                                                               0,
+                                                               0,
+                                                               16,
+                                                               16
+                                                           ],
+                                                    "texture":  "#gold"
+                                                },
+                                       "south":  {
+                                                     "uv":  [
+                                                                16,
+                                                                0,
+                                                                0,
+                                                                16
+                                                            ],
+                                                     "texture":  "#gold"
+                                                 },
+                                       "west":  {
+                                                    "uv":  [
+                                                               16,
+                                                               0,
+                                                               0,
+                                                               16
+                                                           ],
+                                                    "texture":  "#gold"
+                                                },
+                                       "up":  {
+                                                  "uv":  [
+                                                             0,
+                                                             0,
+                                                             16,
+                                                             16
+                                                         ],
+                                                  "texture":  "#gold"
+                                              },
+                                       "down":  {
+                                                    "uv":  [
+                                                               0,
+                                                               16,
+                                                               16,
+                                                               0
+                                                           ],
+                                                    "texture":  "#gold"
+                                                }
+                                   }
+                     },
+                     {
+                         "from":  [
+                                      11.55,
+                                      4,
+                                      5.1
+                                  ],
+                         "to":  [
+                                    12.3,
+                                    9,
+                                    10.9
+                                ],
+                         "shade":  false,
+                         "faces":  {
+                                       "north":  {
+                                                     "uv":  [
+                                                                0,
+                                                                0,
+                                                                16,
+                                                                16
+                                                            ],
+                                                     "texture":  "#gold"
+                                                 },
+                                       "east":  {
+                                                    "uv":  [
+                                                               0,
+                                                               0,
+                                                               16,
+                                                               16
+                                                           ],
+                                                    "texture":  "#gold"
+                                                },
+                                       "south":  {
+                                                     "uv":  [
+                                                                16,
+                                                                0,
+                                                                0,
+                                                                16
+                                                            ],
+                                                     "texture":  "#gold"
+                                                 },
+                                       "west":  {
+                                                    "uv":  [
+                                                               16,
+                                                               0,
+                                                               0,
+                                                               16
+                                                           ],
+                                                    "texture":  "#gold"
+                                                },
+                                       "up":  {
+                                                  "uv":  [
+                                                             0,
+                                                             0,
+                                                             16,
+                                                             16
+                                                         ],
+                                                  "texture":  "#gold"
+                                              },
+                                       "down":  {
+                                                    "uv":  [
+                                                               0,
+                                                               16,
+                                                               16,
+                                                               0
+                                                           ],
+                                                    "texture":  "#gold"
+                                                }
+                                   }
+                     },
+                     {
+                         "from":  [
+                                      7.7,
+                                      5,
+                                      0.1
+                                  ],
+                         "to":  [
+                                    8.3,
+                                    10,
+                                    4.4
+                                ],
+                         "shade":  false,
+                         "faces":  {
+                                       "north":  {
+                                                     "uv":  [
+                                                                0,
+                                                                0,
+                                                                16,
+                                                                16
+                                                            ],
+                                                     "texture":  "#gold"
+                                                 },
+                                       "east":  {
+                                                    "uv":  [
+                                                               0,
+                                                               0,
+                                                               16,
+                                                               16
+                                                           ],
+                                                    "texture":  "#gold"
+                                                },
+                                       "south":  {
+                                                     "uv":  [
+                                                                16,
+                                                                0,
+                                                                0,
+                                                                16
+                                                            ],
+                                                     "texture":  "#gold"
+                                                 },
+                                       "west":  {
+                                                    "uv":  [
+                                                               16,
+                                                               0,
+                                                               0,
+                                                               16
+                                                           ],
+                                                    "texture":  "#gold"
+                                                },
+                                       "up":  {
+                                                  "uv":  [
+                                                             0,
+                                                             0,
+                                                             16,
+                                                             16
+                                                         ],
+                                                  "texture":  "#gold"
+                                              },
+                                       "down":  {
+                                                    "uv":  [
+                                                               0,
+                                                               16,
+                                                               16,
+                                                               0
+                                                           ],
+                                                    "texture":  "#gold"
+                                                }
+                                   }
+                     },
+                     {
+                         "from":  [
+                                      7.7,
+                                      5,
+                                      11.6
+                                  ],
+                         "to":  [
+                                    8.3,
+                                    10,
+                                    15.9
+                                ],
+                         "shade":  false,
+                         "faces":  {
+                                       "north":  {
+                                                     "uv":  [
+                                                                0,
+                                                                0,
+                                                                16,
+                                                                16
+                                                            ],
+                                                     "texture":  "#gold"
+                                                 },
+                                       "east":  {
+                                                    "uv":  [
+                                                               0,
+                                                               0,
+                                                               16,
+                                                               16
+                                                           ],
+                                                    "texture":  "#gold"
+                                                },
+                                       "south":  {
+                                                     "uv":  [
+                                                                16,
+                                                                0,
+                                                                0,
+                                                                16
+                                                            ],
+                                                     "texture":  "#gold"
+                                                 },
+                                       "west":  {
+                                                    "uv":  [
+                                                               16,
+                                                               0,
+                                                               0,
+                                                               16
+                                                           ],
+                                                    "texture":  "#gold"
+                                                },
+                                       "up":  {
+                                                  "uv":  [
+                                                             0,
+                                                             0,
+                                                             16,
+                                                             16
+                                                         ],
+                                                  "texture":  "#gold"
+                                              },
+                                       "down":  {
+                                                    "uv":  [
+                                                               0,
+                                                               16,
+                                                               16,
+                                                               0
+                                                           ],
+                                                    "texture":  "#gold"
+                                                }
+                                   }
+                     },
+                     {
+                         "from":  [
+                                      0.1,
+                                      6,
+                                      7.7
+                                  ],
+                         "to":  [
+                                    4.4,
+                                    10.5,
+                                    8.3
+                                ],
+                         "shade":  false,
+                         "faces":  {
+                                       "north":  {
+                                                     "uv":  [
+                                                                0,
+                                                                0,
+                                                                16,
+                                                                16
+                                                            ],
+                                                     "texture":  "#gold"
+                                                 },
+                                       "east":  {
+                                                    "uv":  [
+                                                               0,
+                                                               0,
+                                                               16,
+                                                               16
+                                                           ],
+                                                    "texture":  "#gold"
+                                                },
+                                       "south":  {
+                                                     "uv":  [
+                                                                16,
+                                                                0,
+                                                                0,
+                                                                16
+                                                            ],
+                                                     "texture":  "#gold"
+                                                 },
+                                       "west":  {
+                                                    "uv":  [
+                                                               16,
+                                                               0,
+                                                               0,
+                                                               16
+                                                           ],
+                                                    "texture":  "#gold"
+                                                },
+                                       "up":  {
+                                                  "uv":  [
+                                                             0,
+                                                             0,
+                                                             16,
+                                                             16
+                                                         ],
+                                                  "texture":  "#gold"
+                                              },
+                                       "down":  {
+                                                    "uv":  [
+                                                               0,
+                                                               16,
+                                                               16,
+                                                               0
+                                                           ],
+                                                    "texture":  "#gold"
+                                                }
+                                   }
+                     },
+                     {
+                         "from":  [
+                                      11.6,
+                                      6,
+                                      7.7
+                                  ],
+                         "to":  [
+                                    15.9,
+                                    10.5,
+                                    8.3
+                                ],
+                         "shade":  false,
+                         "faces":  {
+                                       "north":  {
+                                                     "uv":  [
+                                                                0,
+                                                                0,
+                                                                16,
+                                                                16
+                                                            ],
+                                                     "texture":  "#gold"
+                                                 },
+                                       "east":  {
+                                                    "uv":  [
+                                                               0,
+                                                               0,
+                                                               16,
+                                                               16
+                                                           ],
+                                                    "texture":  "#gold"
+                                                },
+                                       "south":  {
+                                                     "uv":  [
+                                                                16,
+                                                                0,
+                                                                0,
+                                                                16
+                                                            ],
+                                                     "texture":  "#gold"
+                                                 },
+                                       "west":  {
+                                                    "uv":  [
+                                                               16,
+                                                               0,
+                                                               0,
+                                                               16
+                                                           ],
+                                                    "texture":  "#gold"
+                                                },
+                                       "up":  {
+                                                  "uv":  [
+                                                             0,
+                                                             0,
+                                                             16,
+                                                             16
+                                                         ],
+                                                  "texture":  "#gold"
+                                              },
+                                       "down":  {
+                                                    "uv":  [
+                                                               0,
+                                                               16,
+                                                               16,
+                                                               0
+                                                           ],
+                                                    "texture":  "#gold"
+                                                }
+                                   }
+                     },
+                     {
+                         "from":  [
+                                      7.72,
+                                      4.5,
+                                      0.55
+                                  ],
+                         "to":  [
+                                    8.28,
+                                    10,
+                                    5
+                                ],
+                         "shade":  false,
+                         "faces":  {
+                                       "north":  {
+                                                     "uv":  [
+                                                                0,
+                                                                0,
+                                                                16,
+                                                                16
+                                                            ],
+                                                     "texture":  "#gold"
+                                                 },
+                                       "east":  {
+                                                    "uv":  [
+                                                               0,
+                                                               0,
+                                                               16,
+                                                               16
+                                                           ],
+                                                    "texture":  "#gold"
+                                                },
+                                       "south":  {
+                                                     "uv":  [
+                                                                16,
+                                                                0,
+                                                                0,
+                                                                16
+                                                            ],
+                                                     "texture":  "#gold"
+                                                 },
+                                       "west":  {
+                                                    "uv":  [
+                                                               16,
+                                                               0,
+                                                               0,
+                                                               16
+                                                           ],
+                                                    "texture":  "#gold"
+                                                },
+                                       "up":  {
+                                                  "uv":  [
+                                                             0,
+                                                             0,
+                                                             16,
+                                                             16
+                                                         ],
+                                                  "texture":  "#gold"
+                                              },
+                                       "down":  {
+                                                    "uv":  [
+                                                               0,
+                                                               16,
+                                                               16,
+                                                               0
+                                                           ],
+                                                    "texture":  "#gold"
+                                                }
+                                   },
+                         "rotation":  {
+                                          "origin":  [
+                                                         8,
+                                                         7.25,
+                                                         8
+                                                     ],
+                                          "axis":  "y",
+                                          "angle":  -45,
+                                          "rescale":  true
+                                      }
+                     },
+                     {
+                         "from":  [
+                                      7.72,
+                                      4.5,
+                                      11
+                                  ],
+                         "to":  [
+                                    8.28,
+                                    10,
+                                    15.45
+                                ],
+                         "shade":  false,
+                         "faces":  {
+                                       "north":  {
+                                                     "uv":  [
+                                                                0,
+                                                                0,
+                                                                16,
+                                                                16
+                                                            ],
+                                                     "texture":  "#gold"
+                                                 },
+                                       "east":  {
+                                                    "uv":  [
+                                                               0,
+                                                               0,
+                                                               16,
+                                                               16
+                                                           ],
+                                                    "texture":  "#gold"
+                                                },
+                                       "south":  {
+                                                     "uv":  [
+                                                                16,
+                                                                0,
+                                                                0,
+                                                                16
+                                                            ],
+                                                     "texture":  "#gold"
+                                                 },
+                                       "west":  {
+                                                    "uv":  [
+                                                               16,
+                                                               0,
+                                                               0,
+                                                               16
+                                                           ],
+                                                    "texture":  "#gold"
+                                                },
+                                       "up":  {
+                                                  "uv":  [
+                                                             0,
+                                                             0,
+                                                             16,
+                                                             16
+                                                         ],
+                                                  "texture":  "#gold"
+                                              },
+                                       "down":  {
+                                                    "uv":  [
+                                                               0,
+                                                               16,
+                                                               16,
+                                                               0
+                                                           ],
+                                                    "texture":  "#gold"
+                                                }
+                                   },
+                         "rotation":  {
+                                          "origin":  [
+                                                         8,
+                                                         7.25,
+                                                         8
+                                                     ],
+                                          "axis":  "y",
+                                          "angle":  -45,
+                                          "rescale":  true
+                                      }
+                     },
+                     {
+                         "from":  [
+                                      7.72,
+                                      4.5,
+                                      0.55
+                                  ],
+                         "to":  [
+                                    8.28,
+                                    10,
+                                    5
+                                ],
+                         "shade":  false,
+                         "faces":  {
+                                       "north":  {
+                                                     "uv":  [
+                                                                0,
+                                                                0,
+                                                                16,
+                                                                16
+                                                            ],
+                                                     "texture":  "#gold"
+                                                 },
+                                       "east":  {
+                                                    "uv":  [
+                                                               0,
+                                                               0,
+                                                               16,
+                                                               16
+                                                           ],
+                                                    "texture":  "#gold"
+                                                },
+                                       "south":  {
+                                                     "uv":  [
+                                                                16,
+                                                                0,
+                                                                0,
+                                                                16
+                                                            ],
+                                                     "texture":  "#gold"
+                                                 },
+                                       "west":  {
+                                                    "uv":  [
+                                                               16,
+                                                               0,
+                                                               0,
+                                                               16
+                                                           ],
+                                                    "texture":  "#gold"
+                                                },
+                                       "up":  {
+                                                  "uv":  [
+                                                             0,
+                                                             0,
+                                                             16,
+                                                             16
+                                                         ],
+                                                  "texture":  "#gold"
+                                              },
+                                       "down":  {
+                                                    "uv":  [
+                                                               0,
+                                                               16,
+                                                               16,
+                                                               0
+                                                           ],
+                                                    "texture":  "#gold"
+                                                }
+                                   },
+                         "rotation":  {
+                                          "origin":  [
+                                                         8,
+                                                         7.25,
+                                                         8
+                                                     ],
+                                          "axis":  "y",
+                                          "angle":  45,
+                                          "rescale":  true
+                                      }
+                     },
+                     {
+                         "from":  [
+                                      7.72,
+                                      4.5,
+                                      11
+                                  ],
+                         "to":  [
+                                    8.28,
+                                    10,
+                                    15.45
+                                ],
+                         "shade":  false,
+                         "faces":  {
+                                       "north":  {
+                                                     "uv":  [
+                                                                0,
+                                                                0,
+                                                                16,
+                                                                16
+                                                            ],
+                                                     "texture":  "#gold"
+                                                 },
+                                       "east":  {
+                                                    "uv":  [
+                                                               0,
+                                                               0,
+                                                               16,
+                                                               16
+                                                           ],
+                                                    "texture":  "#gold"
+                                                },
+                                       "south":  {
+                                                     "uv":  [
+                                                                16,
+                                                                0,
+                                                                0,
+                                                                16
+                                                            ],
+                                                     "texture":  "#gold"
+                                                 },
+                                       "west":  {
+                                                    "uv":  [
+                                                               16,
+                                                               0,
+                                                               0,
+                                                               16
+                                                           ],
+                                                    "texture":  "#gold"
+                                                },
+                                       "up":  {
+                                                  "uv":  [
+                                                             0,
+                                                             0,
+                                                             16,
+                                                             16
+                                                         ],
+                                                  "texture":  "#gold"
+                                              },
+                                       "down":  {
+                                                    "uv":  [
+                                                               0,
+                                                               16,
+                                                               16,
+                                                               0
+                                                           ],
+                                                    "texture":  "#gold"
+                                                }
+                                   },
+                         "rotation":  {
+                                          "origin":  [
+                                                         8,
+                                                         7.25,
+                                                         8
+                                                     ],
+                                          "axis":  "y",
+                                          "angle":  45,
+                                          "rescale":  true
+                                      }
+                     }
+                 ],
+    "display":  {
+                    "fixed":  {
+                                  "rotation":  [
+                                                   0,
+                                                   0,
+                                                   0
+                                               ],
+                                  "translation":  [
+                                                      0,
+                                                      0,
+                                                      0
+                                                  ],
+                                  "scale":  [
+                                                1,
+                                                1,
+                                                1
+                                            ]
+                              }
+                }
+}
