@@ -10,6 +10,15 @@
       ]
     },
     {
+      "type": "bitmap",
+      "file": "lg2:font/drone_material_icons.png",
+      "ascent": 7,
+      "height": 8,
+      "chars": [
+        ""
+      ]
+    },
+    {
       "type": "reference",
       "id": "minecraft:default"
     }
