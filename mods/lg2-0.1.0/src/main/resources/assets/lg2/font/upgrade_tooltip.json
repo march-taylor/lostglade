@@ -10,15 +10,6 @@
       ]
     },
     {
-      "type": "bitmap",
-      "file": "lg2:font/tooltip_icons.png",
-      "ascent": 8,
-      "height": 8,
-      "chars": [
-        ""
-      ]
-    },
-    {
       "type": "reference",
       "id": "minecraft:default"
     }
