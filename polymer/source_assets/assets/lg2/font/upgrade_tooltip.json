@@ -5,9 +5,49 @@
       "file": "lg2:font/tooltip_coin.png",
       "ascent": 7,
       "height": 8,
-      "chars": [
-        ""
-      ]
+      "chars": [""]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:textures/block/tnt_side.png",
+      "ascent": 8,
+      "height": 16,
+      "chars": [""]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:textures/item/crossbow.png",
+      "ascent": 8,
+      "height": 16,
+      "chars": [""]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:textures/block/target_side.png",
+      "ascent": 8,
+      "height": 16,
+      "chars": [""]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:textures/item/golden_carrot.png",
+      "ascent": 8,
+      "height": 16,
+      "chars": [""]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:textures/item/red_dye.png",
+      "ascent": 8,
+      "height": 16,
+      "chars": [""]
+    },
+    {
+      "type": "bitmap",
+      "file": "minecraft:textures/block/note_block.png",
+      "ascent": 8,
+      "height": 16,
+      "chars": [""]
     },
     {
       "type": "reference",
