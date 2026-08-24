@@ -9,7 +9,7 @@
     },
     {
       "type": "bitmap",
-      "file": "minecraft:textures/item/tnt.png",
+      "file": "minecraft:textures/block/tnt_side.png",
       "ascent": 8,
       "height": 16,
       "chars": [""]
