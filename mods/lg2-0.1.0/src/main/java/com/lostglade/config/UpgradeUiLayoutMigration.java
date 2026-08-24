@@ -15,23 +15,21 @@ public final class UpgradeUiLayoutMigration {
     // Inventory slots are zero-based, so slot = (y - 1) * 9 + (x - 1).
     private static final int[] SLOTS = {3, 5, 19, 21, 23, 25};
 
-    // These are vanilla Minecraft item textures rendered as 16x16 bitmap glyphs.
-    private static final String[] ICONS = {"\\uE100", "\\uE101", "\\uE102", "\\uE103", "\\uE104", "\\uE105"};
     private static final String[] RU = {
-            "Установка: \\uE100 TNT",
-            "Установка: \\uE101 арбалет",
-            "Установка: \\uE102 мишень",
-            "Установка: \\uE103 золотая морковь",
-            "Установка: \\uE104 красный краситель",
-            "Установка: \\uE105 нотный блок"
+            "Установка: \uE100 TNT",
+            "Установка: \uE101 арбалет",
+            "Установка: \uE102 мишень",
+            "Установка: \uE103 золотая морковь",
+            "Установка: \uE104 красный краситель",
+            "Установка: \uE105 нотный блок"
     };
     private static final String[] EN = {
-            "Installation: \\uE100 TNT",
-            "Installation: \\uE101 crossbow",
-            "Installation: \\uE102 target",
-            "Installation: \\uE103 golden carrot",
-            "Installation: \\uE104 red dye",
-            "Installation: \\uE105 note block"
+            "Installation: \uE100 TNT",
+            "Installation: \uE101 crossbow",
+            "Installation: \uE102 target",
+            "Installation: \uE103 golden carrot",
+            "Installation: \uE104 red dye",
+            "Installation: \uE105 note block"
     };
 
     private UpgradeUiLayoutMigration() {}
