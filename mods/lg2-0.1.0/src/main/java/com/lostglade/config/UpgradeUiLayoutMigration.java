@@ -1,6 +1,7 @@
 package com.lostglade.config;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -16,39 +17,54 @@ public final class UpgradeUiLayoutMigration {
     private static final int[] SLOTS = {3, 5, 19, 21, 23, 25};
 
     private static final String[] RU = {
-            "Установка: \uE100 TNT",
-            "Установка: \uE101 арбалет",
-            "Установка: \uE102 мишень",
-            "Установка: \uE103 золотая морковь",
-            "Установка: \uE104 красный краситель",
-            "Установка: \uE105 нотный блок"
+            "Установка: \\uE100 TNT",
+            "Установка: \\uE101 арбалет",
+            "Установка: \\uE102 мишень",
+            "Установка: \\uE103 золотая морковь",
+            "Установка: \\uE104 красный краситель",
+            "Установка: \\uE105 нотный блок"
     };
     private static final String[] EN = {
-            "Installation: \uE100 TNT",
-            "Installation: \uE101 crossbow",
-            "Installation: \uE102 target",
-            "Installation: \uE103 golden carrot",
-            "Installation: \uE104 red dye",
-            "Installation: \uE105 note block"
+            "Installation: \\uE100 TNT",
+            "Installation: \\uE101 crossbow",
+            "Installation: \\uE102 target",
+            "Installation: \\uE103 golden carrot",
+            "Installation: \\uE104 red dye",
+            "Installation: \\uE105 note block"
     };
 
     private UpgradeUiLayoutMigration() {}
 
     public static void apply() {
         UpgradeUiConfig.ConfigData config = UpgradeUiConfig.get();
-        UpgradeUiConfig.ScreenConfig screen = config.screens.get(SCREEN);
-        if (screen == null) return;
-        if (screen.buttons == null) screen.buttons = new java.util.LinkedHashMap<>();
+        if (config.screens == null) {
+            config.screens = new LinkedHashMap<>();
+        }
 
+        UpgradeUiConfig.ScreenConfig screen = config.screens.get(SCREEN);
         boolean changed = false;
+        if (screen == null) {
+            screen = new UpgradeUiConfig.ScreenConfig();
+            screen.enabled = true;
+            screen.rows = 3;
+            screen.theme = "default";
+            screen.title = UpgradeUiConfig.LocalizedText.of("Drone tuning", "Настройка дрона");
+            screen.buttons = new LinkedHashMap<>();
+            config.screens.put(SCREEN, screen);
+            changed = true;
+        } else if (screen.buttons == null) {
+            screen.buttons = new LinkedHashMap<>();
+            changed = true;
+        }
+
         for (int i = 0; i < IDS.length; i++) {
             UpgradeUiConfig.ButtonConfig button = find(screen.buttons, IDS[i]);
             if (button == null) {
-                if (!"it_drone_microphone".equals(IDS[i])) continue;
-                button = createMicrophone();
-                screen.buttons.put("drone_microphone", button);
+                button = createDefaultButton(IDS[i], i);
+                screen.buttons.put(IDS[i], button);
                 changed = true;
             }
+            if (!button.enabled) { button.enabled = true; changed = true; }
             if (button.slot != SLOTS[i]) { button.slot = SLOTS[i]; changed = true; }
             if (button.hitboxWidth != 1) { button.hitboxWidth = 1; changed = true; }
             if (button.hitboxHeight != 1) { button.hitboxHeight = 1; changed = true; }
@@ -61,7 +77,10 @@ public final class UpgradeUiLayoutMigration {
                 changed = true;
             }
         }
-        if (changed) UpgradeUiConfig.save();
+
+        if (changed) {
+            UpgradeUiConfig.save();
+        }
     }
 
     private static UpgradeUiConfig.ButtonConfig find(Map<String, UpgradeUiConfig.ButtonConfig> buttons, String id) {
@@ -71,24 +90,56 @@ public final class UpgradeUiLayoutMigration {
         return null;
     }
 
-    private static UpgradeUiConfig.ButtonConfig createMicrophone() {
+    private static UpgradeUiConfig.ButtonConfig createDefaultButton(String id, int index) {
         UpgradeUiConfig.ButtonConfig button = new UpgradeUiConfig.ButtonConfig();
+        button.enabled = true;
+        button.slot = SLOTS[index];
+        button.hitboxWidth = 1;
+        button.hitboxHeight = 1;
         button.type = UpgradeUiConfig.ButtonType.PURCHASE_UPGRADE.id;
-        button.upgradeId = "it_drone_microphone";
-        button.pricesBitcoins = new ArrayList<>(List.of(900));
-        button.requirements = new ArrayList<>();
-        UpgradeUiConfig.RequirementConfig requirement = new UpgradeUiConfig.RequirementConfig();
-        requirement.upgradeId = "it_drone_scout";
-        requirement.minLevel = 1;
-        button.requirements.add(requirement);
-        button.icon = new UpgradeUiConfig.IconConfig();
-        button.icon.fallbackItem = "lg2:microphone";
-        button.icon.packModel = "lg2:gui/button/invisible";
-        button.name = UpgradeUiConfig.LocalizedText.singleLanguage("en_us", "Microphone Module");
-        button.name.values.put("ru_ru", "Микрофонный модуль");
+        button.upgradeId = id;
+        button.pricesBitcoins = new ArrayList<>(List.of(defaultPrice(index)));
+        button.icon = UpgradeUiConfig.IconConfig.upgrade();
+        button.name = UpgradeUiConfig.LocalizedText.of(defaultNameEn(index), defaultNameRu(index));
         button.lore = new UpgradeUiConfig.LocalizedLines();
-        button.lore.values.put("en_us", List.of(EN[5]));
-        button.lore.values.put("ru_ru", List.of(RU[5]));
+        button.lore.values.put("en_us", List.of(EN[index]));
+        button.lore.values.put("ru_ru", List.of(RU[index]));
         return button;
+    }
+
+    private static int defaultPrice(int index) {
+        return switch (index) {
+            case 0 -> 1200;
+            case 1 -> 1500;
+            case 2 -> 700;
+            case 3 -> 800;
+            case 4 -> 600;
+            case 5 -> 900;
+            default -> 900;
+        };
+    }
+
+    private static String defaultNameRu(int index) {
+        return switch (index) {
+            case 0 -> "Камикадзе";
+            case 1 -> "Пушка";
+            case 2 -> "Автонаведение";
+            case 3 -> "Ночное зрение";
+            case 4 -> "Перекраска";
+            case 5 -> "Микрофонный модуль";
+            default -> "Модуль";
+        };
+    }
+
+    private static String defaultNameEn(int index) {
+        return switch (index) {
+            case 0 -> "Kamikaze";
+            case 1 -> "Cannon";
+            case 2 -> "Auto-aim";
+            case 3 -> "Night vision";
+            case 4 -> "Repainting";
+            case 5 -> "Microphone module";
+            default -> "Module";
+        };
     }
 }
