@@ -2,8 +2,8 @@
   "format_version": "1.21.11",
   "credit": "Lostglade drone microphone module extracted from drone model source",
   "textures": {
-    "0": "lg2:item/drone_module_microphone",
-    "particle": "lg2:item/drone_module_microphone"
+    "0": "lg2:item/drone_module_microphone_legacy",
+    "particle": "lg2:item/drone_module_microphone_legacy"
   },
   "elements": [
     {

@@ -4,6 +4,7 @@ import com.lostglade.block.ModBlocks;
 import com.lostglade.config.Lg2Config;
 import com.lostglade.config.RaceConfig;
 import com.lostglade.config.SeasonStartConfig;
+import com.lostglade.config.UpgradeUiLayoutMigration;
 import com.lostglade.network.Lg2Payloads;
 import com.lostglade.network.RendererBotPayloads;
 import com.lostglade.server.ServerGlitchSystem;
@@ -159,6 +160,7 @@ public class Lg2 implements ModInitializer {
 			ServerWebcamIntegration.register();
 		}
 		ServerUpgradeUiSystem.register();
+		UpgradeUiLayoutMigration.apply();
 
 		LOGGER.info("Initialized {}", MOD_ID);
 	}
