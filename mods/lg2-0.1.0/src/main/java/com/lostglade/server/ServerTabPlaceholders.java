@@ -72,7 +72,7 @@ final class ServerTabPlaceholders {
 	private static String buildHeaderText(MinecraftServer server) {
 		String dateTime = toSmallFont(DATE_TIME_FORMATTER.format(ZonedDateTime.now(MOSCOW_ZONE)));
 		return "\n"
-				+ "§f" + tabLogoGlyph(server) + "\n"
+				+ "§f" + tabLogoGlyph(server) + "\n\n"
 				+ "§7" + dateTime;
 	}
 
