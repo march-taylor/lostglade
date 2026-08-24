@@ -12,25 +12,23 @@ public final class UpgradeUiLayoutMigration {
             "it_drone_kamikaze", "it_drone_combat", "it_drone_auto_aim",
             "it_drone_night_vision", "it_drone_paint", "it_drone_microphone"
     };
-    // User supplied x;y positions: 4;1, 6;1, 2;3, 4;3, 6;3, 8;3.
-    // Inventory slots are zero-based, so slot = (y - 1) * 9 + (x - 1).
     private static final int[] SLOTS = {3, 5, 19, 21, 23, 25};
 
     private static final String[] RU = {
-            "Установка: \\uE100 TNT",
-            "Установка: \\uE101 арбалет",
-            "Установка: \\uE102 мишень",
-            "Установка: \\uE103 золотая морковь",
-            "Установка: \\uE104 красный краситель",
-            "Установка: \\uE105 нотный блок"
+            "Установка: \uE100 TNT",
+            "Установка: \uE101 арбалет",
+            "Установка: \uE102 мишень",
+            "Установка: \uE103 золотая морковь",
+            "Установка: \uE104 красный краситель",
+            "Установка: \uE105 нотный блок"
     };
     private static final String[] EN = {
-            "Installation: \\uE100 TNT",
-            "Installation: \\uE101 crossbow",
-            "Installation: \\uE102 target",
-            "Installation: \\uE103 golden carrot",
-            "Installation: \\uE104 red dye",
-            "Installation: \\uE105 note block"
+            "Installation: \uE100 TNT",
+            "Installation: \uE101 crossbow",
+            "Installation: \uE102 target",
+            "Installation: \uE103 golden carrot",
+            "Installation: \uE104 red dye",
+            "Installation: \uE105 note block"
     };
 
     private UpgradeUiLayoutMigration() {}
