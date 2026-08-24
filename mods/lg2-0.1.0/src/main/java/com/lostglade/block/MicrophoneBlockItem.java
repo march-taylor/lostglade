@@ -24,4 +24,8 @@ public final class MicrophoneBlockItem extends PolymerBlockItem {
 	public void modifyBasePolymerItemStack(ItemStack out, ItemStack original, PacketContext context) {
 		MicrophoneBlock.applyFallbackName(out, context);
 	}
+
+	static ItemStack createDisplayStack() {
+		return new ItemStack(ModBlocks.MICROPHONE_ITEM);
+	}
 }

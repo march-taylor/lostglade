@@ -89,7 +89,7 @@ final class CameraDisplayHelper {
 		ItemDisplayHitboxHelper.clear(display);
 	}
 
-	private static List<Display.ItemDisplay> findDisplays(ServerLevel level, BlockPos pos) {
+	static List<Display.ItemDisplay> findDisplays(ServerLevel level, BlockPos pos) {
 		String posTag = getPosTag(pos);
 		return level.getEntities(
 				EntityType.ITEM_DISPLAY,

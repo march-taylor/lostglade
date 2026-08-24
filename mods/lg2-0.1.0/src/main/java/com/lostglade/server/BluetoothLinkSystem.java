@@ -7,6 +7,8 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.lostglade.Lg2;
+import com.lostglade.block.CameraBlock;
+import com.lostglade.block.MicrophoneBlock;
 import com.lostglade.block.ModBlocks;
 import com.lostglade.item.ModItems;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
@@ -761,16 +763,24 @@ public final class BluetoothLinkSystem {
 					}
 					return;
 				}
-				ItemStack highlightCarrier = ServerSelectionHighlightSystem.createHighlightCarrierStack();
-				ServerSelectionHighlightSystem.show(player, List.of(new ServerSelectionHighlightSystem.ItemDisplayBlueprint(
-						level,
-						Vec3.atCenterOf(endpoint.pos()),
-						0.0F,
-						0.0F,
-						highlightCarrier,
-						ItemDisplayContext.FIXED,
-						ServerSelectionHighlightSystem.defaultHighlightCarrierTransformation()
-				)));
+				List<ServerSelectionHighlightSystem.DisplayBlueprint> blueprints = switch (endpoint.type()) {
+					case MICROPHONE -> MicrophoneBlock.resolveBluetoothHighlightBlueprints(level, endpoint.pos());
+					case CAMERA -> CameraBlock.resolveBluetoothHighlightBlueprints(level, endpoint.pos());
+					default -> List.of();
+				};
+				if (blueprints.isEmpty()) {
+					ItemStack highlightCarrier = ServerSelectionHighlightSystem.createHighlightCarrierStack();
+					blueprints = List.of(new ServerSelectionHighlightSystem.ItemDisplayBlueprint(
+							level,
+							Vec3.atCenterOf(endpoint.pos()),
+							0.0F,
+							0.0F,
+							highlightCarrier,
+							ItemDisplayContext.FIXED,
+							ServerSelectionHighlightSystem.defaultHighlightCarrierTransformation()
+					));
+				}
+				ServerSelectionHighlightSystem.show(player, blueprints);
 				VISIBLE_ENDPOINTS.put(playerId, endpoint);
 			}
 			case DRONE -> {

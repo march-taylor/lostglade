@@ -355,7 +355,7 @@ public final class ModBlocks {
 			new MicrophoneBlockItem(
 					(MicrophoneBlock) MICROPHONE,
 					new Item.Properties().setId(MICROPHONE_ITEM_KEY).useBlockDescriptionPrefix(),
-					Items.LANTERN,
+					Items.STICK,
 					true
 			)
 	);
@@ -489,7 +489,6 @@ public final class ModBlocks {
 				.mapColor(MapColor.METAL)
 				.strength(1.2F, 3.0F)
 				.sound(SoundType.STONE)
-				.lightLevel(state -> 1)
 				.noLootTable()
 				.noOcclusion()
 				.setId(MICROPHONE_KEY);

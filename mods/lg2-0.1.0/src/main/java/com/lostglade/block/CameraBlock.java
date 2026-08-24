@@ -6,6 +6,7 @@ import com.lostglade.server.RocketLaunchEventSystem;
 import com.lostglade.server.CameraOrientationStore;
 import com.lostglade.server.BluetoothLinkSystem;
 import com.lostglade.server.PlacedDeviceNameStore;
+import com.lostglade.server.ServerSelectionHighlightSystem;
 import eu.pb4.polymer.core.api.block.PolymerBlockUtils;
 import eu.pb4.polymer.core.api.block.PolymerHeadBlock;
 import eu.pb4.polymer.core.api.block.SimplePolymerBlock;
@@ -16,6 +17,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.Display;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
@@ -43,6 +45,7 @@ import net.minecraft.world.phys.shapes.VoxelShape;
 import xyz.nucleoid.packettweaker.PacketContext;
 
 import java.util.List;
+import java.util.ArrayList;
 
 public final class CameraBlock extends SimplePolymerBlock implements PolymerHeadBlock {
 	private final BlockState hitboxState;
@@ -202,6 +205,20 @@ public final class CameraBlock extends SimplePolymerBlock implements PolymerHead
 
 	public static Vec3 captureBaseOrigin(BlockPos cameraPos) {
 		return new Vec3(cameraPos.getX() + 0.5D, cameraPos.getY() + 0.25D, cameraPos.getZ() + 0.5D);
+	}
+
+	/** Returns the placed camera model for a Bluetooth selection outline. */
+	public static List<ServerSelectionHighlightSystem.DisplayBlueprint> resolveBluetoothHighlightBlueprints(ServerLevel level, BlockPos pos) {
+		if (level == null || pos == null) {
+			return List.of();
+		}
+		List<ServerSelectionHighlightSystem.DisplayBlueprint> blueprints = new ArrayList<>();
+		for (Display.ItemDisplay display : CameraDisplayHelper.findDisplays(level, pos)) {
+			if (display.isAlive()) {
+				blueprints.add(new ServerSelectionHighlightSystem.EntityGlowBlueprint(display));
+			}
+		}
+		return blueprints;
 	}
 
 	public static Vec3 captureOrigin(BlockPos cameraPos, float yaw, float pitch) {

@@ -4,18 +4,19 @@ import com.lostglade.server.MicrophoneSystem;
 import com.lostglade.server.BluetoothLinkSystem;
 import com.lostglade.server.PlacedDeviceNameStore;
 import com.lostglade.server.RocketLaunchEventSystem;
-import eu.pb4.polymer.blocks.api.BlockModelType;
-import eu.pb4.polymer.blocks.api.PolymerBlockModel;
-import eu.pb4.polymer.blocks.api.PolymerBlockResourceUtils;
-import eu.pb4.polymer.blocks.api.PolymerTexturedBlock;
+import com.lostglade.server.ServerSelectionHighlightSystem;
+import eu.pb4.polymer.core.api.block.PolymerBlockUtils;
+import eu.pb4.polymer.core.api.block.PolymerHeadBlock;
 import eu.pb4.polymer.core.api.block.SimplePolymerBlock;
 import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.component.DataComponents;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.Identifier;
+import net.minecraft.network.protocol.Packet;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.Display;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.context.BlockPlaceContext;
 import net.minecraft.world.level.BlockGetter;
@@ -24,10 +25,9 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.Mirror;
 import net.minecraft.world.level.block.Rotation;
-import net.minecraft.world.level.block.SeaPickleBlock;
+import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.redstone.Orientation;
 import net.minecraft.world.level.storage.loot.LootParams;
 import net.minecraft.world.phys.shapes.CollisionContext;
@@ -35,26 +35,37 @@ import net.minecraft.world.phys.shapes.VoxelShape;
 import xyz.nucleoid.packettweaker.PacketContext;
 
 import java.util.List;
+import java.util.ArrayList;
 
-public final class MicrophoneBlock extends SimplePolymerBlock implements PolymerTexturedBlock {
-	private static final Identifier MODEL_ID = Identifier.fromNamespaceAndPath("lg2", "block/microphone");
-	private final BlockState polymerState;
-	private final BlockState fallbackState;
+public final class MicrophoneBlock extends SimplePolymerBlock implements PolymerHeadBlock {
+	private final BlockState hitboxState;
 
 	public MicrophoneBlock(BlockBehaviour.Properties properties) {
-		super(properties, Blocks.SEA_PICKLE);
-		this.polymerState = requestLanternState(MODEL_ID);
-		this.fallbackState = Blocks.SEA_PICKLE.defaultBlockState()
-				.setValue(SeaPickleBlock.PICKLES, 1)
-				.setValue(BlockStateProperties.WATERLOGGED, false);
+		super(properties, Blocks.STRUCTURE_VOID);
+		this.hitboxState = Blocks.PLAYER_HEAD.defaultBlockState();
 	}
 
 	@Override
 	public BlockState getPolymerBlockState(BlockState state, PacketContext context) {
-		if (!PolymerResourcePackUtils.hasMainPack(context)) {
-			return this.fallbackState;
-		}
-		return this.polymerState;
+		return this.hitboxState;
+	}
+
+	@Override
+	public String getPolymerSkinValue(BlockState state, BlockPos pos, PacketContext context) {
+		return "";
+	}
+
+	@Override
+	public Packet<?> getPolymerHeadPacket(BlockState state, BlockPos pos, PacketContext context) {
+		CompoundTag blockEntityData = new CompoundTag();
+		blockEntityData.putString("id", "minecraft:skull");
+		CompoundTag profile = new CompoundTag();
+		profile.putString("texture", "lg2:skin/camera_collision_head");
+		blockEntityData.put("profile", profile);
+		blockEntityData.putInt("x", pos.getX());
+		blockEntityData.putInt("y", pos.getY());
+		blockEntityData.putInt("z", pos.getZ());
+		return PolymerBlockUtils.createBlockEntityPacket(pos, BlockEntityType.SKULL, blockEntityData);
 	}
 
 	@Override
@@ -79,17 +90,17 @@ public final class MicrophoneBlock extends SimplePolymerBlock implements Polymer
 
 	@Override
 	protected VoxelShape getShape(BlockState state, BlockGetter level, BlockPos pos, CollisionContext context) {
-		return this.fallbackState.getShape(level, pos, context);
+		return this.hitboxState.getShape(level, pos, context);
 	}
 
 	@Override
 	protected VoxelShape getCollisionShape(BlockState state, BlockGetter level, BlockPos pos, CollisionContext context) {
-		return this.fallbackState.getCollisionShape(level, pos, context);
+		return this.hitboxState.getCollisionShape(level, pos, context);
 	}
 
 	@Override
 	protected VoxelShape getInteractionShape(BlockState state, BlockGetter level, BlockPos pos) {
-		return this.fallbackState.getShape(level, pos);
+		return this.hitboxState.getShape(level, pos);
 	}
 
 	@Override
@@ -107,6 +118,33 @@ public final class MicrophoneBlock extends SimplePolymerBlock implements Polymer
 	}
 
 	@Override
+	protected void onPlace(BlockState state, Level level, BlockPos pos, BlockState oldState, boolean movedByPiston) {
+		super.onPlace(state, level, pos, oldState, movedByPiston);
+		if (level instanceof ServerLevel serverLevel) {
+			ensureDisplay(serverLevel, pos);
+		}
+	}
+
+	/** Restores the visual model after a chunk containing a microphone is loaded. */
+	public static void ensureDisplay(ServerLevel level, BlockPos pos) {
+		MicrophoneDisplayHelper.spawnOrUpdate(level, pos);
+	}
+
+	/** Returns the placed microphone model for a Bluetooth selection outline. */
+	public static List<ServerSelectionHighlightSystem.DisplayBlueprint> resolveBluetoothHighlightBlueprints(ServerLevel level, BlockPos pos) {
+		if (level == null || pos == null) {
+			return List.of();
+		}
+		List<ServerSelectionHighlightSystem.DisplayBlueprint> blueprints = new ArrayList<>();
+		for (Display.ItemDisplay display : MicrophoneDisplayHelper.findDisplays(level, pos)) {
+			if (display.isAlive()) {
+				blueprints.add(new ServerSelectionHighlightSystem.EntityGlowBlueprint(display));
+			}
+		}
+		return blueprints;
+	}
+
+	@Override
 	protected void neighborChanged(BlockState state, Level level, BlockPos pos, Block block, Orientation orientation, boolean notify) {
 		super.neighborChanged(state, level, pos, block, orientation, notify);
 		if (level instanceof ServerLevel serverLevel) {
@@ -116,6 +154,7 @@ public final class MicrophoneBlock extends SimplePolymerBlock implements Polymer
 
 	@Override
 	protected void affectNeighborsAfterRemoval(BlockState state, ServerLevel level, BlockPos pos, boolean movedByPiston) {
+		MicrophoneDisplayHelper.remove(level, pos);
 		if (RocketLaunchEventSystem.isLaunchedMountedDevice(level, pos)) {
 			// Keep the endpoint registered; RocketLaunchEventSystem supplies the
 			// moving position while the launch is active.
@@ -145,13 +184,5 @@ public final class MicrophoneBlock extends SimplePolymerBlock implements Polymer
 			name = "マイク";
 		}
 		out.set(DataComponents.CUSTOM_NAME, Component.literal(name).withStyle(style -> style.withItalic(false)));
-	}
-
-	private static BlockState requestLanternState(Identifier modelId) {
-		BlockState state = PolymerBlockResourceUtils.requestBlock(BlockModelType.LANTERN, PolymerBlockModel.of(modelId));
-		if (state == null) {
-			throw new IllegalStateException("Unable to allocate lantern polymer block state for model " + modelId);
-		}
-		return state;
 	}
 }

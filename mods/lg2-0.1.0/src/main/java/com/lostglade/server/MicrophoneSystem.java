@@ -1,6 +1,7 @@
 package com.lostglade.server;
 
 import com.lostglade.Lg2;
+import com.lostglade.block.MicrophoneBlock;
 import com.lostglade.block.ModBlocks;
 import com.lostglade.block.SpeakerBlock;
 import de.maxhenkel.voicechat.api.Position;
@@ -180,11 +181,13 @@ public final class MicrophoneSystem {
 			for (int localY = 0; localY < 16; localY++) {
 				for (int localZ = 0; localZ < 16; localZ++) {
 					for (int localX = 0; localX < 16; localX++) {
-						if (!section.getBlockState(localX, localY, localZ).is(ModBlocks.MICROPHONE)) {
-							continue;
-						}
-						trackMicrophone(level, new BlockPos(chunkMinX + localX, sectionMinY + localY, chunkMinZ + localZ));
+					if (!section.getBlockState(localX, localY, localZ).is(ModBlocks.MICROPHONE)) {
+						continue;
 					}
+					BlockPos microphonePos = new BlockPos(chunkMinX + localX, sectionMinY + localY, chunkMinZ + localZ);
+					trackMicrophone(level, microphonePos);
+					MicrophoneBlock.ensureDisplay(level, microphonePos);
+				}
 				}
 			}
 		}
