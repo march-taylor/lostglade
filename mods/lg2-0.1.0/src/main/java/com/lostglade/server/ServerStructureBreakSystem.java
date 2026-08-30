@@ -118,6 +118,12 @@ public final class ServerStructureBreakSystem {
 	}
 
 	public static void applyStructureDisplayTags(Display.ItemDisplay display, BlockPos anchor, Direction.Axis axis) {
+		if (display == null || anchor == null || axis == null) {
+			return;
+		}
+		display.getTags().removeIf(tag -> tag.equals(DISPLAY_ROOT_TAG)
+				|| tag.startsWith(DISPLAY_ANCHOR_PREFIX)
+				|| tag.startsWith(DISPLAY_AXIS_PREFIX));
 		display.addTag(DISPLAY_ROOT_TAG);
 		display.addTag(DISPLAY_ANCHOR_PREFIX + anchor.getX() + "," + anchor.getY() + "," + anchor.getZ());
 		display.addTag(DISPLAY_AXIS_PREFIX + (axis == Direction.Axis.X ? "x" : "z"));
@@ -143,12 +149,20 @@ public final class ServerStructureBreakSystem {
 			ItemDisplayHitboxHelper.clear(itemDisplay);
 			Optional<BlockPos> taggedAnchor = parseAnchorTag(itemDisplay);
 			Optional<Direction.Axis> taggedAxis = parseAxisTag(itemDisplay);
-			if (taggedAnchor.isEmpty() || taggedAxis.isEmpty()) {
-				itemDisplay.discard();
-				continue;
+			if (taggedAnchor.isEmpty()
+					|| taggedAxis.isEmpty()
+					|| !isWholeStructurePresent(level, getStructurePositions(taggedAnchor.get(), taggedAxis.get()))) {
+				Optional<DisplayStructureKey> structureAtDisplay = resolveStructureAtDisplayPosition(level, itemDisplay);
+				if (structureAtDisplay.isEmpty()) {
+					itemDisplay.discard();
+					continue;
+				}
+				taggedAnchor = Optional.of(structureAtDisplay.get().anchor());
+				taggedAxis = Optional.of(structureAtDisplay.get().axis());
+				applyStructureDisplayTags(itemDisplay, taggedAnchor.get(), taggedAxis.get());
 			}
-			List<BlockPos> positions = getStructurePositions(taggedAnchor.get(), taggedAxis.get());
-			if (!isWholeStructurePresent(level, positions)) {
+
+			if (taggedAnchor.isEmpty() || taggedAxis.isEmpty()) {
 				itemDisplay.discard();
 				continue;
 			}
@@ -189,24 +203,53 @@ public final class ServerStructureBreakSystem {
 					&& taggedAxis.isPresent()
 					&& taggedAnchor.get().equals(anchor)
 					&& taggedAxis.get() == axis;
-			boolean sameColumn = taggedAnchor.isPresent()
-					&& taggedAnchor.get().getX() == anchor.getX()
-					&& taggedAnchor.get().getZ() == anchor.getZ();
-			boolean orphanedNearby = taggedAnchor.isEmpty()
-					&& itemDisplay.distanceToSqr(expectedX, expectedY, expectedZ) <= 16.0D;
 			if (exactMatch) {
 				if (keeper == null) {
 					keeper = itemDisplay;
 				} else {
 					itemDisplay.discard();
 				}
+			}
+		}
+
+		for (Display.ItemDisplay itemDisplay : displays) {
+			if (itemDisplay == keeper || itemDisplay.isRemoved()) {
 				continue;
 			}
+			if (itemDisplay.distanceToSqr(expectedX, expectedY, expectedZ) <= 1.0D) {
+				if (keeper == null) {
+					keeper = itemDisplay;
+					applyStructureDisplayTags(keeper, anchor, axis);
+				} else {
+					itemDisplay.discard();
+				}
+				continue;
+			}
+
+			Optional<BlockPos> taggedAnchor = parseAnchorTag(itemDisplay);
+			boolean sameColumn = taggedAnchor.isPresent()
+					&& taggedAnchor.get().getX() == anchor.getX()
+					&& taggedAnchor.get().getZ() == anchor.getZ();
+			boolean orphanedNearby = taggedAnchor.isEmpty()
+					&& itemDisplay.distanceToSqr(expectedX, expectedY, expectedZ) <= 16.0D;
 			if (sameColumn || orphanedNearby) {
 				itemDisplay.discard();
 			}
 		}
 		return keeper;
+	}
+
+	private static Optional<DisplayStructureKey> resolveStructureAtDisplayPosition(ServerLevel level, Display.ItemDisplay display) {
+		if (level == null || display == null) {
+			return Optional.empty();
+		}
+		BlockPos anchor = BlockPos.containing(display.getX(), display.getY() - 1.5D, display.getZ());
+		for (Direction.Axis axis : List.of(Direction.Axis.X, Direction.Axis.Z)) {
+			if (isWholeStructurePresent(level, getStructurePositions(anchor, axis))) {
+				return Optional.of(new DisplayStructureKey(anchor.immutable(), axis));
+			}
+		}
+		return Optional.empty();
 	}
 
 	public static boolean isInternalStructureRemoval(ServerLevel level, BlockPos pos) {

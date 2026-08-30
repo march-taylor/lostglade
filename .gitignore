@@ -58,3 +58,4 @@
 .DS_Store
 /.codex
 /server-secrets/*.properties
+shell.nix

@@ -9,7 +9,6 @@ attached to the right upgrades as long as the component remains near that path.
 """
 from __future__ import annotations
 
-import itertools
 import json
 from collections import deque
 from dataclasses import dataclass
@@ -33,6 +32,8 @@ FRAMES_PER_TRANSITION = 14
 POTENTIAL_FILL = 0.45
 LOWER_INVENTORY_ORIGIN = (16, 93)
 SLOT_PITCH = 18
+DRONE_MENU_INDICATOR_TARGET = "it_drone_scout"
+DRONE_MAIN_PATH_END = 0.55
 
 
 @dataclass(frozen=True)
@@ -47,6 +48,8 @@ class Edge:
     target: str
     start: tuple[float, float]
     end: tuple[float, float]
+    reveal_start: float = 0.0
+    reveal_end: float = 1.0
 
     @property
     def midpoint(self) -> tuple[float, float]:
@@ -58,6 +61,8 @@ class Segment:
     target: str
     pixels: frozenset[tuple[int, int]]
     distances_from_start: dict[tuple[int, int], int]
+    reveal_start: float = 0.0
+    reveal_end: float = 1.0
 
     @property
     def length(self) -> int:
@@ -133,7 +138,31 @@ def build_edges(upgrades: list[Upgrade]) -> list[Edge]:
             continue
         for requirement in upgrade.requirements:
             if requirement in by_id:
-                edges.append(Edge(upgrade.upgrade_id, by_id[requirement].center, upgrade.center))
+                reveal_end = (
+                    DRONE_MAIN_PATH_END
+                    if upgrade.upgrade_id == DRONE_MENU_INDICATOR_TARGET
+                    else 1.0
+                )
+                edges.append(Edge(
+                    upgrade.upgrade_id,
+                    by_id[requirement].center,
+                    upgrade.center,
+                    reveal_end=reveal_end,
+                ))
+
+    # This is not a prerequisite: buying the drone unlocks its separate tuning
+    # menu. The two short arrows communicate that action. They begin only after
+    # the horizontal screen -> drone path has reached the button, then both
+    # reveal from left to right at the same time.
+    drone = by_id.get(DRONE_MENU_INDICATOR_TARGET)
+    if drone is not None:
+        for start_offset, end_offset in (((-4, -8), (1, -6)), ((-4, 7), (1, 9))):
+            edges.append(Edge(
+                DRONE_MENU_INDICATOR_TARGET,
+                (drone.center[0] + start_offset[0], drone.center[1] + start_offset[1]),
+                (drone.center[0] + end_offset[0], drone.center[1] + end_offset[1]),
+                reveal_start=DRONE_MAIN_PATH_END,
+            ))
     return edges
 
 
@@ -156,29 +185,48 @@ def distances_from_edge_start(component: set[tuple[int, int]], edge: Edge) -> di
 def map_components_to_upgrades(
         components: list[set[tuple[int, int]]], edges: list[Edge]
 ) -> dict[str, list[Segment]]:
-    if len(components) != len(edges):
-        raise ValueError(
-            f"The artwork has {len(components)} fill components, but the IT requirements graph has {len(edges)} edges"
-        )
-    centers = [component_center(component) for component in components]
-    edge_centers = [edge.midpoint for edge in edges]
+    if not components or not edges:
+        raise ValueError("The IT bar needs both coloured components and upgrade paths")
 
-    def cost(component_index: int, edge_index: int) -> float:
-        x, y = centers[component_index]
-        edge_x, edge_y = edge_centers[edge_index]
+    def cost(component: set[tuple[int, int]], edge: Edge) -> float:
+        x, y = component_center(component)
+        edge_x, edge_y = edge.midpoint
         return (x - edge_x) ** 2 + (y - edge_y) ** 2
 
-    assignment = min(
-        itertools.permutations(range(len(edges))),
-        key=lambda permutation: sum(cost(component_index, edge_index) for component_index, edge_index in enumerate(permutation)),
-    )
+    components_by_edge: dict[Edge, list[set[tuple[int, int]]]] = {}
+    for component in components:
+        # A hand-drawn arrow may contain several disconnected strokes (for
+        # example, the two halves of a chevron). Each stroke follows the
+        # nearest semantic path instead of forcing the artwork to contain one
+        # connected component per path.
+        edge = min(edges, key=lambda candidate: cost(component, candidate))
+        components_by_edge.setdefault(edge, []).append(component)
+
     mapped: dict[str, list[Segment]] = {}
-    for component_index, edge_index in enumerate(assignment):
-        edge = edges[edge_index]
-        component = components[component_index]
-        mapped.setdefault(edge.target, []).append(
-            Segment(edge.target, frozenset(component), distances_from_edge_start(component, edge))
-        )
+    for edge, edge_components in components_by_edge.items():
+        delta_x = edge.end[0] - edge.start[0]
+        delta_y = edge.end[1] - edge.start[1]
+        length_squared = max(1.0E-6, delta_x * delta_x + delta_y * delta_y)
+
+        def path_progress(component: set[tuple[int, int]]) -> float:
+            x, y = component_center(component)
+            return ((x - edge.start[0]) * delta_x + (y - edge.start[1]) * delta_y) / length_squared
+
+        # Separate strokes of one arrow reveal in the same order as the path.
+        # Thus a manually redrawn chevron keeps its left-to-right motion even
+        # when transparent pixels split it into multiple components.
+        ordered_components = sorted(edge_components, key=path_progress)
+        duration = (edge.reveal_end - edge.reveal_start) / len(ordered_components)
+        for index, component in enumerate(ordered_components):
+            mapped.setdefault(edge.target, []).append(
+                Segment(
+                    edge.target,
+                    frozenset(component),
+                    distances_from_edge_start(component, edge),
+                    edge.reveal_start + duration * index,
+                    edge.reveal_start + duration * (index + 1),
+                )
+            )
     return mapped
 
 
@@ -236,7 +284,9 @@ def state_amounts(purchased: frozenset[str], upgrades: list[Upgrade]) -> dict[st
 def reveal_amount(segment: Segment, progress: float, start_amount: float, end_amount: float, pixel: tuple[int, int]) -> float:
     # Distances are measured along the actual coloured component, so an L-shaped
     # arrow fills around its corner instead of being clipped by a rectangular mask.
-    travelled = max(0.0, min(1.0, progress)) * (segment.length + 1)
+    duration = max(1.0E-6, segment.reveal_end - segment.reveal_start)
+    segment_progress = max(0.0, min(1.0, (progress - segment.reveal_start) / duration))
+    travelled = segment_progress * (segment.length + 1)
     pixel_progress = max(0.0, min(1.0, travelled - segment.distances_from_start[pixel]))
     return start_amount + (end_amount - start_amount) * pixel_progress
 
