@@ -1,6 +1,7 @@
 package com.lostglade.mixin;
 
 import com.lostglade.server.CopperManGogglesSystem;
+import com.lostglade.server.ItRecipeBookSystem;
 import com.lostglade.server.MarkShieldRecipeSystem;
 import net.minecraft.network.protocol.game.ClientboundContainerSetSlotPacket;
 import net.minecraft.server.level.ServerLevel;
@@ -36,7 +37,8 @@ public abstract class CraftingMenuCopperGogglesMixin {
 
 		ItemStack result = resultContainer.getItem(0);
 		if (CopperManGogglesSystem.canShowCraftingResult(serverPlayer, recipeHolder, result)
-				&& MarkShieldRecipeSystem.canShowCraftingResult(serverPlayer, recipeHolder, result)) {
+				&& MarkShieldRecipeSystem.canShowCraftingResult(serverPlayer, recipeHolder, result)
+				&& ItRecipeBookSystem.canShowCraftingResult(serverPlayer, recipeHolder, result)) {
 			result = MarkShieldRecipeSystem.decorateCraftingResult(serverPlayer, recipeHolder, result);
 			resultContainer.setItem(0, result);
 			menu.setRemoteSlot(0, result);

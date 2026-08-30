@@ -1,14 +1,14 @@
 {
   "type": "minecraft:crafting_shaped",
   "pattern": [
-    "N I",
-    " IA",
-    "N I"
+    "= #",
+    " #.",
+    "= #"
   ],
   "key": {
-    "N": "minecraft:gold_nugget",
-    "I": "minecraft:iron_ingot",
-    "A": "minecraft:amethyst_shard"
+    "=": "minecraft:gold_ingot",
+    "#": "minecraft:lapis_lazuli",
+    ".": "minecraft:redstone"
   },
   "result": {
     "id": "lg2:bluetooth_adapter"

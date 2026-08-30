@@ -16,6 +16,7 @@ import eu.pb4.polymer.resourcepack.api.PolymerResourcePackUtils;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.minecraft.commands.SharedSuggestionProvider;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.arguments.EntityArgument;
@@ -215,7 +216,13 @@ public final class ServerUpgradeUiSystem {
 		ServerLifecycleEvents.SERVER_STARTED.register(server -> {
 			loadState(server);
 			UpgradeUiConfig.load();
+			for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+				ItRecipeBookSystem.syncPlayerRecipeBook(player);
+			}
 		});
+		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) ->
+				server.execute(() -> ItRecipeBookSystem.syncPlayerRecipeBook(handler.player))
+		);
 		ServerLifecycleEvents.SERVER_STOPPING.register(ServerUpgradeUiSystem::saveState);
 		ServerTickEvents.END_SERVER_TICK.register(ServerUpgradeUiSystem::tickAnimatedErasTitles);
 
@@ -446,6 +453,7 @@ public final class ServerUpgradeUiSystem {
 				CartelSecretRecipeBookSystem.syncPlayerRecipeBook(player);
 				CopperManGogglesSystem.syncPlayerRecipeBook(player);
 				MarkShieldRecipeSystem.syncPlayerRecipeBook(player);
+				ItRecipeBookSystem.syncPlayerRecipeBook(player);
 			}
 		}
 		saveState(server);
@@ -2628,6 +2636,7 @@ public final class ServerUpgradeUiSystem {
 		CartelSecretRecipeBookSystem.syncPlayerRecipeBook(player);
 		CopperManGogglesSystem.syncPlayerRecipeBook(player);
 		MarkShieldRecipeSystem.syncPlayerRecipeBook(player);
+		ItRecipeBookSystem.syncPlayerRecipeBook(player);
 	}
 
 	private static Path getStatePath(MinecraftServer server) {

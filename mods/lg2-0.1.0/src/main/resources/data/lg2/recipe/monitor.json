@@ -1,16 +1,14 @@
 {
   "type": "minecraft:crafting_shaped",
   "pattern": [
-    "-G-",
-    "RBR",
-    "___"
+    "###",
+    "#T#",
+    "..."
   ],
   "key": {
-    "-": "minecraft:iron_ingot",
-    "G": "minecraft:glass_pane",
-    "R": "minecraft:redstone",
-    "B": "minecraft:black_concrete",
-    "_": "minecraft:black_carpet"
+    "#": "minecraft:iron_ingot",
+    "T": "minecraft:tinted_glass",
+    ".": "minecraft:redstone"
   },
   "result": {
     "id": "lg2:monitor"

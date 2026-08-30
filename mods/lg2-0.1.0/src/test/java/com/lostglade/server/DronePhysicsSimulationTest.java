@@ -32,7 +32,7 @@ public final class DronePhysicsSimulationTest {
 		sourceCombatDroneInteractionPrioritizesTuningThenMenuThenControl();
 		sourceControlledOperatorDisplayRewriteAvoidsNearbyEntityScans();
 		sourceTurretInventoryDoesNotDeleteRejectedItems();
-		sourceDroneAutomationSupportsDispensersAndHoppers();
+		sourceDroneAutomationKeepsTuningPlayerOnlyAndSupportsHoppers();
 		sourceTurretPotionsUseStraightNoGravityFlight();
 		sourceDroneEntityLoadCleanupDefersDiscard();
 		sourceControlExitClearsStaleVelocityWhenDrivesAreIdle();
@@ -483,7 +483,7 @@ public final class DronePhysicsSimulationTest {
 		);
 	}
 
-	private static void sourceDroneAutomationSupportsDispensersAndHoppers() throws Exception {
+	private static void sourceDroneAutomationKeepsTuningPlayerOnlyAndSupportsHoppers() throws Exception {
 		Path projectDir = Path.of("").toAbsolutePath();
 		String server = Files.readString(projectDir.resolve("src/main/java/com/lostglade/server/DroneSystem.java"));
 		String register = section(server, "public static void register()", "public static InteractionResult placeDrone");
@@ -493,12 +493,11 @@ public final class DronePhysicsSimulationTest {
 		require(
 				register.contains("registerDroneDispenseBehaviors();")
 						&& dispenserHelpers.contains("registerDroneDispenseBehavior(ModItems.DRONE, DroneSystem::tryDispensePlaceDrone);")
-						&& dispenserHelpers.contains("registerDroneDispenseBehavior(Items.TNT, DroneSystem::tryDispenseTuneDrone);")
-						&& dispenserHelpers.contains("registerDroneDispenseBehavior(Items.DISPENSER, DroneSystem::tryDispenseTuneDrone);")
 						&& dispenserHelpers.contains("spawnConfiguredDrone(source.level(), stack.copy(), spawnPos, facing.toYRot())")
-						&& dispenserHelpers.contains("findDroneRootInFront(source)")
-						&& dispenserHelpers.contains("DispenserBlock.registerBehavior(item, (source, stack) -> {"),
-				"drone automation must register dispenser behaviors for placing drones and installing tuning modules"
+						&& dispenserHelpers.contains("DispenserBlock.registerBehavior(item, (source, stack) -> {")
+						&& !dispenserHelpers.contains("tryDispenseTuneDrone")
+						&& !dispenserHelpers.contains("findDroneRootInFront"),
+				"drone automation must place drones but leave all tuning modules to players with the matching upgrade"
 		);
 		require(
 				hopperHelpers.contains("HopperBlockEntity hopper")

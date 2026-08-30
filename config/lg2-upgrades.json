@@ -1150,7 +1150,7 @@
           "targetScreenId": "",
           "upgradeId": "world_nether",
           "pricesBitcoins": [
-            1000
+            1200
           ],
           "icon": {
             "fallbackItem": "minecraft:obsidian",
@@ -1226,7 +1226,7 @@
           "targetScreenId": "",
           "upgradeId": "world_end",
           "pricesBitcoins": [
-            1200
+            1800
           ],
           "icon": {
             "fallbackItem": "minecraft:ender_eye",
@@ -1824,7 +1824,7 @@
           "targetScreenId": "",
           "upgradeId": "era_stone",
           "pricesBitcoins": [
-            150
+            100
           ],
           "icon": {
             "fallbackItem": "minecraft:stone_pickaxe",
@@ -2143,7 +2143,7 @@
           "targetScreenId": "",
           "upgradeId": "era_netherite",
           "pricesBitcoins": [
-            2000
+            2400
           ],
           "icon": {
             "fallbackItem": "minecraft:netherite_ingot",
@@ -2744,7 +2744,7 @@
           "targetScreenId": "",
           "upgradeId": "mechanic_redstone",
           "pricesBitcoins": [
-            400
+            800
           ],
           "icon": {
             "fallbackItem": "minecraft:redstone",
@@ -2820,7 +2820,7 @@
           "targetScreenId": "",
           "upgradeId": "mechanic_brewing",
           "pricesBitcoins": [
-            700
+            500
           ],
           "icon": {
             "fallbackItem": "minecraft:brewing_stand",
@@ -3048,7 +3048,7 @@
           "targetScreenId": "",
           "upgradeId": "mechanic_villagers",
           "pricesBitcoins": [
-            2000
+            2500
           ],
           "icon": {
             "fallbackItem": "minecraft:emerald",
@@ -3646,7 +3646,7 @@
           "targetScreenId": "",
           "upgradeId": "it_camera",
           "pricesBitcoins": [
-            600
+            400
           ],
           "icon": {
             "fallbackItem": "lg2:camera",
@@ -3712,7 +3712,7 @@
           "targetScreenId": "",
           "upgradeId": "it_microphone",
           "pricesBitcoins": [
-            450
+            600
           ],
           "icon": {
             "fallbackItem": "lg2:microphone",
@@ -3783,7 +3783,7 @@
           "targetScreenId": "",
           "upgradeId": "it_speaker",
           "pricesBitcoins": [
-            450
+            600
           ],
           "icon": {
             "fallbackItem": "lg2:speaker",
@@ -3854,7 +3854,7 @@
           "targetScreenId": "",
           "upgradeId": "it_screen",
           "pricesBitcoins": [
-            1000
+            2000
           ],
           "icon": {
             "fallbackItem": "lg2:monitor",
@@ -3929,7 +3929,7 @@
           "targetScreenId": "it_drones",
           "upgradeId": "it_drone_scout",
           "pricesBitcoins": [
-            1800
+            1600
           ],
           "icon": {
             "fallbackItem": "lg2:drone",
@@ -4000,7 +4000,7 @@
           "targetScreenId": "",
           "upgradeId": "it_bluetooth_adapter",
           "pricesBitcoins": [
-            700
+            1500
           ],
           "icon": {
             "fallbackItem": "lg2:bluetooth_adapter",
@@ -4593,7 +4593,7 @@
           "targetScreenId": "",
           "upgradeId": "it_camera",
           "pricesBitcoins": [
-            600
+            400
           ],
           "icon": {
             "fallbackItem": "minecraft:spyglass",
@@ -4674,7 +4674,7 @@
           "targetScreenId": "",
           "upgradeId": "it_microphone",
           "pricesBitcoins": [
-            450
+            600
           ],
           "icon": {
             "fallbackItem": "lg2:camera",
@@ -4755,7 +4755,7 @@
           "targetScreenId": "",
           "upgradeId": "it_speaker",
           "pricesBitcoins": [
-            450
+            600
           ],
           "icon": {
             "fallbackItem": "minecraft:note_block",
@@ -5503,7 +5503,7 @@
           "targetScreenId": "",
           "upgradeId": "it_screen",
           "pricesBitcoins": [
-            1000
+            2000
           ],
           "icon": {
             "fallbackItem": "minecraft:map",
@@ -6106,7 +6106,7 @@
           "targetScreenId": "",
           "upgradeId": "it_drone_kamikaze",
           "pricesBitcoins": [
-            1000
+            900
           ],
           "icon": {
             "fallbackItem": "minecraft:rabbit_hide",
@@ -6163,7 +6163,7 @@
           "targetScreenId": "",
           "upgradeId": "it_drone_combat",
           "pricesBitcoins": [
-            3000
+            1200
           ],
           "icon": {
             "fallbackItem": "minecraft:dispenser",
@@ -6220,7 +6220,7 @@
           "targetScreenId": "",
           "upgradeId": "it_drone_paint",
           "pricesBitcoins": [
-            650
+            300
           ],
           "icon": {
             "fallbackItem": "minecraft:red_dye",
@@ -6277,7 +6277,7 @@
           "targetScreenId": "",
           "upgradeId": "it_drone_microphone",
           "pricesBitcoins": [
-            900
+            500
           ],
           "icon": {
             "fallbackItem": "lg2:microphone",
@@ -6334,7 +6334,7 @@
           "targetScreenId": "",
           "upgradeId": "it_drone_night_vision",
           "pricesBitcoins": [
-            1200
+            700
           ],
           "icon": {
             "fallbackItem": "minecraft:spider_eye",
@@ -6391,7 +6391,7 @@
           "targetScreenId": "",
           "upgradeId": "it_drone_auto_aim",
           "pricesBitcoins": [
-            1400
+            1000
           ],
           "icon": {
             "fallbackItem": "minecraft:calibrated_sculk_sensor",

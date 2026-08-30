@@ -1,15 +1,15 @@
 {
   "type": "minecraft:crafting_shaped",
   "pattern": [
-    "III",
-    "CDC",
-    "IBI"
+    "###",
+    "CMC",
+    "#S#"
   ],
   "key": {
-    "I": "minecraft:iron_ingot",
+    "#": "minecraft:iron_ingot",
     "C": "minecraft:comparator",
-    "D": "lg2:camera",
-    "B": "#minecraft:buttons"
+    "M": "lg2:camera",
+    "S": "minecraft:stone_button"
   },
   "result": {
     "id": "lg2:drone"

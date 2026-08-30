@@ -1,6 +1,7 @@
 package com.lostglade.mixin;
 
 import com.lostglade.server.CopperManGogglesSystem;
+import com.lostglade.server.ItRecipeBookSystem;
 import com.lostglade.server.MarkShieldRecipeSystem;
 import com.lostglade.server.ServerMechanicsGateSystem;
 import net.minecraft.server.level.ServerPlayer;
@@ -36,6 +37,11 @@ public abstract class ResultSlotMechanicsGateMixin {
 		}
 
 		if (!MarkShieldRecipeSystem.canTakeCraftResult(serverPlayer, this.getItem())) {
+			cir.setReturnValue(false);
+			return;
+		}
+
+		if (!ItRecipeBookSystem.canTakeCraftResult(serverPlayer, this.getItem())) {
 			cir.setReturnValue(false);
 		}
 	}

@@ -1,6 +1,7 @@
 package com.lostglade.mixin;
 
 import com.lostglade.server.CopperManGogglesSystem;
+import com.lostglade.server.ItRecipeBookSystem;
 import com.lostglade.server.MarkShieldRecipeSystem;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.item.crafting.CraftingInput;
@@ -24,7 +25,9 @@ public abstract class CrafterBlockCopperGogglesMixin {
 	) {
 		Optional<RecipeHolder<CraftingRecipe>> result = cir.getReturnValue();
 		if (result.isPresent()
-				&& (!CopperManGogglesSystem.canAutoCraft(result.get()) || !MarkShieldRecipeSystem.canAutoCraft(result.get()))) {
+				&& (!CopperManGogglesSystem.canAutoCraft(result.get())
+						|| !MarkShieldRecipeSystem.canAutoCraft(result.get())
+						|| !ItRecipeBookSystem.canAutoCraft(result.get()))) {
 			cir.setReturnValue(Optional.empty());
 		}
 	}
