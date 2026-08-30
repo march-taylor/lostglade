@@ -6099,7 +6099,7 @@
         },
         "kamikaze": {
           "enabled": true,
-          "slot": 3,
+          "slot": 30,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -6156,7 +6156,7 @@
         },
         "combat": {
           "enabled": true,
-          "slot": 5,
+          "slot": 32,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -6213,7 +6213,7 @@
         },
         "paint": {
           "enabled": true,
-          "slot": 23,
+          "slot": 50,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -6252,10 +6252,10 @@
           "lore": {
             "values": {
               "ru_ru": [
-                "Установка:  красный краситель"
+                "Установка:  краситель"
               ],
               "en_us": [
-                "Installation:  red dye"
+                "Installation:  dye"
               ]
             }
           },
@@ -6270,7 +6270,7 @@
         },
         "microphone_module": {
           "enabled": true,
-          "slot": 25,
+          "slot": 52,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -6309,10 +6309,10 @@
           "lore": {
             "values": {
               "ru_ru": [
-                "Установка:  нотный блок"
+                "Установка:  микрофон"
               ],
               "en_us": [
-                "Installation:  note block"
+                "Installation:  microphone"
               ]
             }
           },
@@ -6327,7 +6327,7 @@
         },
         "night_vision": {
           "enabled": true,
-          "slot": 21,
+          "slot": 48,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -6366,10 +6366,10 @@
           "lore": {
             "values": {
               "ru_ru": [
-                "Установка:  золотая морковь"
+                "Установка:  салатовое стекло"
               ],
               "en_us": [
-                "Installation:  golden carrot"
+                "Installation:  lime stained glass"
               ]
             }
           },
@@ -6384,7 +6384,7 @@
         },
         "auto_aim": {
           "enabled": true,
-          "slot": 19,
+          "slot": 46,
           "hitboxWidth": 1,
           "hitboxHeight": 1,
           "type": "purchase_upgrade",
@@ -6423,10 +6423,10 @@
           "lore": {
             "values": {
               "ru_ru": [
-                "Установка:  мишень"
+                "Установка:  скалк-сенсор"
               ],
               "en_us": [
-                "Installation:  target"
+                "Installation:  sculk sensor"
               ]
             }
           },

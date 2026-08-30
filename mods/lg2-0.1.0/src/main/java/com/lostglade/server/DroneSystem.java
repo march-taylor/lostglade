@@ -752,18 +752,8 @@ public final class DroneSystem {
 
 	private static void registerDroneDispenseBehaviors() {
 		registerDroneDispenseBehavior(ModItems.DRONE, DroneSystem::tryDispensePlaceDrone);
-		registerDroneDispenseBehavior(Items.TNT, DroneSystem::tryDispenseTuneDrone);
-		registerDroneDispenseBehavior(Items.RABBIT_HIDE, DroneSystem::tryDispenseTuneDrone);
-		registerDroneDispenseBehavior(Items.DISPENSER, DroneSystem::tryDispenseTuneDrone);
-		registerDroneDispenseBehavior(Items.SPIDER_EYE, DroneSystem::tryDispenseTuneDrone);
-		registerDroneDispenseBehavior(Items.SCULK_SENSOR, DroneSystem::tryDispenseTuneDrone);
-		registerDroneDispenseBehavior(ModBlocks.MICROPHONE_ITEM, DroneSystem::tryDispenseTuneDrone);
-		for (DyeColor color : DyeColor.values()) {
-			Item dyeItem = dyeItemForColor(color);
-			if (dyeItem != null && dyeItem != Items.AIR) {
-				registerDroneDispenseBehavior(dyeItem, DroneSystem::tryDispenseTuneDrone);
-			}
-		}
+		// Tuning is deliberately player-only: each module must check that its
+		// corresponding server-menu upgrade has been purchased.
 	}
 
 	private static void registerDroneDispenseBehavior(Item item, DroneDispenseHandler handler) {
@@ -6577,16 +6567,16 @@ public final class DroneSystem {
 		}
 		DroneItem.DroneType type = resolveDroneType(root);
 		if (type == DroneItem.DroneType.KAMIKAZE) {
-			spawnDroneRecoveryItem(root, level, Items.RABBIT_HIDE);
+			spawnDroneRecoveryItem(root, level, Items.TNT);
 		} else if (type == DroneItem.DroneType.COMBAT) {
-			spawnDroneRecoveryItem(root, level, Items.DISPENSER);
+			spawnDroneRecoveryItem(root, level, Items.CROSSBOW);
 		}
 		int kamikazePower = resolveDroneKamikazePower(root);
 		if (kamikazePower > DRONE_KAMIKAZE_NO_POWER) {
 			spawnDroneRecoveryItem(root, level, new ItemStack(Items.TNT, kamikazePower));
 		}
 		if (hasDroneNightVisionModule(root)) {
-			spawnDroneRecoveryItem(root, level, Items.SPIDER_EYE);
+			spawnDroneRecoveryItem(root, level, Items.LIME_STAINED_GLASS);
 		}
 		if (hasDroneAutoAimModule(root)) {
 			spawnDroneRecoveryItem(root, level, Items.SCULK_SENSOR);
@@ -6802,17 +6792,15 @@ public final class DroneSystem {
 
 		if (heldStack.is(Items.TNT)) {
 			NEXT_DRONE_ARM_ALLOWED_TICK.put(root.getUUID(), now + 1L);
-			return tryArmDroneWithTnt(player, root, heldStack);
+			return resolveDroneType(root) == DroneItem.DroneType.KAMIKAZE
+					? tryArmDroneWithTnt(player, root, heldStack)
+					: tryInstallDroneType(player, root, heldStack, DroneItem.DroneType.KAMIKAZE, Items.TNT);
 		}
-		if (heldStack.is(Items.RABBIT_HIDE)) {
+		if (heldStack.is(Items.CROSSBOW)) {
 			NEXT_DRONE_ARM_ALLOWED_TICK.put(root.getUUID(), now + 1L);
-			return tryInstallDroneType(player, root, heldStack, DroneItem.DroneType.KAMIKAZE, Items.RABBIT_HIDE);
+			return tryInstallDroneType(player, root, heldStack, DroneItem.DroneType.COMBAT, Items.CROSSBOW);
 		}
-		if (heldStack.is(Items.DISPENSER)) {
-			NEXT_DRONE_ARM_ALLOWED_TICK.put(root.getUUID(), now + 1L);
-			return tryInstallDroneType(player, root, heldStack, DroneItem.DroneType.COMBAT, Items.DISPENSER);
-		}
-		if (heldStack.is(Items.SPIDER_EYE)) {
+		if (heldStack.is(Items.LIME_STAINED_GLASS)) {
 			NEXT_DRONE_ARM_ALLOWED_TICK.put(root.getUUID(), now + 1L);
 			return tryInstallNightVisionModule(player, root, heldStack);
 		}
@@ -6896,8 +6884,8 @@ public final class DroneSystem {
 		}
 
 		Item returnedTypeItem = switch (currentType) {
-			case KAMIKAZE -> Items.RABBIT_HIDE;
-			case COMBAT -> Items.DISPENSER;
+			case KAMIKAZE -> Items.TNT;
+			case COMBAT -> Items.CROSSBOW;
 			default -> null;
 		};
 		setDroneType(root, targetType);

@@ -5,46 +5,48 @@
       "file": "lg2:font/tooltip_coin.png",
       "ascent": 7,
       "height": 8,
-      "chars": ["\uE981"]
+      "chars": [
+        ""
+      ]
     },
     {
       "type": "bitmap",
-      "file": "minecraft:textures/block/tnt_side.png",
+      "file": "lg2:font/drone_install_tnt.png",
       "ascent": 8,
       "height": 16,
       "chars": ["\uE100"]
     },
     {
       "type": "bitmap",
-      "file": "minecraft:textures/item/crossbow.png",
+      "file": "lg2:font/drone_install_crossbow.png",
       "ascent": 8,
       "height": 16,
       "chars": ["\uE101"]
     },
     {
       "type": "bitmap",
-      "file": "minecraft:textures/block/target_side.png",
+      "file": "lg2:font/drone_install_sculk_sensor.png",
       "ascent": 8,
       "height": 16,
       "chars": ["\uE102"]
     },
     {
       "type": "bitmap",
-      "file": "minecraft:textures/item/golden_carrot.png",
+      "file": "lg2:font/drone_install_lime_stained_glass.png",
       "ascent": 8,
       "height": 16,
       "chars": ["\uE103"]
     },
     {
       "type": "bitmap",
-      "file": "minecraft:textures/item/red_dye.png",
+      "file": "lg2:font/drone_install_red_dye.png",
       "ascent": 8,
       "height": 16,
       "chars": ["\uE104"]
     },
     {
       "type": "bitmap",
-      "file": "minecraft:textures/block/note_block.png",
+      "file": "lg2:font/drone_install_microphone.png",
       "ascent": 8,
       "height": 16,
       "chars": ["\uE105"]
