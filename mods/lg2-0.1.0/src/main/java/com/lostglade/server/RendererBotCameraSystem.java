@@ -1,6 +1,7 @@
 package com.lostglade.server;
 
 import com.lostglade.Lg2;
+import com.lostglade.block.CameraBlock;
 import com.lostglade.block.ModBlocks;
 import com.lostglade.config.Lg2Config;
 import com.lostglade.item.ModItems;
@@ -1138,6 +1139,17 @@ public final class RendererBotCameraSystem {
 			return false;
 		}
 
+		// A live stream is rendered from explicit pose packets, not by making the
+		// client follow this entity.  It is therefore safe (and necessary) to
+		// remove the physical camera carrier from its shadow world.  Besides a
+		// player-held camera this also covers the ItemDisplay model of a placed
+		// camera, which otherwise can sit directly in front of its own lens.
+		Set<UUID> effectiveHiddenEntityUuids = resolveLiveStreamHiddenEntityUuids(
+				level,
+				cameraPos,
+				followEntityUuid,
+				hiddenEntityUuids
+		);
 		LiveStreamSpec desiredSpec = new LiveStreamSpec(
 				resolveRenderSessionId(level.dimension(), cameraPos, x, z, followEntityUuid),
 				level.dimension(),
@@ -1148,7 +1160,7 @@ public final class RendererBotCameraSystem {
 				yaw,
 				pitch,
 				followEntityUuid,
-				hiddenEntityUuids == null ? Set.of() : Set.copyOf(hiddenEntityUuids),
+				effectiveHiddenEntityUuids,
 				omnidirectionalChunkLoading,
 				Math.max(1, fullWidth),
 				Math.max(1, fullHeight),
@@ -1184,13 +1196,33 @@ public final class RendererBotCameraSystem {
 					// waiting for a moving anchor entity to be tracked in its shadow
 					// world; missing that entity produced a silent stream timeout.
 					null,
-						desiredSpec.fullWidth(),
+					List.copyOf(desiredSpec.hiddenEntityUuids()),
+					desiredSpec.fullWidth(),
 						desiredSpec.fullHeight(),
 						desiredSpec.fovDegrees(),
 						desiredSpec.targetFps()
 				)
 		);
 		return true;
+	}
+
+	private static Set<UUID> resolveLiveStreamHiddenEntityUuids(
+			ServerLevel level,
+			BlockPos cameraPos,
+			UUID followEntityUuid,
+			Set<UUID> requestedHiddenEntityUuids
+	) {
+		Set<UUID> hiddenEntityUuids = new LinkedHashSet<>();
+		if (requestedHiddenEntityUuids != null) {
+			hiddenEntityUuids.addAll(requestedHiddenEntityUuids);
+		}
+		if (followEntityUuid != null) {
+			hiddenEntityUuids.add(followEntityUuid);
+		}
+		if (cameraPos != null) {
+			hiddenEntityUuids.addAll(CameraBlock.getCameraDisplayEntityUuids(level, cameraPos));
+		}
+		return hiddenEntityUuids.isEmpty() ? Set.of() : Set.copyOf(hiddenEntityUuids);
 	}
 
 	/**

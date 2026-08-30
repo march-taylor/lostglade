@@ -46,6 +46,9 @@ import xyz.nucleoid.packettweaker.PacketContext;
 
 import java.util.List;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.Set;
+import java.util.UUID;
 
 public final class CameraBlock extends SimplePolymerBlock implements PolymerHeadBlock {
 	private final BlockState hitboxState;
@@ -205,6 +208,24 @@ public final class CameraBlock extends SimplePolymerBlock implements PolymerHead
 
 	public static Vec3 captureBaseOrigin(BlockPos cameraPos) {
 		return new Vec3(cameraPos.getX() + 0.5D, cameraPos.getY() + 0.25D, cameraPos.getZ() + 0.5D);
+	}
+
+	/**
+	 * Returns the visible model entity which belongs to this placed camera.
+	 * Shadow-camera feeds use this to keep their physical camera body out of
+	 * their own first-person image.
+	 */
+	public static Set<UUID> getCameraDisplayEntityUuids(ServerLevel level, BlockPos pos) {
+		if (level == null || pos == null) {
+			return Set.of();
+		}
+		Set<UUID> entityUuids = new LinkedHashSet<>();
+		for (Display.ItemDisplay display : CameraDisplayHelper.findDisplays(level, pos)) {
+			if (display != null && display.isAlive()) {
+				entityUuids.add(display.getUUID());
+			}
+		}
+		return entityUuids.isEmpty() ? Set.of() : Set.copyOf(entityUuids);
 	}
 
 	/** Returns the placed camera model for a Bluetooth selection outline. */

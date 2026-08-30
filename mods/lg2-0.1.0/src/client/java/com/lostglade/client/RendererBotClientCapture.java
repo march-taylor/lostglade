@@ -166,6 +166,7 @@ public final class RendererBotClientCapture {
 					warmupFrames
 			));
 		}
+		hideLiveStreamCameraCarriers(payload);
 		Lg2.LOGGER.info(
 				"Renderer bot started live stream {} at {} fps {}x{} (render {}x{}, warmup={})",
 				payload.streamId(),
@@ -588,6 +589,7 @@ public final class RendererBotClientCapture {
 			return false;
 		}
 		LiveStreamSession liveStream = liveStreamToRender;
+		hideLiveStreamCameraCarriers(liveStream.payload());
 		boolean rendered = RendererBotGpuCaptureBackend.isAvailable()
 				? RendererBotOffscreenWorldRenderer.renderToTarget(
 						client,
@@ -603,6 +605,15 @@ public final class RendererBotClientCapture {
 			clearLiveStreamFrameInFlight(liveStream.payload().streamId());
 		}
 		return rendered;
+	}
+
+	private static void hideLiveStreamCameraCarriers(RendererBotPayloads.RendererBotLiveStreamStartS2CPayload payload) {
+		if (payload == null || payload.hiddenEntityUuids().isEmpty()) {
+			return;
+		}
+		for (UUID entityUuid : payload.hiddenEntityUuids()) {
+			RendererBotShadowWorldManager.hideEntityFromSession(payload.renderSessionId(), entityUuid);
+		}
 	}
 
 	/**

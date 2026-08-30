@@ -15,9 +15,10 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class RendererBotPayloads {
-	public static final int PROTOCOL_VERSION = 22;
+	public static final int PROTOCOL_VERSION = 23;
 	private static final int MAX_CAPTURE_PAYLOAD_BYTES = 1_048_576;
 	private static final int MAX_SHADOW_PAYLOAD_BYTES = 2_097_152;
+	private static final int MAX_HIDDEN_CAMERA_ENTITIES = 32;
 	private static final AtomicBoolean REGISTERED = new AtomicBoolean(false);
 
 	private RendererBotPayloads() {
@@ -202,6 +203,7 @@ public final class RendererBotPayloads {
 			float expectedYaw,
 			float expectedPitch,
 			UUID followEntityUuid,
+			List<UUID> hiddenEntityUuids,
 			int fullWidth,
 			int fullHeight,
 			int fovDegrees,
@@ -210,6 +212,10 @@ public final class RendererBotPayloads {
 		public static final Type<RendererBotLiveStreamStartS2CPayload> TYPE = new Type<>(id("renderer_bot_live_stream_start"));
 		public static final StreamCodec<FriendlyByteBuf, RendererBotLiveStreamStartS2CPayload> STREAM_CODEC =
 				CustomPacketPayload.codec(RendererBotLiveStreamStartS2CPayload::write, RendererBotLiveStreamStartS2CPayload::new);
+
+		public RendererBotLiveStreamStartS2CPayload {
+			hiddenEntityUuids = hiddenEntityUuids == null ? List.of() : List.copyOf(hiddenEntityUuids);
+		}
 
 		public RendererBotLiveStreamStartS2CPayload(FriendlyByteBuf buffer) {
 			this(
@@ -222,6 +228,7 @@ public final class RendererBotPayloads {
 					buffer.readFloat(),
 					buffer.readFloat(),
 					buffer.readBoolean() ? buffer.readUUID() : null,
+					readHiddenCameraEntityUuids(buffer),
 					buffer.readVarInt(),
 					buffer.readVarInt(),
 					buffer.readVarInt(),
@@ -242,6 +249,7 @@ public final class RendererBotPayloads {
 			if (this.followEntityUuid != null) {
 				buffer.writeUUID(this.followEntityUuid);
 			}
+			writeHiddenCameraEntityUuids(buffer, this.hiddenEntityUuids);
 			buffer.writeVarInt(this.fullWidth);
 			buffer.writeVarInt(this.fullHeight);
 			buffer.writeVarInt(this.fovDegrees);
@@ -251,6 +259,32 @@ public final class RendererBotPayloads {
 		@Override
 		public Type<RendererBotLiveStreamStartS2CPayload> type() {
 			return TYPE;
+		}
+	}
+
+	private static List<UUID> readHiddenCameraEntityUuids(FriendlyByteBuf buffer) {
+		int count = buffer.readVarInt();
+		if (count < 0 || count > MAX_HIDDEN_CAMERA_ENTITIES) {
+			throw new IllegalArgumentException("Invalid hidden camera entity count: " + count);
+		}
+		List<UUID> entityUuids = new ArrayList<>(count);
+		for (int index = 0; index < count; index++) {
+			entityUuids.add(buffer.readUUID());
+		}
+		return List.copyOf(entityUuids);
+	}
+
+	private static void writeHiddenCameraEntityUuids(FriendlyByteBuf buffer, List<UUID> entityUuids) {
+		List<UUID> safeEntityUuids = entityUuids == null ? List.of() : entityUuids;
+		if (safeEntityUuids.size() > MAX_HIDDEN_CAMERA_ENTITIES) {
+			throw new IllegalArgumentException("Too many hidden camera entities: " + safeEntityUuids.size());
+		}
+		buffer.writeVarInt(safeEntityUuids.size());
+		for (UUID entityUuid : safeEntityUuids) {
+			if (entityUuid == null) {
+				throw new IllegalArgumentException("Hidden camera entity UUID must not be null");
+			}
+			buffer.writeUUID(entityUuid);
 		}
 	}
 
