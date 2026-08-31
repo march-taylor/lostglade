@@ -5,6 +5,7 @@ import com.lostglade.server.MonitorScreenSystem;
 import com.lostglade.server.RocketLaunchEventSystem;
 import com.lostglade.server.CameraOrientationStore;
 import com.lostglade.server.BluetoothLinkSystem;
+import com.lostglade.server.CameraRelocationSystem;
 import com.lostglade.server.PlacedDeviceNameStore;
 import com.lostglade.server.ServerSelectionHighlightSystem;
 import eu.pb4.polymer.core.api.block.PolymerBlockUtils;
@@ -134,11 +135,20 @@ public final class CameraBlock extends SimplePolymerBlock implements PolymerHead
 	protected void onPlace(BlockState state, Level level, BlockPos pos, BlockState oldState, boolean movedByPiston) {
 		super.onPlace(state, level, pos, oldState, movedByPiston);
 		if (level instanceof ServerLevel serverLevel) {
-			CameraOrientationStore.CameraPose pose = CameraOrientationStore.get(serverLevel, pos);
+			// Vanilla places the pulled block before the moving-piston ticker invokes
+			// its final callback. Commit the retained display here, while its source
+			// and destination are still known, so sticky pistons cannot leave the
+			// ItemDisplay at the old coordinate until somebody clicks the camera.
+			CameraRelocationSystem.finishPistonMoveAt(serverLevel, pos);
+			BlockPos logicalCameraPos = CameraRelocationSystem.logicalCameraPosition(serverLevel, pos);
+			boolean pistonDestinationPending = CameraRelocationSystem.isPistonCameraMoveDestinationPending(serverLevel, pos);
+			CameraOrientationStore.CameraPose pose = CameraOrientationStore.get(serverLevel, logicalCameraPos);
 			float yaw = pose != null ? pose.yaw() : state.getValue(HorizontalDirectionalBlock.FACING).toYRot();
 			float pitch = pose != null ? pose.pitch() : 0.0F;
-			CameraDisplayHelper.spawnOrUpdate(serverLevel, pos, yaw, pitch);
-			MonitorScreenSystem.onCameraNetworkChanged(serverLevel, pos);
+			if (!pistonDestinationPending) {
+				CameraDisplayHelper.spawnOrUpdate(serverLevel, pos, yaw, pitch);
+				MonitorScreenSystem.onCameraNetworkChanged(serverLevel, logicalCameraPos);
+			}
 		}
 	}
 
@@ -168,13 +178,22 @@ public final class CameraBlock extends SimplePolymerBlock implements PolymerHead
 	@Override
 	protected void neighborChanged(BlockState state, Level level, BlockPos pos, Block block, Orientation orientation, boolean notify) {
 		super.neighborChanged(state, level, pos, block, orientation, notify);
-		if (level instanceof ServerLevel serverLevel) {
-			MonitorScreenSystem.onCameraNetworkChanged(serverLevel, pos);
+		if (level instanceof ServerLevel serverLevel
+				&& !CameraRelocationSystem.isPistonCameraMoveDestinationPending(serverLevel, pos)) {
+			MonitorScreenSystem.onCameraNetworkChanged(serverLevel, CameraRelocationSystem.logicalCameraPosition(serverLevel, pos));
 		}
 	}
 
 	@Override
 	protected void affectNeighborsAfterRemoval(BlockState state, ServerLevel level, BlockPos pos, boolean movedByPiston) {
+		if (CameraRelocationSystem.isPistonCameraMovePending(level, pos)) {
+			// Vanilla temporarily replaces a pushed block with MOVING_PISTON and
+			// only restores it at the destination after the animation. Keep the
+			// camera identity alive until that completion is observed, but retain
+			// vanilla's neighbour-notification behaviour for the physical block.
+			super.affectNeighborsAfterRemoval(state, level, pos, movedByPiston);
+			return;
+		}
 		if (RocketLaunchEventSystem.isLaunchedMountedDevice(level, pos)) {
 			// A rocket keeps its device identity while the physical block becomes a
 			// moving display/anchor.  Do not run any normal removal work: apart from
@@ -182,11 +201,12 @@ public final class CameraBlock extends SimplePolymerBlock implements PolymerHead
 			// the endpoint has already been preserved.
 			return;
 		}
+		BlockPos logicalCameraPos = CameraRelocationSystem.removeCameraIdentity(level, pos);
 		CameraDisplayHelper.remove(level, pos);
-		CameraOrientationStore.remove(level, pos);
-		PlacedDeviceNameStore.removeCameraName(level, pos);
-		BluetoothLinkSystem.removeBlockEndpoint(level, BluetoothLinkSystem.EndpointType.CAMERA, pos);
-		MonitorScreenSystem.onCameraNetworkChanged(level, pos);
+		CameraOrientationStore.remove(level, logicalCameraPos);
+		PlacedDeviceNameStore.removeCameraName(level, logicalCameraPos);
+		BluetoothLinkSystem.removeBlockEndpoint(level, BluetoothLinkSystem.EndpointType.CAMERA, logicalCameraPos);
+		MonitorScreenSystem.onCameraNetworkChanged(level, logicalCameraPos);
 		super.affectNeighborsAfterRemoval(state, level, pos, movedByPiston);
 	}
 
@@ -228,13 +248,30 @@ public final class CameraBlock extends SimplePolymerBlock implements PolymerHead
 		return entityUuids.isEmpty() ? Set.of() : Set.copyOf(entityUuids);
 	}
 
+
+	/** Mirrors vanilla's moving-piston progress for the separate ItemDisplay model. */
+	public static void movePistonCameraDisplay(ServerLevel level, BlockPos source, BlockPos destination, UUID displayUuid, Vec3 captureBaseOrigin, float yaw, float pitch) {
+		CameraDisplayHelper.moveForPiston(level, source, destination, displayUuid, captureBaseOrigin, yaw, pitch);
+	}
+
+	/** Re-tags the same ItemDisplay at the piston destination, preserving its UUID and stream exclusion. */
+	public static void finishPistonCameraDisplay(ServerLevel level, BlockPos source, BlockPos destination, UUID displayUuid, float yaw, float pitch) {
+		CameraDisplayHelper.finishPistonMove(level, source, destination, displayUuid, yaw, pitch);
+	}
+
+	/** Removes the retained model if vanilla rejects the camera at the piston target. */
+	public static void discardPistonCameraDisplay(ServerLevel level, BlockPos source) {
+		CameraDisplayHelper.remove(level, source);
+	}
+
 	/** Returns the placed camera model for a Bluetooth selection outline. */
 	public static List<ServerSelectionHighlightSystem.DisplayBlueprint> resolveBluetoothHighlightBlueprints(ServerLevel level, BlockPos pos) {
 		if (level == null || pos == null) {
 			return List.of();
 		}
+		BlockPos physicalCameraPos = CameraRelocationSystem.physicalCameraPosition(level, pos);
 		List<ServerSelectionHighlightSystem.DisplayBlueprint> blueprints = new ArrayList<>();
-		for (Display.ItemDisplay display : CameraDisplayHelper.findDisplays(level, pos)) {
+		for (Display.ItemDisplay display : CameraDisplayHelper.findDisplays(level, physicalCameraPos)) {
 			if (display.isAlive()) {
 				blueprints.add(new ServerSelectionHighlightSystem.EntityGlowBlueprint(display));
 			}
@@ -243,7 +280,11 @@ public final class CameraBlock extends SimplePolymerBlock implements PolymerHead
 	}
 
 	public static Vec3 captureOrigin(BlockPos cameraPos, float yaw, float pitch) {
-		Vec3 base = captureBaseOrigin(cameraPos);
+		return captureOrigin(captureBaseOrigin(cameraPos), yaw, pitch);
+	}
+
+	/** Camera lens position for a base that may be between block centres while a piston moves it. */
+	public static Vec3 captureOrigin(Vec3 base, float yaw, float pitch) {
 		Vec3 forward = forwardVector(yaw, pitch).scale(0.24D);
 		return base.add(forward);
 	}
@@ -295,9 +336,11 @@ public final class CameraBlock extends SimplePolymerBlock implements PolymerHead
 		if (updatedState != state) {
 			level.setBlock(pos, updatedState, Block.UPDATE_CLIENTS);
 		}
-		CameraOrientationStore.set(level, pos, yaw, pitch);
+		BlockPos logicalCameraPos = CameraRelocationSystem.logicalCameraPosition(level, pos);
+		CameraOrientationStore.set(level, logicalCameraPos, yaw, pitch);
+		CameraRelocationSystem.updateCameraOrientation(level, pos, yaw, pitch);
 		CameraDisplayHelper.spawnOrUpdate(level, pos, yaw, pitch);
-		MonitorScreenSystem.onCameraNetworkChanged(level, pos);
+		MonitorScreenSystem.onCameraNetworkChanged(level, logicalCameraPos);
 		return true;
 	}
 }

@@ -185,6 +185,15 @@ public final class RendererBotOffscreenWorldRenderer {
 				sessionState.renderInProgress = false;
 				return false;
 			}
+			if (request.hideCameraCollisionBlock()) {
+				// A placed camera's client-side PLAYER_HEAD is only the interaction
+				// shape.  Its visible body is the separately tracked ItemDisplay, so
+				// neither belongs in the camera's own first-person shadow world.
+				RendererBotShadowWorldManager.hideCameraCollisionBlock(
+						request.sessionId(),
+						BlockPos.containing(cameraState.camera().position())
+				);
+			}
 
 			levelRenderer.resize(request.renderWidth(), request.renderHeight());
 			RenderTarget previousRenderTarget = client.getMainRenderTarget();
@@ -483,7 +492,8 @@ public final class RendererBotOffscreenWorldRenderer {
 			boolean topDownMap,
 			double orthographicWidthBlocks,
 			double orthographicHeightBlocks,
-			float cameraBankRadians
+			float cameraBankRadians,
+			boolean hideCameraCollisionBlock
 	) {
 	}
 

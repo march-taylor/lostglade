@@ -1150,6 +1150,13 @@ public final class RendererBotCameraSystem {
 				followEntityUuid,
 				hiddenEntityUuids
 		);
+		// The placed camera uses a Polymer PLAYER_HEAD solely for collision.  It
+		// is not part of the camera's picture and must be removed from the shadow
+		// world just like its ItemDisplay.  A mobile camera has no fixed block
+		// coordinate here, but its follow anchor identifies that same case.
+		Entity followEntity = followEntityUuid == null ? null : level.getEntity(followEntityUuid);
+		boolean hideCameraCollisionBlock = cameraPos != null
+				|| CameraRelocationSystem.isMobileCameraAnchor(followEntity);
 		LiveStreamSpec desiredSpec = new LiveStreamSpec(
 				resolveRenderSessionId(level.dimension(), cameraPos, x, z, followEntityUuid),
 				level.dimension(),
@@ -1162,6 +1169,7 @@ public final class RendererBotCameraSystem {
 				followEntityUuid,
 				effectiveHiddenEntityUuids,
 				omnidirectionalChunkLoading,
+				hideCameraCollisionBlock,
 				Math.max(1, fullWidth),
 				Math.max(1, fullHeight),
 				Math.max(1, fovDegrees),
@@ -1197,12 +1205,29 @@ public final class RendererBotCameraSystem {
 					// world; missing that entity produced a silent stream timeout.
 					null,
 					List.copyOf(desiredSpec.hiddenEntityUuids()),
+					desiredSpec.hideCameraCollisionBlock(),
 					desiredSpec.fullWidth(),
 						desiredSpec.fullHeight(),
 						desiredSpec.fovDegrees(),
 						desiredSpec.targetFps()
 				)
 		);
+		// The client deliberately renders follow streams from explicit pose packets
+		// instead of trusting entity tracking in its shadow world. Send the first
+		// pose in the same tick as start; otherwise it briefly treats the absolute
+		// lens Y coordinate as player feet and points the camera into its own body.
+		if (desiredSpec.followEntityUuid() != null
+				&& ServerPlayNetworking.canSend(bot, RendererBotPayloads.RendererBotLiveStreamPoseS2CPayload.TYPE)) {
+			ServerPlayNetworking.send(bot, new RendererBotPayloads.RendererBotLiveStreamPoseS2CPayload(
+					streamId,
+					desiredSpec.expectedX(),
+					desiredSpec.expectedY(),
+					desiredSpec.expectedZ(),
+					desiredSpec.expectedYaw(),
+					desiredSpec.expectedPitch(),
+					0.0F
+			));
+		}
 		return true;
 	}
 
@@ -1278,6 +1303,7 @@ public final class RendererBotCameraSystem {
 					followEntityUuid,
 					Set.copyOf(hiddenEntities),
 					true,
+					current.hideCameraCollisionBlock(),
 					current.fullWidth(),
 					current.fullHeight(),
 					current.fovDegrees(),
@@ -1308,6 +1334,7 @@ public final class RendererBotCameraSystem {
 					&& Objects.equals(existingSpec.followEntityUuid(), desiredSpec.followEntityUuid())
 					&& Objects.equals(existingSpec.hiddenEntityUuids(), desiredSpec.hiddenEntityUuids())
 					&& existingSpec.omnidirectionalChunkLoading() == desiredSpec.omnidirectionalChunkLoading()
+					&& existingSpec.hideCameraCollisionBlock() == desiredSpec.hideCameraCollisionBlock()
 					&& existingSpec.fullWidth() == desiredSpec.fullWidth()
 					&& existingSpec.fullHeight() == desiredSpec.fullHeight()
 					&& existingSpec.fovDegrees() == desiredSpec.fovDegrees()
@@ -2043,10 +2070,12 @@ public final class RendererBotCameraSystem {
 					spec.expectedPitch(),
 					spec.followEntityUuid()
 			);
-			if (target == null || target.followTarget() == null || target.followTarget() instanceof ServerPlayer) {
+			if (target == null || target.followTarget() == null) {
 				continue;
 			}
-			Vec3 cameraPosition = DroneSystem.isDroneCameraAnchor(target.followTarget())
+			boolean directCameraAnchor = DroneSystem.isDroneCameraAnchor(target.followTarget())
+					|| CameraRelocationSystem.isMobileCameraAnchor(target.followTarget());
+			Vec3 cameraPosition = directCameraAnchor
 					? target.followTarget().position()
 					: target.followTarget().getEyePosition(1.0F);
 			float cameraBankRadians = DroneSystem.isDroneCameraAnchor(target.followTarget())
@@ -5564,6 +5593,7 @@ public final class RendererBotCameraSystem {
 			UUID followEntityUuid,
 			Set<UUID> hiddenEntityUuids,
 			boolean omnidirectionalChunkLoading,
+			boolean hideCameraCollisionBlock,
 			int fullWidth,
 			int fullHeight,
 			int fovDegrees,

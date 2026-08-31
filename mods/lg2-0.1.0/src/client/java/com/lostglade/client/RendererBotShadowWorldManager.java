@@ -1,6 +1,7 @@
 package com.lostglade.client;
 
 import com.lostglade.Lg2;
+import com.lostglade.block.CameraBlock;
 import com.lostglade.mixin.client.ClientLevelMapDataAccessor;
 import com.lostglade.mixin.client.ClientPacketListenerShadowAccessor;
 import com.lostglade.mixin.client.MinecraftOffscreenWorldAccessor;
@@ -25,6 +26,7 @@ import net.minecraft.client.renderer.feature.FeatureRenderDispatcher;
 import net.minecraft.client.renderer.state.LevelRenderState;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
+import net.minecraft.core.SectionPos;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
@@ -41,6 +43,8 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.Difficulty;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.saveddata.maps.MapId;
 import net.minecraft.world.level.saveddata.maps.MapItemSavedData;
 
@@ -235,6 +239,41 @@ public final class RendererBotShadowWorldManager {
 		int entityId = entity.getId();
 		runWithShadowSession(connection, session, () ->
 				connection.handleRemoveEntities(new ClientboundRemoveEntitiesPacket(new int[]{entityId}))
+		);
+	}
+
+	/**
+	 * Removes only the current camera's collision placeholder from a shadow
+	 * world.  The server still keeps the PLAYER_HEAD collision block, and other
+	 * heads in the scene remain untouched.  Chunk updates may restore this
+	 * state, so the operation is intentionally idempotent and is repeated just
+	 * before an affected camera is rendered.
+	 */
+	public static void hideCameraCollisionBlock(UUID sessionId, BlockPos position) {
+		if (sessionId == null || position == null) {
+			return;
+		}
+		ShadowLevelSession session;
+		synchronized (LOCK) {
+			session = SHADOW_SESSIONS.get(sessionId);
+		}
+		if (session == null || session.level() == null || session.levelRenderer() == null) {
+			return;
+		}
+		BlockState state = session.level().getBlockState(position);
+		// Depending on whether Polymer transformed the packet before it reached
+		// this shadow world, the same collision placeholder is either the
+		// PLAYER_HEAD fallback or the real CameraBlock state.  Both represent the
+		// camera's own body here; do not touch any unrelated player head.
+		if (!state.is(Blocks.PLAYER_HEAD) && !(state.getBlock() instanceof CameraBlock)) {
+			return;
+		}
+		session.level().setBlock(position, Blocks.AIR.defaultBlockState(), 3);
+		session.level().removeBlockEntity(position);
+		session.levelRenderer().setSectionDirty(
+				SectionPos.blockToSectionCoord(position.getX()),
+				SectionPos.blockToSectionCoord(position.getY()),
+				SectionPos.blockToSectionCoord(position.getZ())
 		);
 	}
 

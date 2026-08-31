@@ -15,7 +15,10 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class RendererBotPayloads {
-	public static final int PROTOCOL_VERSION = 23;
+	// RendererBotLiveStreamStartS2CPayload gained a field. Keep an old renderer
+	// bot from accepting the handshake and decoding the following varints from a
+	// shifted byte offset.
+	public static final int PROTOCOL_VERSION = 24;
 	private static final int MAX_CAPTURE_PAYLOAD_BYTES = 1_048_576;
 	private static final int MAX_SHADOW_PAYLOAD_BYTES = 2_097_152;
 	private static final int MAX_HIDDEN_CAMERA_ENTITIES = 32;
@@ -204,6 +207,7 @@ public final class RendererBotPayloads {
 			float expectedPitch,
 			UUID followEntityUuid,
 			List<UUID> hiddenEntityUuids,
+			boolean hideCameraCollisionBlock,
 			int fullWidth,
 			int fullHeight,
 			int fovDegrees,
@@ -229,6 +233,7 @@ public final class RendererBotPayloads {
 					buffer.readFloat(),
 					buffer.readBoolean() ? buffer.readUUID() : null,
 					readHiddenCameraEntityUuids(buffer),
+					buffer.readBoolean(),
 					buffer.readVarInt(),
 					buffer.readVarInt(),
 					buffer.readVarInt(),
@@ -250,6 +255,7 @@ public final class RendererBotPayloads {
 				buffer.writeUUID(this.followEntityUuid);
 			}
 			writeHiddenCameraEntityUuids(buffer, this.hiddenEntityUuids);
+			buffer.writeBoolean(this.hideCameraCollisionBlock);
 			buffer.writeVarInt(this.fullWidth);
 			buffer.writeVarInt(this.fullHeight);
 			buffer.writeVarInt(this.fovDegrees);

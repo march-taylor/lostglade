@@ -175,7 +175,8 @@ final class RendererBotTopDownMapRenderer {
 					true,
 					worldWidth,
 					worldHeight,
-					0.0F
+					0.0F,
+					false
 				),
 				renderTargetConsumer
 		);

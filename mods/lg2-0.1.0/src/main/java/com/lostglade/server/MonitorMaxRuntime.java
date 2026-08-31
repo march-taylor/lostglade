@@ -3889,6 +3889,31 @@ final class MonitorMaxRuntime {
 		}
 		ServerLevel cameraLevel = server.getLevel(cameraRef.dimension());
 		BlockPos cameraPos = cameraRef.pos();
+		CameraRelocationSystem.MobileCameraFeed mobileFeed = cameraLevel != null
+				? CameraRelocationSystem.mobileCameraFeed(cameraLevel, cameraPos)
+				: null;
+		if (mobileFeed != null) {
+			RendererBotCameraSystem.ensureLiveStream(
+					ownerId,
+					cameraLevel,
+					null,
+					mobileFeed.expectedX(),
+					mobileFeed.expectedY(),
+					mobileFeed.expectedZ(),
+					mobileFeed.yaw(),
+					mobileFeed.pitch(),
+					mobileFeed.followEntityUuid(),
+					mobileFeed.hiddenEntityUuids(),
+					true,
+					fullWidth,
+					fullHeight,
+					LIVE_CAMERA_FOV_DEGREES,
+					LIVE_CAMERA_TARGET_FPS,
+					frame -> onVideoFrame(server, viewerComponent.runtimeKey(), sourceUrl, fullWidth, fullHeight, frame.pixels(), localStream),
+					error -> onVideoFailure(server, viewerComponent.runtimeKey(), error, localStream)
+			);
+			return;
+		}
 		if (cameraLevel == null || cameraPos == null || !cameraLevel.hasChunkAt(cameraPos) || !isCameraBlock(cameraLevel, cameraPos)) {
 			clearVideoFrame(viewerComponent.runtimeKey(), localStream);
 			return;

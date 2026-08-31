@@ -105,6 +105,7 @@
 		"PlayerListRendererBotSystemMessageMixin",
 		"PlayerTrackedDataAccessor",
 		"PlaySoundCommandRendererBotAudioMixin",
+		"PistonMovingBlockEntityCameraRelocationMixin",
 		"PistonStructureResolverMilkPocketMixin",
 		"PotionBrewingStabilityMixin",
 		"RabbitAccessor",

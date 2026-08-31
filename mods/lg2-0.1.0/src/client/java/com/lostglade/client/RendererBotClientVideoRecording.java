@@ -740,7 +740,8 @@ public final class RendererBotClientVideoRecording {
 				false,
 				0.0D,
 				0.0D,
-				0.0F
+				0.0F,
+				false
 		);
 	}
 

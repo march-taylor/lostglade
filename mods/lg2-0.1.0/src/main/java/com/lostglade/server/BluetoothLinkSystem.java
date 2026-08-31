@@ -106,7 +106,10 @@ public final class BluetoothLinkSystem {
 			return Endpoint.block(level.dimension(), EndpointType.MICROPHONE, pos);
 		}
 		if (state.is(ModBlocks.CAMERA)) {
-			return Endpoint.block(level.dimension(), EndpointType.CAMERA, pos);
+			// A piston-moved camera retains the endpoint that was paired before it
+			// moved.  Physical clicks must therefore resolve back to that identity.
+			return Endpoint.block(level.dimension(), EndpointType.CAMERA,
+					CameraRelocationSystem.logicalCameraPosition(level, pos));
 		}
 		return null;
 	}

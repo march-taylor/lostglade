@@ -27,6 +27,7 @@ import com.lostglade.server.CameraAnimatedMapPlaybackSystem;
 import com.lostglade.server.CameraCaptureSystem;
 import com.lostglade.server.CameraMediaCache;
 import com.lostglade.server.CameraOrientationStore;
+import com.lostglade.server.CameraRelocationSystem;
 import com.lostglade.server.CameraVideoRecordingSystem;
 import com.lostglade.server.CocaineHallucinationSystem;
 import com.lostglade.server.CopperManGogglesSystem;
@@ -102,6 +103,7 @@ public class Lg2 implements ModInitializer {
 		OrthodoxDefenseSystem.register();
 		CameraOrientationStore.register();
 		PlacedDeviceNameStore.register();
+		CameraRelocationSystem.register();
 		YandexMapMarkerStore.register();
 		ModWorldGen.register();
 		BrownBedDisplaySystem.register();

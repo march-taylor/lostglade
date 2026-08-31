@@ -1,6 +1,7 @@
 package com.lostglade.mixin;
 
 import com.lostglade.server.ServerMilkPocketDimensionSystem;
+import com.lostglade.server.CameraRelocationSystem;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.Level;
@@ -39,7 +40,7 @@ public abstract class PistonStructureResolverMilkPocketMixin {
 	public abstract List<BlockPos> getToDestroy();
 
 	@Inject(method = "resolve", at = @At("RETURN"), cancellable = true)
-	private void lg2$rejectMilkPocketPistonMoveOutsideZone(CallbackInfoReturnable<Boolean> cir) {
+	private void lg2$validatePistonMoveAndPrepareCameraRelocations(CallbackInfoReturnable<Boolean> cir) {
 		if (!cir.getReturnValueZ()) {
 			return;
 		}
@@ -52,6 +53,8 @@ public abstract class PistonStructureResolverMilkPocketMixin {
 				this.getToDestroy()
 		)) {
 			cir.setReturnValue(false);
+			return;
 		}
+		CameraRelocationSystem.preparePistonMove(this.level, this.pushDirection, this.getToPush());
 	}
 }

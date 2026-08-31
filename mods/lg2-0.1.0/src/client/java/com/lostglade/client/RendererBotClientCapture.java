@@ -57,6 +57,10 @@ public final class RendererBotClientCapture {
 	private static final int MAX_RENDER_WIDTH = Math.max(MIN_RENDER_WIDTH, Integer.getInteger("lg2.rendererBotMaxRenderWidth", 3072));
 	private static final int MAX_RENDER_HEIGHT = Math.max(MIN_RENDER_HEIGHT, Integer.getInteger("lg2.rendererBotMaxRenderHeight", 2048));
 	private static final int MAX_LIVE_STREAM_FPS = 20;
+	// Pose packets arrive once per server tick.  Blend the two adjacent samples
+	// locally so a piston-driven camera does not turn a two-tick vanilla move
+	// into two hard cuts in the renderer-bot output.
+	private static final long LIVE_POSE_INTERPOLATION_NANOS = 50_000_000L;
 	// A GPU readback is asynchronous and can take longer than one render tick.
 	// Keeping a small bounded window lets rendering, readback, palette conversion
 	// and network sending overlap instead of making every live frame wait for the
@@ -189,11 +193,11 @@ public final class RendererBotClientCapture {
 				session.updatePose(new LiveStreamPose(
 						payload.x(),
 						payload.y(),
-					payload.z(),
-					payload.yaw(),
-					payload.pitch(),
-					payload.cameraBankRadians()
-				));
+						payload.z(),
+						payload.yaw(),
+						payload.pitch(),
+						payload.cameraBankRadians()
+				), System.nanoTime());
 			}
 		}
 	}
@@ -1501,7 +1505,8 @@ public final class RendererBotClientCapture {
 				false,
 				0.0D,
 				0.0D,
-				0.0F
+				0.0F,
+				false
 		);
 	}
 
@@ -1526,7 +1531,8 @@ public final class RendererBotClientCapture {
 				false,
 				0.0D,
 				0.0D,
-				pose == null ? 0.0F : pose.cameraBankRadians()
+				pose == null ? 0.0F : pose.cameraBankRadians(),
+				payload.hideCameraCollisionBlock()
 		);
 	}
 
@@ -1718,6 +1724,8 @@ public final class RendererBotClientCapture {
 		private long lastFrameAtNanos;
 		private int framesInFlight;
 		private LiveStreamPose pose;
+		private LiveStreamPose previousPose;
+		private long poseUpdatedAtNanos;
 
 		private LiveStreamSession(
 				RendererBotPayloads.RendererBotLiveStreamStartS2CPayload payload,
@@ -1758,11 +1766,23 @@ public final class RendererBotClientCapture {
 		}
 
 		private LiveStreamPose pose() {
-			return this.pose;
+			if (this.pose == null || this.previousPose == null) {
+				return this.pose;
+			}
+			float progress = Mth.clamp(
+					(float) (System.nanoTime() - this.poseUpdatedAtNanos) / LIVE_POSE_INTERPOLATION_NANOS,
+					0.0F,
+					1.0F
+			);
+			return interpolatePose(this.previousPose, this.pose, progress);
 		}
 
-		private void updatePose(LiveStreamPose pose) {
+		private void updatePose(LiveStreamPose pose, long updatedAtNanos) {
+			if (this.pose != null) {
+				this.previousPose = this.pose();
+			}
 			this.pose = pose;
+			this.poseUpdatedAtNanos = updatedAtNanos;
 		}
 
 		private void markFrameInFlight(long nowNanos) {
@@ -1773,6 +1793,17 @@ public final class RendererBotClientCapture {
 		private void clearFrameInFlight() {
 			this.framesInFlight = Math.max(0, this.framesInFlight - 1);
 		}
+	}
+
+	private static LiveStreamPose interpolatePose(LiveStreamPose from, LiveStreamPose to, float progress) {
+		return new LiveStreamPose(
+				Mth.lerp(progress, from.x(), to.x()),
+				Mth.lerp(progress, from.y(), to.y()),
+				Mth.lerp(progress, from.z(), to.z()),
+				from.yaw() + Mth.wrapDegrees(to.yaw() - from.yaw()) * progress,
+				Mth.lerp(progress, from.pitch(), to.pitch()),
+				Mth.lerp(progress, from.cameraBankRadians(), to.cameraBankRadians())
+		);
 	}
 
 	private record LiveStreamPose(double x, double y, double z, float yaw, float pitch, float cameraBankRadians) {
