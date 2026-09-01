@@ -30,6 +30,9 @@ public final class OrthodoxUniqueSystem {
 	private static final int MIN_WAVE_PARTICLE_POINTS = 1;
 	private static final int MAX_WAVE_PARTICLE_POINTS = 200;
 	private static final double WAVE_PARTICLE_AREA_PER_POINT = 14.5D;
+	private static final double FULL_PARTICLE_RATE_RADIUS = 8.0D;
+	private static final double MIN_PARTICLE_EMISSION_RATE = 0.15D;
+	private static final int WAVE_SOUND_INTERVAL_TICKS = 30;
 	private static final int MIN_WAVE_LIGHT_POINTS = 6;
 	private static final int MAX_WAVE_LIGHT_POINTS = 48;
 	private static final double WAVE_LIGHT_AREA_PER_POINT = 60.0D;
@@ -38,6 +41,7 @@ public final class OrthodoxUniqueSystem {
 	private static final int MAX_GROWTH_CHECKS_PER_TICK = 512;
 	private static final int MAX_GROWTH_ACTIONS_PER_TICK = 8;
 	private static final int MAX_BONEMEAL_PASSES = 4;
+	private static final int MAX_SAPLING_GROWTH_ATTEMPTS = 24;
 	private static final Set<EntityType<?>> NATIVE_NETHER_MOBS = Set.of(
 			EntityType.BLAZE, EntityType.GHAST, EntityType.HAPPY_GHAST, EntityType.HOGLIN,
 			EntityType.MAGMA_CUBE, EntityType.PIGLIN, EntityType.PIGLIN_BRUTE, EntityType.STRIDER,
@@ -57,7 +61,7 @@ public final class OrthodoxUniqueSystem {
 		if (caster == null || !caster.isAlive() || caster.isSpectator() || radius <= 0.0D || WAVES.containsKey(caster.getUUID())) return false;
 		ServerLevel level = caster.level();
 		Vec3 center = new Vec3(caster.getX(), caster.getY() + caster.getBbHeight() * 0.5D, caster.getZ());
-		LightWave wave = new LightWave(level, center, radius, buildBlockShells(level, center, radius));
+		LightWave wave = new LightWave(caster.getUUID(), level, center, radius, buildBlockShells(level, center, radius));
 		WAVES.put(caster.getUUID(), wave);
 		level.playSound(null, caster.blockPosition(), SoundEvents.BEACON_AMBIENT, SoundSource.PLAYERS, 0.85F, 1.35F);
 		level.playSound(null, caster.blockPosition(), SoundEvents.AMETHYST_BLOCK_CHIME, SoundSource.PLAYERS, 1.0F, 0.85F);
@@ -81,6 +85,7 @@ public final class OrthodoxUniqueSystem {
 				double previousRadius = wave.radius * previousProgress;
 				double currentRadius = wave.radius * progress;
 				emitWaveFront(wave, currentRadius);
+				emitExpansionSound(wave, progress);
 				updateWaveLights(wave, currentRadius);
 				applyEntityEffects(wave, previousRadius, currentRadius);
 				wave.pendingGrowth.addAll(wave.blockShells.get(wave.age - 1));
@@ -97,6 +102,13 @@ public final class OrthodoxUniqueSystem {
 
 	private static void emitWaveFront(LightWave wave, double radius) {
 		if (radius <= 0.05D) return;
+		double emissionRate = Math.max(
+				MIN_PARTICLE_EMISSION_RATE,
+				Math.min(1.0D, radius / FULL_PARTICLE_RATE_RADIUS)
+		);
+		wave.particleEmissionBudget += emissionRate;
+		if (wave.particleEmissionBudget < 1.0D) return;
+		wave.particleEmissionBudget -= 1.0D;
 		int pointCount = wavePointCount(radius, WAVE_PARTICLE_AREA_PER_POINT,
 				MIN_WAVE_PARTICLE_POINTS, MAX_WAVE_PARTICLE_POINTS);
 		for (int i = 0; i < pointCount; i++) {
@@ -104,7 +116,22 @@ public final class OrthodoxUniqueSystem {
 			Vec3 point = wave.center.add(direction.scale(radius));
 			wave.level.sendParticles(WAVE_PARTICLE, point.x, point.y, point.z,
 					1, 0.0D, 0.0D, 0.0D, 0.0D);
+			wave.level.sendParticles(ParticleTypes.END_ROD, point.x, point.y, point.z,
+					1, 0.0D, 0.0D, 0.0D, 0.0D);
 		}
+	}
+
+	private static void emitExpansionSound(LightWave wave, double progress) {
+		if (wave.age <= 0 || wave.age >= WAVE_DURATION_TICKS || wave.age % WAVE_SOUND_INTERVAL_TICKS != 0) return;
+		float pitch = 0.82F + (float) Math.max(0.0D, Math.min(1.0D, progress)) * 0.24F;
+		wave.level.playSound(
+				null,
+				BlockPos.containing(wave.center),
+				SoundEvents.BREEZE_IDLE_AIR,
+				SoundSource.PLAYERS,
+				0.52F,
+				pitch
+		);
 	}
 
 	private static void updateWaveLights(LightWave wave, double radius) {
@@ -188,8 +215,9 @@ public final class OrthodoxUniqueSystem {
 			if (distanceSquared < innerRadiusSquared || distanceSquared > outerRadiusSquared
 					|| !wave.affectedEntities.add(entity.getUUID())) continue;
 			if (entity instanceof ServerPlayer player) {
+				player.heal(player.getMaxHealth());
 				removeNegativeEffects(player);
-				spawnCleansingLight(wave.level, player);
+				if (!player.getUUID().equals(wave.ownerId)) spawnCleansingLight(wave.level, player);
 			} else if (isIncineratedByLight(entity)) {
 				incinerate(wave.level, entity);
 			}
@@ -211,10 +239,9 @@ public final class OrthodoxUniqueSystem {
 		double y = entity.getY() + entity.getBbHeight() * 0.5D;
 		double verticalSpread = Math.max(0.25D, entity.getBbHeight() * 0.42D);
 		level.sendParticles(ParticleTypes.END_ROD, entity.getX(), y, entity.getZ(), 24, 0.34D, verticalSpread, 0.34D, 0.045D);
-		level.sendParticles(ParticleTypes.GLOW, entity.getX(), y, entity.getZ(), 18, 0.38D, verticalSpread, 0.38D, 0.035D);
-		level.sendParticles(ParticleTypes.WHITE_ASH, entity.getX(), y, entity.getZ(), 34, 0.48D, verticalSpread, 0.48D, 0.018D);
-		level.sendParticles(ParticleTypes.ASH, entity.getX(), y, entity.getZ(), 28, 0.42D, verticalSpread, 0.42D, 0.012D);
-		level.sendParticles(ParticleTypes.CAMPFIRE_COSY_SMOKE, entity.getX(), y, entity.getZ(), 9, 0.28D, verticalSpread * 0.7D, 0.28D, 0.008D);
+		level.sendParticles(ParticleTypes.WHITE_ASH, entity.getX(), y, entity.getZ(), 44, 0.52D, verticalSpread, 0.52D, 0.020D);
+		level.sendParticles(ParticleTypes.ASH, entity.getX(), y, entity.getZ(), 40, 0.48D, verticalSpread, 0.48D, 0.014D);
+		level.sendParticles(ParticleTypes.LARGE_SMOKE, entity.getX(), y, entity.getZ(), 12, 0.34D, verticalSpread * 0.75D, 0.34D, 0.012D);
 		level.playSound(null, entity.blockPosition(), SoundEvents.FIRE_EXTINGUISH, SoundSource.PLAYERS, 0.9F, 1.55F);
 		entity.discard();
 	}
@@ -224,8 +251,6 @@ public final class OrthodoxUniqueSystem {
 		double verticalSpread = Math.max(0.25D, entity.getBbHeight() * 0.35D);
 		level.sendParticles(ParticleTypes.END_ROD, entity.getX(), y, entity.getZ(), 18,
 				0.36D, verticalSpread, 0.36D, 0.028D);
-		level.sendParticles(ParticleTypes.GLOW, entity.getX(), y, entity.getZ(), 12,
-				0.32D, verticalSpread, 0.32D, 0.018D);
 	}
 
 	private static List<List<BlockPos>> buildBlockShells(ServerLevel level, Vec3 center, double radius) {
@@ -270,6 +295,7 @@ public final class OrthodoxUniqueSystem {
 			if (changed) spawnGrowthParticles(level, pos);
 			return changed;
 		}
+		if (block instanceof SaplingBlock) return growSapling(level, pos);
 		if (!(block instanceof BonemealableBlock) || !isPlantedGrower(block)) return false;
 		boolean changed = false;
 		for (int pass = 0; pass < MAX_BONEMEAL_PASSES; pass++) {
@@ -279,6 +305,26 @@ public final class OrthodoxUniqueSystem {
 			current.performBonemeal(level, level.random, pos, state);
 			changed = true;
 			if (level.getBlockState(pos).getBlock() != block) break;
+		}
+		if (changed) spawnGrowthParticles(level, pos);
+		return changed;
+	}
+
+	private static boolean growSapling(ServerLevel level, BlockPos pos) {
+		boolean changed = false;
+		for (int attempt = 0; attempt < MAX_SAPLING_GROWTH_ATTEMPTS; attempt++) {
+			BlockState state = level.getBlockState(pos);
+			if (!(state.getBlock() instanceof SaplingBlock sapling)) {
+				if (changed) spawnGrowthParticles(level, pos);
+				return changed;
+			}
+			sapling.advanceTree(level, pos, state, level.random);
+			BlockState result = level.getBlockState(pos);
+			changed |= !result.equals(state);
+			if (!(result.getBlock() instanceof SaplingBlock)) {
+				spawnGrowthParticles(level, pos);
+				return true;
+			}
 		}
 		if (changed) spawnGrowthParticles(level, pos);
 		return changed;
@@ -309,10 +355,21 @@ public final class OrthodoxUniqueSystem {
 	}
 
 	private static void spawnGrowthParticles(ServerLevel level, BlockPos pos) {
-		level.levelEvent(1505, pos, 0);
+		level.sendParticles(
+				ParticleTypes.HAPPY_VILLAGER,
+				pos.getX() + 0.5D,
+				pos.getY() + 0.5D,
+				pos.getZ() + 0.5D,
+				15,
+				0.36D,
+				0.36D,
+				0.36D,
+				0.02D
+		);
 	}
 
 	private static final class LightWave {
+		private final UUID ownerId;
 		private final ServerLevel level;
 		private final Vec3 center;
 		private final double radius;
@@ -320,9 +377,11 @@ public final class OrthodoxUniqueSystem {
 		private final ArrayDeque<BlockPos> pendingGrowth = new ArrayDeque<>();
 		private final Set<UUID> affectedEntities = new HashSet<>();
 		private final Set<BlockPos> temporaryLights = new HashSet<>();
+		private double particleEmissionBudget;
 		private int age;
 
-		private LightWave(ServerLevel level, Vec3 center, double radius, List<List<BlockPos>> blockShells) {
+		private LightWave(UUID ownerId, ServerLevel level, Vec3 center, double radius, List<List<BlockPos>> blockShells) {
+			this.ownerId = ownerId;
 			this.level = level;
 			this.center = center;
 			this.radius = radius;

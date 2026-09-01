@@ -3,8 +3,10 @@ package com.lostglade.mixin;
 import com.lostglade.server.CopperManGogglesSystem;
 import com.lostglade.server.CopperManRepulsorSystem;
 import com.lostglade.server.ServerRaceSystem;
+import net.minecraft.network.protocol.game.ClientboundContainerSetSlotPacket;
 import net.minecraft.network.protocol.game.ServerboundPlayerActionPacket;
 import net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket;
+import net.minecraft.network.protocol.game.ServerboundSetCreativeModeSlotPacket;
 import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket;
 import net.minecraft.network.protocol.game.ServerboundMoveVehiclePacket;
 import net.minecraft.network.protocol.game.ServerboundUseItemPacket;
@@ -38,7 +40,7 @@ public abstract class ServerGamePacketListenerCopperManGogglesMixin {
 		}
 	}
 
-	@Inject(method = "handlePlayerAction", at = @At("HEAD"))
+	@Inject(method = "handlePlayerAction", at = @At("HEAD"), cancellable = true)
 	private void lg2$handleCopperManGogglesReleaseUse(ServerboundPlayerActionPacket packet, CallbackInfo ci) {
 		if (packet == null) {
 			return;
@@ -51,6 +53,31 @@ public abstract class ServerGamePacketListenerCopperManGogglesMixin {
 		if (packet.getAction() == ServerboundPlayerActionPacket.Action.SWAP_ITEM_WITH_OFFHAND) {
 			CopperManGogglesSystem.handleSwapWithOffhand(this.player);
 		}
+	}
+
+	@Inject(
+			method = "handleSetCreativeModeSlot",
+			at = @At(
+					value = "INVOKE",
+					target = "Lnet/minecraft/server/level/ServerPlayer;hasInfiniteMaterials()Z",
+					shift = At.Shift.BEFORE
+			),
+			cancellable = true
+	)
+	private void lg2$lockAncientUkrGasMaskCreativeSlot(ServerboundSetCreativeModeSlotPacket packet, CallbackInfo ci) {
+		if (packet == null || !ServerRaceSystem.isLockedAncientUkrGasMaskSlot(
+				this.player, this.player.inventoryMenu, packet.slotNum()
+		)) {
+			return;
+		}
+		int slotIndex = packet.slotNum();
+		this.player.connection.send(new ClientboundContainerSetSlotPacket(
+				this.player.inventoryMenu.containerId,
+				this.player.inventoryMenu.incrementStateId(),
+				slotIndex,
+				this.player.inventoryMenu.getSlot(slotIndex).getItem()
+		));
+		ci.cancel();
 	}
 
 	@Inject(method = "handlePlayerAction", at = @At("TAIL"))

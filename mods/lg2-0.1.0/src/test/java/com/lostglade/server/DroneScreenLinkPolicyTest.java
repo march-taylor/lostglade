@@ -69,8 +69,10 @@ public final class DroneScreenLinkPolicyTest {
 				"screen-held drones must continue receiving chunk tickets even when nobody is actively watching the preview"
 		);
 		require(
-				rendererBot.contains("if (spec.followEntityUuid() != null)") && rendererBot.contains("return null;"),
-				"follow-entity streams must bypass the square positioned tracking shortcut and keep their exact virtual chunk shape"
+				rendererBot.contains("if (spec.followEntityUuid() == null && spec.cameraPos() != null && !isCameraPlayerLoaded")
+						&& rendererBot.contains("center = mergePositionedVirtualCenter(center, botLevel, target);")
+						&& rendererBot.contains("spec.cameraPos() != null && spec.followEntityUuid() == null"),
+				"follow-entity streams must track their moving center without receiving the static-camera chunk buffer"
 		);
 	}
 
@@ -153,7 +155,7 @@ public final class DroneScreenLinkPolicyTest {
 				"offscreen renderer must support exact camera positions without adding static eye height"
 		);
 		require(
-				offscreenRenderer.contains("request != null && (request.absoluteCameraPosition() || request.topDownMap()) ? 0 : MIN_READY_CHUNK_RADIUS"),
+				!offscreenRenderer.contains("MIN_READY_CHUNK_RADIUS"),
 				"pose-updated live drone rendering must not wait for a full 5x5 ready-chunk square before every frame"
 		);
 		require(
@@ -171,19 +173,23 @@ public final class DroneScreenLinkPolicyTest {
 		int anchorCreation = rocket.indexOf("updateRocketDeviceAnchors(level);", deviceCapture);
 		int handoff = rocket.indexOf("handoffRocketCameraStreams(level);", anchorCreation);
 		int blockRemoval = rocket.indexOf("level.setBlock(block.pos(), Blocks.AIR.defaultBlockState(), Block.UPDATE_CLIENTS);", handoff);
+		int handoffMethodStart = rendererBot.indexOf("public static int handoffLiveCameraStreamsToEntity(");
+		int handoffMethodEnd = rendererBot.indexOf("private static boolean canReuseLiveStream(", handoffMethodStart);
+		String handoffMethod = handoffMethodStart >= 0 && handoffMethodEnd > handoffMethodStart
+				? rendererBot.substring(handoffMethodStart, handoffMethodEnd).replaceAll("\\s+", " ")
+				: "";
 		require(
 				deviceCapture >= 0 && anchorCreation > deviceCapture && handoff > anchorCreation && blockRemoval > handoff,
 				"rocket cameras must create an anchor and hand off streams before their source blocks are removed"
 		);
 		require(
 				rendererBot.contains("handoffLiveCameraStreamsToEntity(")
-						&& rendererBot.contains("current.renderSessionId()")
-						&& rendererBot.contains("stream.replaceSpec(new LiveStreamSpec(")
-						&& rendererBot.contains("null,\n\t\t\t\t\tx,"),
+						&& handoffMethod.contains("stream.replaceSpec(new LiveStreamSpec(")
+						&& handoffMethod.contains("current.renderSessionId(), current.dimension(), null, x,"),
 				"rocket camera handoff must retain the live stream/session and clear the obsolete static camera position"
 		);
 		require(
-				!rendererBot.substring(rendererBot.indexOf("public static int handoffLiveCameraStreamsToEntity("), rendererBot.indexOf("private static boolean canReuseLiveStream(")).contains("stopLiveStreamInternal"),
+				!handoffMethod.contains("stopLiveStreamInternal"),
 				"rocket camera handoff must not stop and restart an already-playing stream"
 		);
 	}

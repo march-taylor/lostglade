@@ -537,6 +537,26 @@ public final class PuroSanStockSystem {
 		player.connection.send(new ClientboundSetTitleTextPacket(CopperManGogglesSystem.getScreenOverlayTitle(player)));
 	}
 
+	public static void showAimWarningOverlayOnce(ServerPlayer player) {
+		if (player == null || player.connection == null || !PolymerResourcePackUtils.hasMainPack(player)) {
+			return;
+		}
+		player.connection.send(new ClientboundSetTitlesAnimationPacket(3, 12, 5));
+		player.connection.send(new ClientboundSetTitleTextPacket(buildAimWarningTitle()));
+	}
+
+	public static void restoreScreenOverlayAfterAimWarning(ServerPlayer player) {
+		if (player == null || player.connection == null) {
+			return;
+		}
+		AimWarningState state = AIM_WARNING_STATES.get(player.getUUID());
+		if (state != null && state.overlayVisible) {
+			syncAimWarningOverlay(player, true);
+			return;
+		}
+		syncAimWarningOverlay(player, false);
+	}
+
 	private static Component buildAimWarningTitle() {
 		Component glyph = Component.literal(AIM_WARNING_GLYPH)
 				.withStyle(style -> style

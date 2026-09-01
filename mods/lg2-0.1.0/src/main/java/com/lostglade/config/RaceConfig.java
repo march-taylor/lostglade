@@ -322,6 +322,12 @@ public final class RaceConfig {
 		changed |= normalizeNonNegative(ability.orthodoxAttackBlindnessSeconds, value -> ability.orthodoxAttackBlindnessSeconds = value);
 		changed |= normalizeNonNegative(ability.orthodoxDefenseDurationSeconds, value -> ability.orthodoxDefenseDurationSeconds = value);
 		changed |= normalizeNonNegative(ability.orthodoxUniqueRadiusBlocks, value -> ability.orthodoxUniqueRadiusBlocks = value);
+		changed |= normalizeNonNegative(ability.orthodoxHolinessSelfDefenseSeconds, value -> ability.orthodoxHolinessSelfDefenseSeconds = value);
+		changed |= normalizeChance(ability.orthodoxHolinessBitcoinInventoryFraction, value -> ability.orthodoxHolinessBitcoinInventoryFraction = value);
+		changed |= normalizeNonNegative(ability.orthodoxHolinessAfkMinutes, value -> ability.orthodoxHolinessAfkMinutes = value);
+		changed |= normalizeNonNegative(ability.orthodoxHolinessNetherMinutes, value -> ability.orthodoxHolinessNetherMinutes = value);
+		changed |= normalizeNonNegative(ability.orthodoxHolinessRepentanceMinecraftDays, value -> ability.orthodoxHolinessRepentanceMinecraftDays = value);
+		changed |= normalizeNonNegative(ability.orthodoxHolinessRecoveryMinutes, value -> ability.orthodoxHolinessRecoveryMinutes = value);
 		changed |= normalizeChance(ability.chance, value -> ability.chance = value);
 		if (ability.womanUniqueDropMaxSeconds < ability.womanUniqueDropMinSeconds) {
 			ability.womanUniqueDropMaxSeconds = ability.womanUniqueDropMinSeconds;
@@ -596,6 +602,12 @@ public final class RaceConfig {
 		addDoubleIfNonZero(json, "orthodoxAttackBlindnessSeconds", ability.orthodoxAttackBlindnessSeconds);
 		addDoubleIfNonZero(json, "orthodoxDefenseDurationSeconds", ability.orthodoxDefenseDurationSeconds);
 		addDoubleIfNonZero(json, "orthodoxUniqueRadiusBlocks", ability.orthodoxUniqueRadiusBlocks);
+		addDoubleIfNonZero(json, "orthodoxHolinessSelfDefenseSeconds", ability.orthodoxHolinessSelfDefenseSeconds);
+		addDoubleIfNonZero(json, "orthodoxHolinessBitcoinInventoryFraction", ability.orthodoxHolinessBitcoinInventoryFraction);
+		addDoubleIfNonZero(json, "orthodoxHolinessAfkMinutes", ability.orthodoxHolinessAfkMinutes);
+		addDoubleIfNonZero(json, "orthodoxHolinessNetherMinutes", ability.orthodoxHolinessNetherMinutes);
+		addDoubleIfNonZero(json, "orthodoxHolinessRepentanceMinecraftDays", ability.orthodoxHolinessRepentanceMinecraftDays);
+		addDoubleIfNonZero(json, "orthodoxHolinessRecoveryMinutes", ability.orthodoxHolinessRecoveryMinutes);
 			addDoubleIfNonZero(json, "chance", ability.chance);
 			return json;
 		}
@@ -848,6 +860,12 @@ public final class RaceConfig {
 		public double orthodoxAttackBlindnessSeconds = 0.0D;
 		public double orthodoxDefenseDurationSeconds = 0.0D;
 		public double orthodoxUniqueRadiusBlocks = 0.0D;
+		public double orthodoxHolinessSelfDefenseSeconds = 0.0D;
+		public double orthodoxHolinessBitcoinInventoryFraction = 0.0D;
+		public double orthodoxHolinessAfkMinutes = 0.0D;
+		public double orthodoxHolinessNetherMinutes = 0.0D;
+		public double orthodoxHolinessRepentanceMinecraftDays = 0.0D;
+		public double orthodoxHolinessRecoveryMinutes = 0.0D;
 		public double chance = 0.0D;
 
 		private RaceAbilityConfig() {

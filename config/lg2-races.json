@@ -716,7 +716,7 @@
         "name": "Божественный взор",
         "description": "На врага наводится божественный взор, и в небе над ним появляется огромный глаз. Если тот убьёт невинного — его ждёт наказание: останется полсердца и наступит слепота.",
         "priceBitcoins": 300,
-        "cooldownSeconds": 1600.0,
+        "cooldownSeconds": 900.0,
         "activationRangeBlocks": 32.0,
         "orthodoxAttackEyeVisibilityRadiusBlocks": 50.0,
         "orthodoxAttackDurationSeconds": 600.0,
@@ -729,7 +729,7 @@
         "name": "Святой дух",
         "description": "На 20 секунд появляются светящиеся ангельские крылья. Православный становится полностью неуязвимым и может свободно летать, но не может взаимодействовать с окружающим миром.",
         "priceBitcoins": 600,
-        "cooldownSeconds": 1200.0,
+        "cooldownSeconds": 600.0,
         "orthodoxDefenseDurationSeconds": 20.0
       },
       "uniqueAbility": {
@@ -746,7 +746,13 @@
         "abilityId": "orthodox_shnyaga",
         "name": "Шкала святости",
         "description": "Совершай добрые дела — святость растёт. Греши — падает. Если святость опустится до нуля — ты потеряешь все свои силы и станешь обычным человеком.",
-        "priceBitcoins": 1500
+        "priceBitcoins": 1500,
+        "orthodoxHolinessSelfDefenseSeconds": 300.0,
+        "orthodoxHolinessBitcoinInventoryFraction": 0.5,
+        "orthodoxHolinessAfkMinutes": 20.0,
+        "orthodoxHolinessNetherMinutes": 5.0,
+        "orthodoxHolinessRepentanceMinecraftDays": 40.0,
+        "orthodoxHolinessRecoveryMinutes": 30.0
       },
       "stock": {
         "enabled": true,

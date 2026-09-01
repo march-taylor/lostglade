@@ -52,6 +52,7 @@ import com.lostglade.server.OrthodoxAttackSystem;
 import com.lostglade.server.OrthodoxDefenseSystem;
 import com.lostglade.server.OrthodoxStockSystem;
 import com.lostglade.server.OrthodoxUniqueSystem;
+import com.lostglade.server.OrthodoxHolinessSystem;
 import com.lostglade.server.StartupRaceAbilitySystem;
 import com.lostglade.server.SeasonStartSystem;
 import com.lostglade.server.SeasonStartVoiceSystem;
@@ -143,6 +144,7 @@ public class Lg2 implements ModInitializer {
 		CopperManGogglesSystem.registerLateInteractions();
 		CopperManRepulsorSystem.registerLateInteractions();
 		ServerRaceSystem.register();
+		OrthodoxHolinessSystem.register();
 		PuroSanStockSystem.register();
 		OrthodoxStockSystem.register();
 		OrthodoxAttackSystem.register();
