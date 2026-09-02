@@ -65,6 +65,7 @@ import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.Holder;
+import net.minecraft.core.Rotations;
 import net.minecraft.core.particles.BlockParticleOption;
 import net.minecraft.core.particles.DustParticleOptions;
 import net.minecraft.core.particles.ParticleTypes;
@@ -331,8 +332,11 @@ public final class ServerRaceSystem {
 	private static final double ORTHODOX_UNIQUE_DEFAULT_COOLDOWN_SECONDS = 1200.0D;
 	private static final double ANCIENT_UKR_ATTACK_DEFAULT_DURATION_SECONDS = 20.0D;
 	private static final int ANCIENT_UKR_ATTACK_DEFAULT_SWORD_COUNT = 8;
-	private static final double ANCIENT_UKR_ATTACK_SWORD_DAMAGE = 6.0D;
+	private static final int ANCIENT_UKR_GAS_MASK_HEAD_INVENTORY_SLOT = 39;
+	private static final double ANCIENT_UKR_ATTACK_UNCHARGED_IRON_SWORD_DAMAGE = 1.2D;
 	private static final long ANCIENT_UKR_ATTACK_REHIT_TICKS = 16L;
+	private static final double ANCIENT_UKR_ATTACK_BLADE_HEIGHT_OFFSET = 0.25D;
+	private static final float ANCIENT_UKR_ATTACK_ROTATION_DEGREES_PER_TICK = 4.0F;
 	private static final double ANCIENT_UKR_DEFENSE_DEFAULT_SMOKE_RADIUS = 7.0D;
 	private static final double ANCIENT_UKR_DEFENSE_DEFAULT_SMOKE_DURATION_SECONDS = 8.0D;
 	private static final long ANCIENT_UKR_DEFENSE_EXPAND_TICKS = 40L;
@@ -452,6 +456,9 @@ public final class ServerRaceSystem {
 	private static final FontDescription MILK_POCKET_MENU_OVERLAY_FONT = new FontDescription.Resource(
 			Objects.requireNonNull(Identifier.tryParse("lg2:milk_pocket_menu"))
 	);
+	private static final FontDescription MILK_POCKET_NAME_FONT = new FontDescription.Resource(
+			Objects.requireNonNull(Identifier.tryParse("lg2:milk_pocket_name"))
+	);
 	private static final FontDescription KILKA_ATTACK_FLASH_FONT = new FontDescription.Resource(
 			Objects.requireNonNull(Identifier.tryParse("lg2:kilka_attack_flash"))
 	);
@@ -549,6 +556,8 @@ public final class ServerRaceSystem {
 	private static final int WOMAN_SHNYAGA_LETTER_OVERLAY_WIDTH = 134;
 	private static final int MILK_POCKET_MENU_OVERLAY_X_OFFSET = 168;
 	private static final int MILK_POCKET_MENU_OVERLAY_WIDTH = 176;
+	private static final double MILK_POCKET_NAME_LINE_CENTER_X = 86.5D;
+	private static final int MILK_POCKET_NAME_COLOR = 0xC12CFF;
 	private static final double WOMAN_SHNYAGA_SENDER_LINE_CENTER_X = 36.5D;
 	private static final double WOMAN_SHNYAGA_RECIPIENT_LINE_CENTER_X = 122.5D;
 	private static final double WOMAN_SHNYAGA_SENDER_NAME_CORRECTION_X = 4.5D;
@@ -1773,6 +1782,7 @@ public final class ServerRaceSystem {
 					prewarmCopperManDefenseTint(server, handler.player);
 					restoreLongPassiveEffectsForPlayer(server, handler.player);
 					clearStaleKilkaSalmonInvisibility(handler.player);
+					syncAncientUkrGasMaskForRace(handler.player);
 					queueKilkaSalmonFormRestore(server, handler.player);
 					refreshKilkaSalmonFormsForJoiningViewer(server, handler.player);
 					server.getCommands().sendCommands(handler.player);
@@ -1845,6 +1855,7 @@ public final class ServerRaceSystem {
 			syncWomanShnyagaLinks(server);
 		});
 		ServerPlayerEvents.AFTER_RESPAWN.register((oldPlayer, newPlayer, alive) -> {
+			syncAncientUkrGasMaskForRace(newPlayer);
 			if (!alive) {
 				clearGennadiyDefense(newPlayer);
 				clearPuroSanOverdrive(newPlayer);
@@ -1870,6 +1881,14 @@ public final class ServerRaceSystem {
 				cleanupLittleDictatorUniqueSession(newPlayer.level().getServer(), newPlayer.getUUID(), LITTLE_DICTATOR_UNIQUE_SESSIONS.remove(newPlayer.getUUID()), false);
 				recallGennadiyDonkey(newPlayer.level().getServer(), newPlayer.getUUID(), false);
 			}
+		});
+		ServerLivingEntityEvents.ALLOW_DEATH.register((entity, source, damageAmount) -> {
+			if (entity instanceof ServerPlayer player
+					&& isAncientUkrPlayer(player)
+					&& isAncientUkrGasMask(player.getItemBySlot(EquipmentSlot.HEAD))) {
+				player.setItemSlot(EquipmentSlot.HEAD, ItemStack.EMPTY);
+			}
+			return true;
 		});
 		ServerMessageEvents.ALLOW_CHAT_MESSAGE.register(ServerRaceSystem::onAllowChatMessage);
 		UseItemCallback.EVENT.register((player, world, hand) -> {
@@ -1908,18 +1927,15 @@ public final class ServerRaceSystem {
 			}
 			return onUseEntity(serverPlayer, hand, entity, hitResult == null ? null : hitResult.getLocation());
 		});
-		ServerLivingEntityEvents.ALLOW_DEATH.register((entity, source, damageAmount) -> {
-			if (entity instanceof ServerPlayer player && isAncientUkrGasMask(player.getItemBySlot(EquipmentSlot.HEAD))) {
-				player.setItemSlot(EquipmentSlot.HEAD, ItemStack.EMPTY);
-			}
-			return true;
-		});
 		ServerTickEvents.START_SERVER_TICK.register(ServerRaceSystem::tickKilkaDefenseProjectileDeflection);
 		ServerTickEvents.END_SERVER_TICK.register(server -> {
 			long nowTick = server.overworld().getGameTime();
 			for (ServerPlayer player : server.getPlayerList().getPlayers()) {
 				if ((nowTick + player.getId()) % MISTER_CARTEL_STACK_CHECK_INTERVAL_TICKS == 0L) {
 					enforceMrCartel49StackLimit(player);
+				}
+				if ((nowTick + player.getId()) % 20L == 0L) {
+					ensureAncientUkrGasMaskEquipped(player);
 				}
 			}
 			tickCartelSummons(server);
@@ -1953,7 +1969,6 @@ public final class ServerRaceSystem {
 			tickPendingKilkaSalmonFormRestores(server);
 			tickKilkaSalmonForm(server);
 			tickPuroSanAttackDebuffs(server);
-			tickAncientUkrStock(server);
 			 tickAncientUkrHelicopters(server);
 			tickAncientUkrSmoke(server);
 			tickAncientUkrUnique(server);
@@ -2021,6 +2036,11 @@ public final class ServerRaceSystem {
 			dispatcher.register(literal("ragebar")
 					.requires(ServerRaceSystem::canUseMarkRageBarCommand)
 					.executes(ServerRaceSystem::toggleMarkRageBarFromCommand)
+			);
+
+			dispatcher.register(literal("creditbar")
+					.requires(ServerRaceSystem::canUseAncientUkrCreditBarCommand)
+					.executes(ServerRaceSystem::toggleAncientUkrCreditBarFromCommand)
 			);
 		});
 	}
@@ -2184,6 +2204,7 @@ public final class ServerRaceSystem {
 		syncWomanShnyagaLinks(server);
 		updateMarkRageHud(player);
 		prewarmCopperManDefenseTint(server, player);
+		syncAncientUkrGasMaskForRace(player);
 	}
 
 	private static void clearRaceCommandRuntimeState(MinecraftServer server, ServerPlayer player) {
@@ -2269,6 +2290,13 @@ public final class ServerRaceSystem {
 	private static boolean canUseMarkRageBarCommand(CommandSourceStack source) {
 		ServerPlayer player = source == null ? null : source.getPlayer();
 		return player != null && isMarkPotroshitelPlayer(player);
+	}
+
+	private static boolean canUseAncientUkrCreditBarCommand(CommandSourceStack source) {
+		ServerPlayer player = source == null ? null : source.getPlayer();
+		return player != null && getRace(player)
+				.map(race -> ANCIENT_UKR_RACE_ID.equals(sanitizePath(race.id)))
+				.orElse(false);
 	}
 
 private static int togglePuroSanOverdriveBar(ServerPlayer player) {
@@ -2449,6 +2477,9 @@ private static int togglePuroSanOverdriveBar(ServerPlayer player) {
 			);
 			return 0;
 		}
+		if (ORTHODOX_RACE_ID.equals(raceId) && !OrthodoxHolinessSystem.canUseAbility(player, slot)) {
+			return 0;
+		}
 		if (OrthodoxDefenseSystem.isActive(player)) {
 			player.displayClientMessage(
 					Component.literal("\u0412\u043e \u0432\u0440\u0435\u043c\u044f \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u044f \u0421\u0432\u044f\u0442\u043e\u0433\u043e \u0434\u0443\u0445\u0430 \u0441\u043f\u043e\u0441\u043e\u0431\u043d\u043e\u0441\u0442\u0438 \u043d\u0435\u0434\u043e\u0441\u0442\u0443\u043f\u043d\u044b")
@@ -2598,6 +2629,9 @@ private static int togglePuroSanOverdriveBar(ServerPlayer player) {
 		if (slot == RaceAbilitySlot.UNIQUE_ABILITY && ORTHODOX_RACE_ID.equals(raceId)) {
 			return useOrthodoxUnique(player, race, ability);
 		}
+		if (slot == RaceAbilitySlot.SHNYAGA && ORTHODOX_RACE_ID.equals(raceId)) {
+			return OrthodoxHolinessSystem.toggleBar(player);
+		}
 
 		if ("startup_race".equals(raceId)) {
 			int result = StartupRaceAbilitySystem.useAbility(player, slot);
@@ -2610,6 +2644,12 @@ private static int togglePuroSanOverdriveBar(ServerPlayer player) {
 		startGenericAbilityCooldown(player, slot, ability);
 		Lg2.LOGGER.info("Player {} used race ability '{}' from race '{}'", player.getGameProfile().name(), ability.abilityId, race.id);
 		return 1;
+	}
+
+	private static int toggleAncientUkrCreditBarFromCommand(CommandContext<CommandSourceStack> context) {
+		ServerPlayer player = context.getSource().getPlayer();
+		if (!canUseAncientUkrCreditBarCommand(context.getSource())) return 0;
+		return AncientUkrCreditSystem.toggleCreditOverlay(player);
 	}
 
 	private static int useOrthodoxAttack(ServerPlayer caster, PlayerRaceConfig race, RaceAbilityConfig ability) {
@@ -2954,7 +2994,8 @@ private static int togglePuroSanOverdriveBar(ServerPlayer player) {
 		if (ORTHODOX_RACE_ID.equals(raceId)) {
 			return slot == RaceAbilitySlot.ATTACK
 					|| slot == RaceAbilitySlot.DEFENSE
-					|| slot == RaceAbilitySlot.UNIQUE_ABILITY;
+					|| slot == RaceAbilitySlot.UNIQUE_ABILITY
+					|| slot == RaceAbilitySlot.SHNYAGA;
 		}
 		return false;
 	}
@@ -4991,15 +5032,14 @@ private static final class AncientUkrSmokeSession {
 		private final ResourceKey<Level> dimension;
 		private final long endTick;
 		private final int swordCount;
-		private final double angleOffset;
+		private float rotationDegrees;
 		private UUID swordDisplayId;
 		private final Map<UUID, long[]> lastHitTicks = new HashMap<>();
 
-		private AncientUkrHelicopterSession(ResourceKey<Level> dimension, long endTick, int swordCount, double angleOffset) {
+		private AncientUkrHelicopterSession(ResourceKey<Level> dimension, long endTick, int swordCount) {
 			this.dimension = dimension;
 			this.endTick = endTick;
 			this.swordCount = swordCount;
-			this.angleOffset = angleOffset;
 		}
 	}
 private record PuroSanAttackDebuffSession(LivingEntity target, long endTick) {
@@ -11002,6 +11042,10 @@ private static void applyLittleDictatorSanctions(ServerPlayer dictator, ServerPl
 		}
 		LinkedHashMap<UUID, WomanShnyagaLink> womanLinks = WOMAN_SHNYAGA_LINKS_BY_WOMAN.get(playerId);
 		return (womanLinks != null && !womanLinks.isEmpty()) || WOMAN_SHNYAGA_LINKS_BY_BOYFRIEND.containsKey(playerId);
+	}
+
+	public static boolean isWomanShnyagaBoyfriend(UUID playerId) {
+		return playerId != null && WOMAN_SHNYAGA_LINKS_BY_BOYFRIEND.containsKey(playerId);
 	}
 
 	private static WomanShnyagaLink getWomanShnyagaLink(UUID womanId, UUID boyfriendId) {
@@ -17746,63 +17790,45 @@ private static void restoreKilkaSalmonFormAfterJoin(MinecraftServer server, Serv
 				&& getAncientUkrStockAbility(player) != null
 				&& isAncientUkrGasMask(player.getItemBySlot(EquipmentSlot.HEAD));
 	}
-	private static void tickAncientUkrStock(MinecraftServer server) {
-		if (server == null) return;
-		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-			boolean ancientUkr = player.isAlive() && getRace(player)
-					.map(race -> ANCIENT_UKR_RACE_ID.equals(sanitizePath(race.id)))
-					.orElse(false);
-			ItemStack headStack = player.getItemBySlot(EquipmentSlot.HEAD);
-			if (!ancientUkr) {
-				if (isAncientUkrGasMask(headStack)) player.setItemSlot(EquipmentSlot.HEAD, ItemStack.EMPTY);
-				removeAncientUkrGasMaskCopies(player);
-				continue;
-			}
-			if (!isAncientUkrGasMask(headStack)) {
-				ItemStack displaced = headStack.copy();
-				player.setItemSlot(EquipmentSlot.HEAD, ItemStack.EMPTY);
-				removeAncientUkrGasMaskCopies(player);
-				if (!displaced.isEmpty()) player.getInventory().placeItemBackInInventory(displaced);
-				player.setItemSlot(EquipmentSlot.HEAD, new ItemStack(ModItems.ANCIENT_UKR_GAS_MASK));
-			} else {
-				removeAncientUkrGasMaskCopies(player);
-			}
+
+	private static boolean isAncientUkrPlayer(ServerPlayer player) {
+		return player != null && getRace(player)
+				.map(race -> ANCIENT_UKR_RACE_ID.equals(sanitizePath(race.id)))
+				.orElse(false);
+	}
+
+	private static void syncAncientUkrGasMaskForRace(ServerPlayer player) {
+		if (player == null) return;
+		if (isAncientUkrPlayer(player)) {
+			ensureAncientUkrGasMaskEquipped(player);
+		} else if (isAncientUkrGasMask(player.getItemBySlot(EquipmentSlot.HEAD))) {
+			player.setItemSlot(EquipmentSlot.HEAD, ItemStack.EMPTY);
 		}
 	}
 
-	private static void removeAncientUkrGasMaskCopies(ServerPlayer player) {
-		if (player == null) return;
-		for (ItemStack stack : player.getInventory().getNonEquipmentItems()) {
-			if (isAncientUkrGasMask(stack)) stack.setCount(0);
+	private static void ensureAncientUkrGasMaskEquipped(ServerPlayer player) {
+		if (player == null || !player.isAlive() || !isAncientUkrPlayer(player)) return;
+		ItemStack headStack = player.getItemBySlot(EquipmentSlot.HEAD);
+		if (isAncientUkrGasMask(headStack)) return;
+		if (!headStack.isEmpty()) {
+			player.getInventory().placeItemBackInInventory(headStack.copy());
 		}
-		if (player.containerMenu != null && isAncientUkrGasMask(player.containerMenu.getCarried())) {
-			player.containerMenu.setCarried(ItemStack.EMPTY);
-		}
+		player.setItemSlot(EquipmentSlot.HEAD, new ItemStack(ModItems.ANCIENT_UKR_GAS_MASK));
 	}
 
 	private static boolean isAncientUkrGasMask(ItemStack stack) {
 		return stack != null && !stack.isEmpty() && stack.is(ModItems.ANCIENT_UKR_GAS_MASK);
 	}
-	public static boolean shouldBlockAncientUkrGasMaskInventoryClick(ServerPlayer player, AbstractContainerMenu menu, int slotIndex, ClickType clickType, int button) {
-		if (player == null || menu == null || clickType == null) return false;
-		if (isAncientUkrGasMask(menu.getCarried())) return true;
-		if (menu.isValidSlotIndex(slotIndex) && isAncientUkrGasMask(menu.getSlot(slotIndex).getItem())) return true;
-		if (clickType == ClickType.SWAP) {
-			if (button == 40 && isAncientUkrGasMask(player.getOffhandItem())) return true;
-			if (button >= 0 && button < 9 && isAncientUkrGasMask(player.getInventory().getItem(button))) return true;
-		}
-		return false;
-	}
 
-	public static boolean shouldBlockAncientUkrGasMaskDrop(ItemStack stack) {
-		return isAncientUkrGasMask(stack);
-	}
-	public static boolean shouldBlockAncientUkrGasMaskCreativeSlot(ServerPlayer player, int slotIndex, ItemStack replacement) {
-		if (player == null) return false;
-		if (isAncientUkrGasMask(replacement)) return true;
-		return player.inventoryMenu != null
-				&& player.inventoryMenu.isValidSlotIndex(slotIndex)
-				&& isAncientUkrGasMask(player.inventoryMenu.getSlot(slotIndex).getItem());
+	public static boolean isLockedAncientUkrGasMaskSlot(
+			ServerPlayer player,
+			AbstractContainerMenu menu,
+			int slotIndex
+	) {
+		if (!isAncientUkrPlayer(player) || menu == null || slotIndex < 0 || slotIndex >= menu.slots.size()) return false;
+		Slot slot = menu.getSlot(slotIndex);
+		return slot.container == player.getInventory()
+				&& slot.getContainerSlot() == ANCIENT_UKR_GAS_MASK_HEAD_INVENTORY_SLOT;
 	}
 	private static int useAncientUkrUnique(ServerPlayer player, PlayerRaceConfig race, RaceAbilityConfig ability) {
 		if (player == null || race == null || ability == null || !(player.level() instanceof ServerLevel level) || !player.isAlive() || player.isSpectator()) return 0;
@@ -17943,6 +17969,10 @@ private static int useAncientUkrShnyaga(ServerPlayer player, PlayerRaceConfig ra
 							.withStyle(style -> style.withColor(ChatFormatting.RED).withItalic(false)),
 					true
 			);
+			return 0;
+		}
+		if (AncientUkrCreditorChatSystem.isBankClosed()) {
+			player.displayClientMessage(AncientUkrCreditorChatSystem.bankClosedActionBar(), true);
 			return 0;
 		}
 		double maxDistance = positiveOrDefault(ability.ancientUkrShnyagaMaxDistanceBlocks, ANCIENT_UKR_SHNYAGA_DEFAULT_MAX_DISTANCE_BLOCKS);
@@ -18375,33 +18405,32 @@ private static int useAncientUkrAttack(ServerPlayer player, PlayerRaceConfig rac
 		int swordCount = ability.ancientUkrAttackSwordCount > 0 ? ability.ancientUkrAttackSwordCount : ANCIENT_UKR_ATTACK_DEFAULT_SWORD_COUNT;
 		long durationTicks = Math.max(1L, asTicks(positiveOrDefault(ability.ancientUkrAttackDurationSeconds, ANCIENT_UKR_ATTACK_DEFAULT_DURATION_SECONDS)));
 		long nowTick = level.getGameTime();
-		AncientUkrHelicopterSession session = new AncientUkrHelicopterSession(level.dimension(), nowTick + durationTicks, swordCount, nowTick * 0.19D);
-		Display.ItemDisplay display = createAncientUkrHelicopterDisplay(level, player, session, nowTick);
-		if (display == null) return 0;
-		session.swordDisplayId = display.getUUID();
+		AncientUkrHelicopterSession session = new AncientUkrHelicopterSession(level.dimension(), nowTick + durationTicks, swordCount);
+		ArmorStand stand = createAncientUkrHelicopterStand(level, player, session);
+		if (stand == null) return 0;
+		session.swordDisplayId = stand.getUUID();
 		ANCIENT_UKR_HELICOPTER_SESSIONS.put(player.getUUID(), session);
 		startGenericAbilityCooldown(player, RaceAbilitySlot.ATTACK, ability);
 		Lg2.LOGGER.info("Player {} used ancient ukr attack '{}' from race '{}'", player.getGameProfile().name(), ability.abilityId, race.id);
 		return 1;
 	}
 
-	private static Display.ItemDisplay createAncientUkrHelicopterDisplay(ServerLevel level, ServerPlayer player, AncientUkrHelicopterSession session, long nowTick) {
-		Display.ItemDisplay display = new Display.ItemDisplay(EntityType.ITEM_DISPLAY, level);
-		display.setPos(player.getX(), player.getY(), player.getZ());
-		display.setNoGravity(true);
-		display.setInvulnerable(true);
-		display.setSilent(true);
-		display.setItemStack(new ItemStack(ModItems.ANCIENT_UKR_HELICOPTER_SWORDS));
-		display.setItemTransform(ItemDisplayContext.FIXED);
-		display.setViewRange(1.5F);
-		display.setPosRotInterpolationDuration(1);
-		display.setTransformationInterpolationDelay(0);
-		display.setTransformationInterpolationDuration(2);
-		ItemDisplayHitboxHelper.clear(display);
-		if (!level.addFreshEntity(display)) return null;
-		forceEntityPassenger(player, display);
-		updateAncientUkrHelicopterDisplay(player, display, session, nowTick, false);
-		return display;
+	private static ArmorStand createAncientUkrHelicopterStand(ServerLevel level, ServerPlayer player, AncientUkrHelicopterSession session) {
+		ArmorStand stand = EntityType.ARMOR_STAND.create(level, EntitySpawnReason.TRIGGERED);
+		if (stand == null) return null;
+		stand.setPos(player.getX(), player.getY(), player.getZ());
+		stand.setInvisible(true);
+		stand.setNoGravity(true);
+		stand.setInvulnerable(true);
+		stand.setSilent(true);
+		stand.setItemSlot(EquipmentSlot.HEAD, new ItemStack(ModItems.ANCIENT_UKR_HELICOPTER_SWORDS));
+		((ArmorStandAccessor) stand).lg2$setSmall(false);
+		((ArmorStandAccessor) stand).lg2$setMarker(true);
+		stand.setHeadPose(new Rotations(0.0F, session.rotationDegrees, 0.0F));
+		if (!level.addFreshEntity(stand)) return null;
+		forceEntityPassenger(player, stand);
+		syncAncientUkrHelicopterEquipment(stand);
+		return stand;
 	}
 
 	private static void tickAncientUkrHelicopters(MinecraftServer server) {
@@ -18424,30 +18453,31 @@ private static int useAncientUkrAttack(ServerPlayer player, PlayerRaceConfig rac
 		if (nowTick % 12L == 0L) {
 			level.playSound(null, player.getX(), player.getY() + 0.85D, player.getZ(), SoundEvents.BREEZE_WHIRL, SoundSource.PLAYERS, 0.55F, 1.15F);
 		}
+		session.rotationDegrees += ANCIENT_UKR_ATTACK_ROTATION_DEGREES_PER_TICK;
 		Entity entity = session.swordDisplayId == null ? null : level.getEntity(session.swordDisplayId);
-		if (entity instanceof Display.ItemDisplay display) {
-			forceEntityPassenger(player, display);
-			updateAncientUkrHelicopterDisplay(player, display, session, nowTick, true);
+		if (entity instanceof ArmorStand stand) {
+			forceEntityPassenger(player, stand);
+			stand.setHeadPose(new Rotations(0.0F, session.rotationDegrees, 0.0F));
 		}
-		double bladeHeight = player.getY() + Math.min(player.getBbHeight() * 0.55D, 0.95D);
+		double bladeHeight = player.getY() + Math.min(player.getBbHeight() * 0.55D, 0.95D) + ANCIENT_UKR_ATTACK_BLADE_HEIGHT_OFFSET;
+		double baseAngle = -Math.toRadians(session.rotationDegrees);
 		for (int index = 0; index < session.swordCount; index++) {
-			double angle = session.angleOffset + nowTick * 0.28D + Math.PI * 2.0D * index / session.swordCount;
+			double angle = baseAngle + Math.PI * 2.0D * index / session.swordCount;
 			Vec3 direction = new Vec3(Math.cos(angle), 0.0D, Math.sin(angle));
 			applyAncientUkrSwordHits(level, player, session, index, direction, bladeHeight, nowTick);
 		}
 	}
 
-	private static void updateAncientUkrHelicopterDisplay(ServerPlayer player, Display.ItemDisplay display, AncientUkrHelicopterSession session, long nowTick, boolean interpolate) {
-		double bladeHeight = player.getY() + Math.min(player.getBbHeight() * 0.55D, 0.95D);
-		float localY = (float) (bladeHeight - display.getY());
-		float angle = (float) (session.angleOffset + nowTick * 0.28D);
-		display.setTransformationInterpolationDuration(interpolate ? 2 : 0);
-		display.setTransformation(new Transformation(
-				new Vector3f(0.0F, localY, 0.0F),
-				new Quaternionf().rotateY(angle),
-				new Vector3f(1.0F, 1.0F, 1.0F),
-				new Quaternionf()
-		));
+	private static void syncAncientUkrHelicopterEquipment(ArmorStand stand) {
+		if (!(stand.level() instanceof ServerLevel level)) return;
+		ClientboundSetEquipmentPacket packet = new ClientboundSetEquipmentPacket(
+				stand.getId(),
+				List.of(com.mojang.datafixers.util.Pair.of(
+						EquipmentSlot.HEAD,
+						stand.getItemBySlot(EquipmentSlot.HEAD).copy()
+				))
+		);
+		for (ServerPlayer viewer : level.players()) viewer.connection.send(packet);
 	}
 
 	private static void applyAncientUkrSwordHits(ServerLevel level, ServerPlayer player, AncientUkrHelicopterSession session, int swordIndex, Vec3 direction, double bladeHeight, long nowTick) {
@@ -18464,7 +18494,7 @@ private static int useAncientUkrAttack(ServerPlayer player, PlayerRaceConfig rac
 			int previousInvulnerability = target.invulnerableTime;
 			try {
 				target.invulnerableTime = 0;
-				if (target.hurtServer(level, level.damageSources().playerAttack(player), (float) ANCIENT_UKR_ATTACK_SWORD_DAMAGE)) {
+				if (target.hurtServer(level, level.damageSources().playerAttack(player), (float) ANCIENT_UKR_ATTACK_UNCHARGED_IRON_SWORD_DAMAGE)) {
 					applyAncientUkrSwordKnockback(player, target);
 					level.playSound(null, target.getX(), target.getY() + target.getBbHeight() * 0.5D, target.getZ(), SoundEvents.PLAYER_ATTACK_KNOCKBACK, SoundSource.PLAYERS, 0.85F, 1.0F + level.random.nextFloat() * 0.12F);
 				}
@@ -18484,7 +18514,7 @@ private static int useAncientUkrAttack(ServerPlayer player, PlayerRaceConfig rac
 		Vec3 away = target.position().subtract(player.position()).multiply(1.0D, 0.0D, 1.0D);
 		if (away.lengthSqr() < 1.0E-6D) away = player.getLookAngle().multiply(1.0D, 0.0D, 1.0D);
 		if (away.lengthSqr() < 1.0E-6D) away = new Vec3(0.0D, 0.0D, 1.0D);
-		target.setDeltaMovement(target.getDeltaMovement().add(away.normalize().scale(0.43D).add(0.0D, 0.11D, 0.0D)));
+		target.setDeltaMovement(target.getDeltaMovement().add(away.normalize().scale(0.215D).add(0.0D, 0.055D, 0.0D)));
 		target.hurtMarked = true;
 		if (target instanceof ServerPlayer targetPlayer) targetPlayer.connection.send(new ClientboundSetEntityMotionPacket(targetPlayer));
 	}
@@ -26382,8 +26412,19 @@ private static final CartelManualPage[] CARTEL_MANUAL_PAGES_EN = {
 
 	private static Component buildMilkPocketInviteMenuTitle(ServerPlayer viewer, ServerPlayer target) {
 		if (viewer != null && PolymerResourcePackUtils.hasMainPack(viewer)) {
-			return Component.literal(buildHorizontalAdvance(MILK_POCKET_MENU_OVERLAY_X_OFFSET) + buildOverlayGlyph(MILK_POCKET_MENU_OVERLAY_GLYPH, MILK_POCKET_MENU_OVERLAY_WIDTH))
+			Component title = Component.literal(buildHorizontalAdvance(MILK_POCKET_MENU_OVERLAY_X_OFFSET) + buildOverlayGlyph(MILK_POCKET_MENU_OVERLAY_GLYPH, MILK_POCKET_MENU_OVERLAY_WIDTH))
 					.withStyle(style -> style.withColor(0xFFFFFF).withItalic(false).withFont(MILK_POCKET_MENU_OVERLAY_FONT));
+			if (target == null) {
+				return title;
+			}
+
+			String playerName = target.getGameProfile().name();
+			int startX = (int) Math.round(MILK_POCKET_NAME_LINE_CENTER_X - measureCartelPassportNameWidth(playerName) / 2.0D);
+			return title.copy()
+					.append(Component.literal(TITLE_OVERLAY_RESET + buildHorizontalAdvance(startX))
+							.withStyle(style -> style.withColor(0xFFFFFF).withItalic(false)))
+					.append(Component.literal(playerName)
+							.withStyle(style -> style.withColor(MILK_POCKET_NAME_COLOR).withItalic(false).withFont(MILK_POCKET_NAME_FONT)));
 		}
 		if (target == null) {
 			return Component.literal("Карманное измерение");

@@ -25,8 +25,7 @@ public abstract class AbstractContainerMenuCopperGogglesMixin {
 			return;
 		}
 		AbstractContainerMenu menu = (AbstractContainerMenu) (Object) this;
-		if (ServerRaceSystem.shouldBlockAncientUkrGasMaskInventoryClick(serverPlayer, menu, slotIndex, clickType, button)) {
-			menu.sendAllDataToRemote();
+		if (ServerRaceSystem.isLockedAncientUkrGasMaskSlot(serverPlayer, menu, slotIndex)) {
 			ci.cancel();
 			return;
 		}

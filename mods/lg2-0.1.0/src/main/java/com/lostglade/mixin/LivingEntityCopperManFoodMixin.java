@@ -2,6 +2,7 @@ package com.lostglade.mixin;
 
 import com.lostglade.server.CopperManRepulsorSystem;
 import com.lostglade.server.ServerRaceSystem;
+import com.lostglade.server.OrthodoxHolinessSystem;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.LivingEntity;
@@ -28,6 +29,8 @@ public abstract class LivingEntityCopperManFoodMixin {
 	private float lg2$ancientUkrSaturationBeforeUse;
 	private int lg2$ancientUkrPorkNutrition;
 	private float lg2$ancientUkrPorkSaturation;
+	private ItemStack lg2$orthodoxConsumedItem = ItemStack.EMPTY;
+	private int lg2$orthodoxFoodLevelBeforeUse;
 
 	@Inject(method = "completeUsingItem", at = @At("HEAD"))
 	private void lg2$captureCopperManFoodState(CallbackInfo ci) {
@@ -40,6 +43,8 @@ public abstract class LivingEntityCopperManFoodMixin {
 		}
 
 		ItemStack useItem = self.getUseItem();
+		this.lg2$orthodoxConsumedItem = useItem.copy();
+		this.lg2$orthodoxFoodLevelBeforeUse = player.getFoodData().getFoodLevel();
 		ServerRaceSystem.beginMilkStockEnchantedGoldenAppleEffects(player, useItem);
 		this.lg2$pendingWomanUniqueFoodUnlock = !useItem.isEmpty() && useItem.get(DataComponents.FOOD) != null;
 		this.lg2$pendingMarkStockFoodVoid = ServerRaceSystem.shouldVoidMarkStockFood(player, useItem);
@@ -69,6 +74,15 @@ public abstract class LivingEntityCopperManFoodMixin {
 		this.lg2$pendingCopperFoodAdjustment = true;
 		this.lg2$copperFoodLevelBeforeUse = player.getFoodData().getFoodLevel();
 		this.lg2$copperSaturationBeforeUse = player.getFoodData().getSaturationLevel();
+	}
+
+	@Inject(method = "completeUsingItem", at = @At("TAIL"))
+	private void lg2$recordOrthodoxConsumption(CallbackInfo ci) {
+		LivingEntity self = (LivingEntity) (Object) this;
+		if (self instanceof ServerPlayer player && !this.lg2$orthodoxConsumedItem.isEmpty()) {
+			OrthodoxHolinessSystem.onItemConsumed(player, this.lg2$orthodoxConsumedItem, this.lg2$orthodoxFoodLevelBeforeUse);
+		}
+		this.lg2$orthodoxConsumedItem = ItemStack.EMPTY;
 	}
 
 	@Inject(method = "completeUsingItem", at = @At("TAIL"))

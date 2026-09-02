@@ -8,28 +8,28 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.SectionPos;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.level.ThreadedLevelLightEngine;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.ai.attributes.AttributeInstance;
 import net.minecraft.world.entity.ai.attributes.AttributeModifier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.Level;
-import net.minecraft.world.level.block.Block;
-import net.minecraft.world.level.block.Blocks;
-import net.minecraft.world.level.block.LightBlock;
-import net.minecraft.world.level.block.state.BlockState;
 
 import java.util.HashMap;
-import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 public final class OrthodoxStockSystem {
 	private static final String RACE_ID = "orthodox";
@@ -54,9 +54,11 @@ public final class OrthodoxStockSystem {
 			new ManagedInfiniteEffect(MobEffects.MINING_FATIGUE, false, true, true);
 	private static final ManagedInfiniteEffect ENCHANTED_POISON =
 			new ManagedInfiniteEffect(MobEffects.POISON, false, true, true);
+	private static final ManagedInfiniteEffect ENCHANTED_BLINDNESS =
+			new ManagedInfiniteEffect(MobEffects.BLINDNESS, false, true, true);
 
-	private static final Map<UUID, LightKey> PLAYER_LIGHTS = new HashMap<>();
-	private static final Map<LightKey, ManagedLight> MANAGED_LIGHTS = new HashMap<>();
+	private static final Map<UUID, LightPlacement> PLAYER_LIGHTS = new HashMap<>();
+	private static final Map<LightKey, ManagedLight> MANAGED_LIGHTS = new ConcurrentHashMap<>();
 
 	private OrthodoxStockSystem() {
 	}
@@ -74,11 +76,27 @@ public final class OrthodoxStockSystem {
 				clearPlayer(server, player);
 				continue;
 			}
-			syncMaxHealth(player);
-			syncLight(server, player);
-			syncHeightBlessing(player);
+			if (OrthodoxHolinessSystem.hasPositiveHoliness(player)) {
+				syncMaxHealth(player);
+				syncLight(server, player);
+				syncHeightBlessing(player);
+			} else {
+				clearPositiveStock(server, player);
+			}
 			syncEnchantedPenalty(player);
 		}
+	}
+
+	private static void clearPositiveStock(MinecraftServer server, ServerPlayer player) {
+		AttributeInstance maxHealth = player.getAttribute(Attributes.MAX_HEALTH);
+		if (maxHealth != null && maxHealth.getModifier(MAX_HEALTH_MODIFIER_ID) != null) {
+			maxHealth.removeModifier(MAX_HEALTH_MODIFIER_ID);
+			if (player.getHealth() > player.getMaxHealth()) player.setHealth(player.getMaxHealth());
+		}
+		HEIGHT_REGENERATION.clear(player);
+		HEIGHT_RESISTANCE.clear(player);
+		LightPlacement light = PLAYER_LIGHTS.get(player.getUUID());
+		if (light != null) releaseLight(server, player.getUUID(), light);
 	}
 
 	private static void syncMaxHealth(ServerPlayer player) {
@@ -117,6 +135,7 @@ public final class OrthodoxStockSystem {
 			ENCHANTED_WEAKNESS.ensure(player, 0);
 			ENCHANTED_MINING_FATIGUE.ensure(player, 0);
 			ENCHANTED_POISON.ensure(player, 0);
+			ENCHANTED_BLINDNESS.ensure(player, 0);
 		} else {
 			clearEnchantedPenalty(player);
 		}
@@ -131,58 +150,64 @@ public final class OrthodoxStockSystem {
 	}
 
 	private static void syncLight(MinecraftServer server, ServerPlayer player) {
-		LightKey desired = findLightPosition(player);
-		LightKey current = PLAYER_LIGHTS.get(player.getUUID());
-		if (desired != null && desired.equals(current)) return;
+		LightPlacement desired = currentLightPosition(player);
+		LightPlacement current = PLAYER_LIGHTS.get(player.getUUID());
+		if (desired != null && desired.equals(current)) {
+			// A section can reject the first check while it is still loading.
+			// Requeue the unchanged virtual source so lighting recovers in newly ready chunks.
+			if (server.getTickCount() % 10 == 0) requestLightUpdate(player.level(), desired.key);
+			return;
+		}
 		if (current != null) releaseLight(server, player.getUUID(), current);
-		if (desired != null && acquireLight(player.level(), player.getUUID(), desired)) {
+		if (desired != null) {
+			acquireLight(player.level(), player.getUUID(), desired);
 			PLAYER_LIGHTS.put(player.getUUID(), desired);
 		} else {
 			PLAYER_LIGHTS.remove(player.getUUID());
 		}
 	}
 
-	private static LightKey findLightPosition(ServerPlayer player) {
+	private static LightPlacement currentLightPosition(ServerPlayer player) {
 		ServerLevel level = player.level();
-		BlockPos feet = BlockPos.containing(player.getX(), player.getY() + 0.35D, player.getZ());
-		BlockPos eye = BlockPos.containing(player.getX(), player.getEyeY(), player.getZ());
-		BlockPos[] candidates = feet.equals(eye) ? new BlockPos[]{feet} : new BlockPos[]{feet, eye};
-		for (BlockPos pos : candidates) {
-			if (!level.isInWorldBounds(pos) || !level.hasChunkAt(pos)) continue;
-			LightKey key = new LightKey(level.dimension(), pos.immutable());
-			BlockState state = level.getBlockState(pos);
-			if (MANAGED_LIGHTS.containsKey(key) || state.isAir() || state.is(Blocks.WATER)) return key;
-		}
-		return null;
+		BlockPos pos = BlockPos.containing(player.getX(), player.getEyeY(), player.getZ());
+		if (!level.isInWorldBounds(pos) || !level.hasChunkAt(pos)) return null;
+		return new LightPlacement(new LightKey(level.dimension(), pos.asLong()));
 	}
 
-	private static boolean acquireLight(ServerLevel level, UUID playerId, LightKey key) {
-		ManagedLight existing = MANAGED_LIGHTS.get(key);
-		if (existing != null) {
-			existing.owners.add(playerId);
-			return true;
-		}
-		BlockState original = level.getBlockState(key.pos);
-		if (!original.isAir() && !original.is(Blocks.WATER)) return false;
-		BlockState light = Blocks.LIGHT.defaultBlockState()
-				.setValue(LightBlock.LEVEL, LIGHT_LEVEL)
-				.setValue(LightBlock.WATERLOGGED, original.is(Blocks.WATER));
-		if (!level.setBlock(key.pos, light, Block.UPDATE_ALL)) return false;
-		ManagedLight managed = new ManagedLight(original, light);
-		managed.owners.add(playerId);
-		MANAGED_LIGHTS.put(key, managed);
-		return true;
+	private static void acquireLight(ServerLevel level, UUID playerId, LightPlacement placement) {
+		LightKey key = placement.key;
+		ManagedLight managed = MANAGED_LIGHTS.computeIfAbsent(key, ignored -> new ManagedLight());
+		if (managed.owners.add(playerId)) requestLightUpdate(level, key);
 	}
 
-	private static void releaseLight(MinecraftServer server, UUID playerId, LightKey key) {
-		PLAYER_LIGHTS.remove(playerId, key);
+	private static void releaseLight(MinecraftServer server, UUID playerId, LightPlacement placement) {
+		PLAYER_LIGHTS.remove(playerId, placement);
+		LightKey key = placement.key;
 		ManagedLight managed = MANAGED_LIGHTS.get(key);
-		if (managed == null || !managed.owners.remove(playerId) || !managed.owners.isEmpty()) return;
-		MANAGED_LIGHTS.remove(key);
+		if (managed == null || !managed.owners.remove(playerId)) return;
 		ServerLevel level = server.getLevel(key.dimension);
-		if (level != null && level.getBlockState(key.pos).equals(managed.lightState)) {
-			level.setBlock(key.pos, managed.originalState, Block.UPDATE_ALL);
+		if (!managed.owners.isEmpty() || !MANAGED_LIGHTS.remove(key, managed)) return;
+		if (level != null) requestLightUpdate(level, key);
+	}
+
+	private static void requestLightUpdate(ServerLevel level, LightKey key) {
+		BlockPos pos = BlockPos.of(key.pos);
+		if (level.isInWorldBounds(pos) && level.hasChunkAt(pos)) {
+			ThreadedLevelLightEngine lightEngine = level.getChunkSource().getLightEngine();
+			// Completely empty chunk sections have no block-light storage. Vanilla's
+			// checkBlock silently ignores a virtual source there, producing hard 16x16
+			// boundaries. Marking the occupied section as non-empty creates light-only
+			// storage without placing or replacing any world block.
+			lightEngine.updateSectionStatus(SectionPos.of(pos), false);
+			lightEngine.checkBlock(pos);
+			lightEngine.tryScheduleUpdate();
 		}
+	}
+
+	public static int getDynamicLightEmission(BlockGetter level, long packedPos) {
+		if (!(level instanceof ServerLevel serverLevel)) return 0;
+		ManagedLight managed = MANAGED_LIGHTS.get(new LightKey(serverLevel.dimension(), packedPos));
+		return managed == null || managed.owners.isEmpty() ? 0 : LIGHT_LEVEL;
 	}
 
 	private static RaceAbilityConfig getStockAbility(ServerPlayer player) {
@@ -200,6 +225,7 @@ public final class OrthodoxStockSystem {
 		ENCHANTED_WEAKNESS.clear(player);
 		ENCHANTED_MINING_FATIGUE.clear(player);
 		ENCHANTED_POISON.clear(player);
+		ENCHANTED_BLINDNESS.clear(player);
 	}
 
 	private static void clearPlayer(MinecraftServer server, ServerPlayer player) {
@@ -212,23 +238,23 @@ public final class OrthodoxStockSystem {
 		HEIGHT_REGENERATION.clear(player);
 		HEIGHT_RESISTANCE.clear(player);
 		clearEnchantedPenalty(player);
-		LightKey light = PLAYER_LIGHTS.get(player.getUUID());
+		LightPlacement light = PLAYER_LIGHTS.get(player.getUUID());
 		if (light != null) releaseLight(server, player.getUUID(), light);
 	}
 
 	private static void clearAll(MinecraftServer server) {
 		if (server != null) {
 			for (ServerPlayer player : server.getPlayerList().getPlayers()) clearPlayer(server, player);
-			for (Map.Entry<LightKey, ManagedLight> entry : Map.copyOf(MANAGED_LIGHTS).entrySet()) {
-				ServerLevel level = server.getLevel(entry.getKey().dimension);
-				ManagedLight managed = entry.getValue();
-				if (level != null && level.getBlockState(entry.getKey().pos).equals(managed.lightState)) {
-					level.setBlock(entry.getKey().pos, managed.originalState, Block.UPDATE_ALL);
-				}
-			}
 		}
+		List<LightKey> lightKeys = List.copyOf(MANAGED_LIGHTS.keySet());
 		PLAYER_LIGHTS.clear();
 		MANAGED_LIGHTS.clear();
+		if (server != null) {
+			for (LightKey key : lightKeys) {
+				ServerLevel level = server.getLevel(key.dimension);
+				if (level != null) requestLightUpdate(level, key);
+			}
+		}
 		HEIGHT_REGENERATION.clearAll(server);
 		HEIGHT_RESISTANCE.clearAll(server);
 		ENCHANTED_NAUSEA.clearAll(server);
@@ -236,19 +262,16 @@ public final class OrthodoxStockSystem {
 		ENCHANTED_WEAKNESS.clearAll(server);
 		ENCHANTED_MINING_FATIGUE.clearAll(server);
 		ENCHANTED_POISON.clearAll(server);
+		ENCHANTED_BLINDNESS.clearAll(server);
 	}
 
-	private record LightKey(ResourceKey<Level> dimension, BlockPos pos) {
+	private record LightKey(ResourceKey<Level> dimension, long pos) {
+	}
+
+	private record LightPlacement(LightKey key) {
 	}
 
 	private static final class ManagedLight {
-		private final BlockState originalState;
-		private final BlockState lightState;
-		private final Set<UUID> owners = new HashSet<>();
-
-		private ManagedLight(BlockState originalState, BlockState lightState) {
-			this.originalState = originalState;
-			this.lightState = lightState;
-		}
+		private final Set<UUID> owners = ConcurrentHashMap.newKeySet();
 	}
 }

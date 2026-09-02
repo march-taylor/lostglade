@@ -59,6 +59,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Deque;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -66,6 +67,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -98,6 +100,7 @@ public final class AncientUkrCreditSystem {
     private static final Map<UUID, PendingOffer> PENDING_OFFERS = new HashMap<>();
     private static final Map<UUID, RepaymentSession> REPAYMENTS = new HashMap<>();
     private static final Map<UUID, Deque<LoanPayout>> LOAN_PAYOUTS = new HashMap<>();
+    private static final Set<UUID> CREDIT_OVERLAY_HIDDEN = new HashSet<>();
     private static long lastPeriodicTick = Long.MIN_VALUE;
     private static boolean loaded;
 
@@ -113,6 +116,7 @@ public final class AncientUkrCreditSystem {
             PENDING_OFFERS.clear();
             REPAYMENTS.clear();
             LOAN_PAYOUTS.clear();
+            CREDIT_OVERLAY_HIDDEN.clear();
             loaded = false;
         });
         ServerPlayConnectionEvents.JOIN.register((handler, sender, server) ->
@@ -153,28 +157,33 @@ public final class AncientUkrCreditSystem {
         BorrowerState borrower = store.borrowers.get(ownerId.toString());
         deduplicateCredits(borrower);
         CreditTerms terms = terms();
-        StringBuilder out = new StringBuilder("SERVER FACTS (authoritative):\n");
-        out.append("Client nickname: ").append(owner == null ? storedNickname(borrower, ownerId) : owner.getGameProfile().name()).append('\n');
-        out.append("Active credits: ").append(borrower == null ? 0 : borrower.credits.size()).append('/').append(terms.maxActive()).append('\n');
-        out.append("Current hourly rate for new credits: ").append(formatPercent(currentRatePercent())).append("%. It changes every real hour.\n");
-        out.append("Maximum principal per credit: ").append(terms.maxPrincipal()).append(" bitcoins.\n");
-        out.append("Each credit permanently keeps the hourly rate agreed when it was opened. Interest is simple, charged from principal each hour, including while offline.\n");
-        out.append("Interest pauses at or above ").append(formatAmount(BigDecimal.valueOf(terms.maxDebtMultiplier())))
-                .append("x principal; one full charge may cross the threshold.\n");
+        StringBuilder out = new StringBuilder("FACTS:\n");
+        out.append("nickname=").append(owner == null ? storedNickname(borrower, ownerId) : owner.getGameProfile().name()).append('\n');
+        out.append("active=").append(borrower == null ? 0 : borrower.credits.size()).append('/').append(terms.maxActive()).append('\n');
+        out.append("currentNewCreditHourlyRate=").append(formatPercent(currentRatePercent()))
+                .append("%; possibleRateRange=").append(formatPercent(terms.minRate())).append("%-")
+                .append(formatPercent(terms.maxRate())).append("%; maxPrincipal=")
+                .append(terms.maxPrincipal()).append(" bitcoins\n");
+        out.append("Rate rules: the current rate for a newly negotiated credit is randomly recalculated every hour ")
+                .append("within the stated range. It is not the only permanent rate. Once a credit offer is created, ")
+                .append("that offer keeps its quoted rate; once issued, that individual credit keeps the same rate ")
+                .append("for its whole lifetime. Different credits may therefore have different fixed rates. ")
+                .append("Interest uses each credit's own fixed simple hourly rate from principal, also offline; stop interest at ")
+                .append(formatAmount(BigDecimal.valueOf(terms.maxDebtMultiplier()))).append("x principal after a full charge.\n");
         if (borrower == null || borrower.credits.isEmpty()) {
-            out.append("Credits: none.\n");
+            out.append("credits=none\n");
         } else {
-            out.append("Credits:\n");
+            out.append("credits:\n");
             borrower.credits.stream().sorted(Comparator.comparingInt(credit -> credit.number)).forEach(credit ->
-                    out.append("- #").append(credit.number).append(": principal ").append(credit.principal)
-                            .append(", debt ").append(formatAmount(credit.debt)).append(" bitcoins, fixed hourly rate ")
+                    out.append('#').append(credit.number).append(" principal=").append(credit.principal)
+                            .append(" debt=").append(formatAmount(credit.debt)).append(" rate=")
                             .append(formatPercent(credit.interestRatePercent)).append("%\n"));
         }
         PendingOffer offer = PENDING_OFFERS.get(ownerId);
-        out.append("Pending final-confirmation offer: ").append(offer == null ? "none" : offer.amount() + " bitcoins at a fixed " + formatPercent(offer.interestRatePercent()) + "% hourly rate").append(".\n");
+        out.append("pendingOffer=").append(offer == null ? "none" : offer.amount() + " bitcoins, " + formatPercent(offer.interestRatePercent()) + "% hourly").append('\n');
         RepaymentSession repayment = REPAYMENTS.get(ownerId);
-        out.append("Active repayment: ").append(repayment == null ? "none" :
-                "credits " + repayment.creditNumbers + ", paid " + repayment.totalPaid + " bitcoins").append(".\n");
+        out.append("repayment=").append(repayment == null ? "none" :
+                "credits " + repayment.creditNumbers + ", paid " + repayment.totalPaid).append('\n');
         return out.toString();
     }
 
@@ -222,6 +231,10 @@ public final class AncientUkrCreditSystem {
         if (previous != null) {
             player.connection.send(new ClientboundSetObjectivePacket(previous, ClientboundSetObjectivePacket.METHOD_REMOVE));
         }
+        if (CREDIT_OVERLAY_HIDDEN.contains(playerId)) {
+            restoreServerSidebar(player);
+            return;
+        }
         BorrowerState borrower = store.borrowers.get(playerId.toString());
         deduplicateCredits(borrower);
         if (borrower == null || borrower.credits.isEmpty()) {
@@ -240,6 +253,25 @@ public final class AncientUkrCreditSystem {
             player.connection.send(new ClientboundSetScorePacket("lg2_credit_" + credit.number, objective.getName(),
                     credits.size() - index, Optional.of(creditLine(player, credit)), Optional.of(BlankFormat.INSTANCE)));
         }
+    }
+
+    static int toggleCreditOverlay(ServerPlayer player) {
+        if (player == null) return 0;
+        UUID playerId = player.getUUID();
+        boolean hidden;
+        if (CREDIT_OVERLAY_HIDDEN.remove(playerId)) {
+            hidden = false;
+        } else {
+            CREDIT_OVERLAY_HIDDEN.add(playerId);
+            hidden = true;
+        }
+        syncScoreboard(player);
+        String message = hidden
+                ? "\u041a\u0440\u0435\u0434\u0438\u0442\u043d\u044b\u0439 \u043e\u0432\u0435\u0440\u043b\u0435\u0439 \u0441\u043a\u0440\u044b\u0442"
+                : "\u041a\u0440\u0435\u0434\u0438\u0442\u043d\u044b\u0439 \u043e\u0432\u0435\u0440\u043b\u0435\u0439 \u0432\u043a\u043b\u044e\u0447\u0451\u043d";
+        player.displayClientMessage(Component.literal(message).withStyle(style ->
+                style.withColor(hidden ? ChatFormatting.GRAY : ChatFormatting.GOLD).withItalic(false)), true);
+        return 1;
     }
     private static void load(MinecraftServer server) {
         lastPeriodicTick = Long.MIN_VALUE;
@@ -416,6 +448,10 @@ public final class AncientUkrCreditSystem {
             }
         }
         if (numbers.isEmpty() && singleNumber != null && singleNumber > 0) numbers.add(singleNumber);
+        if (numbers.isEmpty()) {
+            List<Integer> activeNumbers = activeCreditNumbers(ownerId);
+            if (activeNumbers.size() == 1) numbers.add(activeNumbers.get(0));
+        }
         numbers.sort(Integer::compareTo);
         if (numbers.isEmpty()) {
             return result("No credit numbers were selected. Ask the client which credit or credits they want to repay.");
@@ -501,6 +537,8 @@ public final class AncientUkrCreditSystem {
         List<ItemEntity> items = level.getEntitiesOfClass(ItemEntity.class,
                 creditor.getBoundingBox().inflate(1.0D, 0.5D, 1.0D),
                 item -> item.isAlive()
+                        && !item.hasPickUpDelay()
+                        && item.getAge() >= 2
                         && !item.getTags().contains(LOAN_PAYOUT_ITEM_TAG)
                         && item.getItem().is(ModItems.BITCOIN));
         items.sort(Comparator.comparingDouble(item -> item.distanceToSqr(creditor)));

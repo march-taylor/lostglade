@@ -63,6 +63,7 @@ public final class OrthodoxAttackSystem {
 	private static final float DISTANCE_FADE_BLOCKS = 5.0F;
 	private static final float VIEW_SCALE_STEP = 0.10F;
 	private static final float OPEN_STEP = 0.05F;
+	private static final long ACTIVATION_OVERLAY_TICKS = 20L;
 	private static final Identifier EYE_MODEL_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "orthodox_divine_eye");
 	private static final Identifier EYE_OPEN_SOUND_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "orthodox_eye_open");
 	private static final Identifier EYE_CLOSE_SOUND_ID = Identifier.fromNamespaceAndPath(Lg2.MOD_ID, "orthodox_eye_close");
@@ -112,14 +113,52 @@ public final class OrthodoxAttackSystem {
 				Math.max(0.0D, remainingHealthHearts) * 2.0D,
 				Math.max(1L, blindnessTicks),
 				target.position(),
-				calculateEyeY(target)
+				calculateEyeY(target),
+				caster.level().getServer().overworld().getGameTime() + ACTIVATION_OVERLAY_TICKS
 		);
 		session.soundOpen = true;
 		SESSIONS.put(caster.getUUID(), session);
 		ServerLevel level = target.level();
 		playEyeTransitionSound(target, true);
-		level.sendParticles(ParticleTypes.END_ROD, target.getX(), target.getY() + target.getBbHeight(), target.getZ(), 28, 0.5D, 0.8D, 0.5D, 0.025D);
+		spawnActivationParticleEye(level, target, caster);
+		PuroSanStockSystem.showAimWarningOverlayOnce(target);
 		return true;
+	}
+
+	private static void spawnActivationParticleEye(ServerLevel level, ServerPlayer target, ServerPlayer caster) {
+		Vec3 center = target.position().add(0.0D, target.getBbHeight() + 0.65D, 0.0D);
+		Vec3 towardCaster = caster.position().subtract(target.position()).multiply(1.0D, 0.0D, 1.0D);
+		if (towardCaster.lengthSqr() < 1.0E-6D) {
+			double yaw = Math.toRadians(target.getYRot());
+			towardCaster = new Vec3(-Math.sin(yaw), 0.0D, Math.cos(yaw));
+		} else {
+			towardCaster = towardCaster.normalize();
+		}
+		Vec3 horizontal = new Vec3(towardCaster.z, 0.0D, -towardCaster.x);
+
+		int lidSteps = 10;
+		for (int index = 0; index <= lidSteps; index++) {
+			double progress = index / (double) lidSteps;
+			double x = (progress * 2.0D - 1.0D) * 0.58D;
+			double curve = Math.sin(progress * Math.PI) * 0.25D;
+			spawnEndRodPoint(level, center.add(horizontal.scale(x)).add(0.0D, curve, 0.0D));
+			if (index > 0 && index < lidSteps) {
+				spawnEndRodPoint(level, center.add(horizontal.scale(x)).add(0.0D, -curve, 0.0D));
+			}
+		}
+		for (int index = 0; index < 8; index++) {
+			double angle = Math.PI * 2.0D * index / 8.0D;
+			Vec3 irisPoint = center
+					.add(horizontal.scale(Math.cos(angle) * 0.11D))
+					.add(0.0D, Math.sin(angle) * 0.11D, 0.0D)
+					.add(towardCaster.scale(0.015D));
+			spawnEndRodPoint(level, irisPoint);
+		}
+		spawnEndRodPoint(level, center.add(towardCaster.scale(0.025D)));
+	}
+
+	private static void spawnEndRodPoint(ServerLevel level, Vec3 point) {
+		level.sendParticles(ParticleTypes.END_ROD, point.x, point.y, point.z, 1, 0.0D, 0.0D, 0.0D, 0.0D);
 	}
 
 	public static void onSuccessfulDamage(ServerLevel level, LivingEntity victim, DamageSource source, float amount) {
@@ -155,11 +194,16 @@ public final class OrthodoxAttackSystem {
 
 	private static void tick(MinecraftServer server) {
 		if (server == null || SESSIONS.isEmpty()) return;
+		long nowTick = server.overworld().getGameTime();
 		Iterator<DivineGazeSession> iterator = SESSIONS.values().iterator();
 		while (iterator.hasNext()) {
 			DivineGazeSession session = iterator.next();
 			ServerPlayer target = server.getPlayerList().getPlayer(session.targetId);
 			boolean activeWorld = target != null && target.isAlive() && isGazeDimension(target.level());
+			if (!session.activationOverlayRestored && target != null && nowTick >= session.activationOverlayRestoreTick) {
+				PuroSanStockSystem.restoreScreenOverlayAfterAimWarning(target);
+				session.activationOverlayRestored = true;
+			}
 
 			if (!session.terminating && activeWorld) {
 				session.remainingTicks--;
@@ -391,12 +435,15 @@ public final class OrthodoxAttackSystem {
 		private final Map<UUID, EyeView> views = new HashMap<>();
 		private Vec3 lastTargetPosition;
 		private double lastEyeY;
+		private final long activationOverlayRestoreTick;
 		private float openProgress;
 		private boolean soundOpen;
 		private boolean terminating;
+		private boolean activationOverlayRestored;
 
 		private DivineGazeSession(UUID casterId, UUID targetId, long remainingTicks, double visibilityRadius,
-				double remainingHealthPoints, long blindnessTicks, Vec3 lastTargetPosition, double lastEyeY) {
+				double remainingHealthPoints, long blindnessTicks, Vec3 lastTargetPosition, double lastEyeY,
+				long activationOverlayRestoreTick) {
 			this.casterId = casterId;
 			this.targetId = targetId;
 			this.remainingTicks = remainingTicks;
@@ -405,6 +452,7 @@ public final class OrthodoxAttackSystem {
 			this.blindnessTicks = blindnessTicks;
 			this.lastTargetPosition = lastTargetPosition;
 			this.lastEyeY = lastEyeY;
+			this.activationOverlayRestoreTick = activationOverlayRestoreTick;
 		}
 	}
 
