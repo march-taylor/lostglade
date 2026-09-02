@@ -83,9 +83,15 @@ public final class AncientUkrCreditSystem {
     private static final long LOAN_PAYOUT_STACK_INTERVAL_TICKS = 4L;
     private static final String COIN_GLYPH = "\ue981";
     private static final String FALLBACK_COIN = "\u20bf";
+    private static final String CREDIT_SCOREBOARD_HEADER_GLYPH = "\uebf2";
+    private static final int CREDIT_SCOREBOARD_HEADER_WIDTH = 156;
+    private static final int CREDIT_SCOREBOARD_TITLE_START = 54;
+    private static final int CREDIT_SCOREBOARD_TITLE_WIDTH = 42;
     private static final String LOAN_PAYOUT_ITEM_TAG = "lg2_ancient_ukr_loan_payout";
     private static final FontDescription COIN_FONT = new FontDescription.Resource(
             Objects.requireNonNull(Identifier.tryParse("lg2:upgrade_tooltip")));
+    private static final FontDescription CREDIT_SCOREBOARD_FONT = new FontDescription.Resource(
+            Objects.requireNonNull(Identifier.tryParse("lg2:credit_scoreboard")));
 
     private static CreditStore store = new CreditStore();
     private static final Map<UUID, Objective> CLIENT_OBJECTIVES = new HashMap<>();
@@ -223,7 +229,7 @@ public final class AncientUkrCreditSystem {
             return;
         }
         Objective objective = new Objective(new Scoreboard(), objectiveName(playerId), ObjectiveCriteria.DUMMY,
-                Component.literal("\u041a\u0440\u0435\u0434\u0438\u0442\u044b").withStyle(ChatFormatting.GOLD),
+                creditScoreboardTitle(player),
                 ObjectiveCriteria.RenderType.INTEGER, false, BlankFormat.INSTANCE);
         CLIENT_OBJECTIVES.put(playerId, objective);
         player.connection.send(new ClientboundSetObjectivePacket(objective, ClientboundSetObjectivePacket.METHOD_ADD));
@@ -640,10 +646,39 @@ public final class AncientUkrCreditSystem {
     }
 
     private static Component creditLine(ServerPlayer player, Credit credit) {
-        MutableComponent line = Component.literal("\u041a\u0440\u0435\u0434\u0438\u0442 \u2116" + credit.number + " - " + formatAmount(credit.debt) + " ")
-                .withStyle(style -> style.withColor(ChatFormatting.WHITE).withItalic(false));
+        MutableComponent line = Component.literal("◆ ")
+                .withStyle(style -> style.withColor(0xD3AA4D).withItalic(false));
+        line.append(Component.literal("\u041a\u0440\u0435\u0434\u0438\u0442 \u2116" + credit.number + "  ")
+                .withStyle(style -> style.withColor(0xDDD4C3).withItalic(false)));
+        line.append(Component.literal("\u0414\u041e\u041b\u0413 ")
+                .withStyle(style -> style.withColor(0x96795A).withItalic(false)));
+        line.append(Component.literal(formatAmount(credit.debt) + " ")
+                .withStyle(style -> style.withColor(0xFFFFFF).withItalic(false)));
         line.append(coinComponent(player));
         return line;
+    }
+
+    /**
+     * Sidebar rows have dynamic width, so using a tall full-panel glyph would
+     * inevitably overlap credits when their number changes.  A one-line title
+     * plate keeps the vanilla layout intact while giving the creditor UI a
+     * resource-pack-only frame.
+     */
+    private static Component creditScoreboardTitle(ServerPlayer player) {
+        Component fallback = Component.literal("\u041a\u0440\u0435\u0434\u0438\u0442\u044b")
+                .withStyle(style -> style.withColor(ChatFormatting.GOLD).withItalic(false));
+        if (player == null || !PolymerResourcePackUtils.hasMainPack(player)) {
+            return fallback;
+        }
+        MutableComponent title = Component.empty();
+        title.append(Component.literal(CREDIT_SCOREBOARD_HEADER_GLYPH)
+                .withStyle(style -> style.withColor(0xFFFFFF).withItalic(false).withFont(CREDIT_SCOREBOARD_FONT)));
+        title.append(defaultStyled(horizontalAdvance(CREDIT_SCOREBOARD_TITLE_START - CREDIT_SCOREBOARD_HEADER_WIDTH)));
+        title.append(Component.literal("\u041a\u0420\u0415\u0414\u0418\u0422\u042b")
+                .withStyle(style -> style.withColor(0xF3D078).withBold(true).withItalic(false)));
+        title.append(defaultStyled(horizontalAdvance(
+                CREDIT_SCOREBOARD_HEADER_WIDTH - CREDIT_SCOREBOARD_TITLE_START - CREDIT_SCOREBOARD_TITLE_WIDTH)));
+        return title;
     }
 
     private static Component coinComponent(ServerPlayer player) {
@@ -652,6 +687,30 @@ public final class AncientUkrCreditSystem {
                     style.withColor(0xFFFFFF).withItalic(false).withFont(COIN_FONT));
         }
         return Component.literal(FALLBACK_COIN).withStyle(style -> style.withColor(0xF6B800).withItalic(false));
+    }
+
+    private static Component defaultStyled(String text) {
+        return Component.literal(text).withStyle(style -> style.withItalic(false));
+    }
+
+    private static String horizontalAdvance(int pixels) {
+        if (pixels == 0) return "";
+        int remaining = pixels;
+        int[] values = remaining > 0
+                ? new int[]{64, 32, 16, 8, 4, 2, 1}
+                : new int[]{-64, -32, -16, -8, -4, -2, -1};
+        String[] glyphs = remaining > 0
+                ? new String[]{"\ue94d", "\ue94c", "\ue94b", "\ue94a", "\ue949", "\ue948", "\ue947"}
+                : new String[]{"\ue940", "\ue941", "\ue942", "\ue943", "\ue944", "\ue945", "\ue946"};
+        StringBuilder result = new StringBuilder();
+        for (int index = 0; index < values.length; index++) {
+            int step = values[index];
+            while ((remaining > 0 && remaining >= step) || (remaining < 0 && remaining <= step)) {
+                result.append(glyphs[index]);
+                remaining -= step;
+            }
+        }
+        return result.toString();
     }
 
     private static void restoreServerSidebar(ServerPlayer player) {
