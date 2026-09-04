@@ -86,9 +86,18 @@ public final class AncientUkrCreditSystem {
     private static final String COIN_GLYPH = "\ue981";
     private static final String FALLBACK_COIN = "\u20bf";
     private static final String CREDIT_SCOREBOARD_HEADER_GLYPH = "\uebf2";
-    private static final int CREDIT_SCOREBOARD_HEADER_WIDTH = 156;
-    private static final int CREDIT_SCOREBOARD_TITLE_START = 54;
-    private static final int CREDIT_SCOREBOARD_TITLE_WIDTH = 42;
+    private static final String CREDIT_SCOREBOARD_MIDDLE_GLYPH = "\uebf3";
+    private static final String CREDIT_SCOREBOARD_BOTTOM_GLYPH = "\uebf4";
+    // Vanilla renders its sidebar background two pixels beyond each side of its
+    // measured text width.  The glyph therefore begins two pixels before the
+    // text origin and is 160 px wide, while its negative spaces leave vanilla
+    // measuring the component as exactly 156 px.
+    private static final int CREDIT_SCOREBOARD_CONTENT_WIDTH = 156;
+    private static final int CREDIT_SCOREBOARD_GLYPH_RENDER_WIDTH = 160;
+    // BitmapProvider adds one pixel to a bitmap glyph's advance.
+    private static final int CREDIT_SCOREBOARD_GLYPH_ADVANCE = CREDIT_SCOREBOARD_GLYPH_RENDER_WIDTH + 1;
+    private static final int CREDIT_SCOREBOARD_LEFT_OVERFLOW = 2;
+    private static final int CREDIT_SCOREBOARD_ENTRY_START = 13;
     private static final String LOAN_PAYOUT_ITEM_TAG = "lg2_ancient_ukr_loan_payout";
     private static final FontDescription COIN_FONT = new FontDescription.Resource(
             Objects.requireNonNull(Identifier.tryParse("lg2:upgrade_tooltip")));
@@ -252,6 +261,13 @@ public final class AncientUkrCreditSystem {
             Credit credit = credits.get(index);
             player.connection.send(new ClientboundSetScorePacket("lg2_credit_" + credit.number, objective.getName(),
                     credits.size() - index, Optional.of(creditLine(player, credit)), Optional.of(BlankFormat.INSTANCE)));
+        }
+        if (hasCreditScoreboardPack(player)) {
+            // A genuine final sidebar row makes the lower corners independent of
+            // the number of active credits.  Its score is deliberately lowest so
+            // vanilla places it after every debt line.
+            player.connection.send(new ClientboundSetScorePacket("lg2_credit_frame_bottom", objective.getName(),
+                    0, Optional.of(creditScoreboardFooter()), Optional.of(BlankFormat.INSTANCE)));
         }
     }
 
@@ -684,12 +700,19 @@ public final class AncientUkrCreditSystem {
     }
 
     private static Component creditLine(ServerPlayer player, Credit credit) {
-        MutableComponent line = Component.literal("◆ ")
-                .withStyle(style -> style.withColor(0xD3AA4D).withItalic(false));
-        line.append(Component.literal("\u041a\u0440\u0435\u0434\u0438\u0442 \u2116" + credit.number + "  ")
+        MutableComponent line = Component.empty();
+        if (hasCreditScoreboardPack(player)) {
+            line.append(defaultStyled(horizontalAdvance(-CREDIT_SCOREBOARD_LEFT_OVERFLOW)));
+            line.append(Component.literal(CREDIT_SCOREBOARD_MIDDLE_GLYPH)
+                    .withStyle(style -> style.withColor(0xFFFFFF).withItalic(false).withFont(CREDIT_SCOREBOARD_FONT)));
+            line.append(defaultStyled(horizontalAdvance(CREDIT_SCOREBOARD_ENTRY_START
+                    - (CREDIT_SCOREBOARD_GLYPH_ADVANCE - CREDIT_SCOREBOARD_LEFT_OVERFLOW))));
+            // Reserve one vanilla text glyph after the frame so every dynamic
+            // part of the row clears its inner border by a full character.
+            line.append(defaultStyled(" "));
+        }
+        line.append(Component.literal("\u041a\u0440\u0435\u0434\u0438\u0442 \u2116" + credit.number + " ")
                 .withStyle(style -> style.withColor(0xDDD4C3).withItalic(false)));
-        line.append(Component.literal("\u0414\u041e\u041b\u0413 ")
-                .withStyle(style -> style.withColor(0x96795A).withItalic(false)));
         line.append(Component.literal(formatAmount(credit.debt) + " ")
                 .withStyle(style -> style.withColor(0xFFFFFF).withItalic(false)));
         line.append(coinComponent(player));
@@ -697,26 +720,37 @@ public final class AncientUkrCreditSystem {
     }
 
     /**
-     * Sidebar rows have dynamic width, so using a tall full-panel glyph would
-     * inevitably overlap credits when their number changes.  A one-line title
-     * plate keeps the vanilla layout intact while giving the creditor UI a
-     * resource-pack-only frame.
+     * The artwork contains its own title.  Its baseline is chosen so its lower
+     * edge meets the first credit row; the enlarged header therefore grows
+     * upward instead of covering dynamic sidebar rows below it.
      */
     private static Component creditScoreboardTitle(ServerPlayer player) {
         Component fallback = Component.literal("\u041a\u0440\u0435\u0434\u0438\u0442\u044b")
                 .withStyle(style -> style.withColor(ChatFormatting.GOLD).withItalic(false));
-        if (player == null || !PolymerResourcePackUtils.hasMainPack(player)) {
+        if (!hasCreditScoreboardPack(player)) {
             return fallback;
         }
         MutableComponent title = Component.empty();
+        title.append(defaultStyled(horizontalAdvance(-CREDIT_SCOREBOARD_LEFT_OVERFLOW)));
         title.append(Component.literal(CREDIT_SCOREBOARD_HEADER_GLYPH)
                 .withStyle(style -> style.withColor(0xFFFFFF).withItalic(false).withFont(CREDIT_SCOREBOARD_FONT)));
-        title.append(defaultStyled(horizontalAdvance(CREDIT_SCOREBOARD_TITLE_START - CREDIT_SCOREBOARD_HEADER_WIDTH)));
-        title.append(Component.literal("\u041a\u0420\u0415\u0414\u0418\u0422\u042b")
-                .withStyle(style -> style.withColor(0xF3D078).withBold(true).withItalic(false)));
         title.append(defaultStyled(horizontalAdvance(
-                CREDIT_SCOREBOARD_HEADER_WIDTH - CREDIT_SCOREBOARD_TITLE_START - CREDIT_SCOREBOARD_TITLE_WIDTH)));
+                CREDIT_SCOREBOARD_CONTENT_WIDTH - (CREDIT_SCOREBOARD_GLYPH_ADVANCE - CREDIT_SCOREBOARD_LEFT_OVERFLOW))));
         return title;
+    }
+
+    private static Component creditScoreboardFooter() {
+        MutableComponent footer = Component.empty();
+        footer.append(defaultStyled(horizontalAdvance(-CREDIT_SCOREBOARD_LEFT_OVERFLOW)));
+        footer.append(Component.literal(CREDIT_SCOREBOARD_BOTTOM_GLYPH)
+                .withStyle(style -> style.withColor(0xFFFFFF).withItalic(false).withFont(CREDIT_SCOREBOARD_FONT)));
+        footer.append(defaultStyled(horizontalAdvance(CREDIT_SCOREBOARD_CONTENT_WIDTH
+                - (CREDIT_SCOREBOARD_GLYPH_ADVANCE - CREDIT_SCOREBOARD_LEFT_OVERFLOW))));
+        return footer;
+    }
+
+    private static boolean hasCreditScoreboardPack(ServerPlayer player) {
+        return player != null && PolymerResourcePackUtils.hasMainPack(player);
     }
 
     private static Component coinComponent(ServerPlayer player) {
