@@ -59,3 +59,6 @@
 /.codex
 /server-secrets/*.properties
 shell.nix
+
+# Deployment bundles are built locally and may contain the world data.
+/dist/

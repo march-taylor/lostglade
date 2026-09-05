@@ -37,13 +37,13 @@
 
   "cameraRendererBotPlayerName": "camera",
   "cameraRendererBotTimeoutMs": 15000,
-  "cameraRenderThreads": 10,
+  "cameraRenderThreads": 2,
   "cameraRenderInFlightPixels": 1024,
   "cameraRenderSamplesPerAxis": 2,
 
-  "monitorRenderThreads": 12,
-  "monitorMediaIoThreads": 4,
-  "monitorTileQuantizerThreads": 12,
+  "monitorRenderThreads": 3,
+  "monitorMediaIoThreads": 2,
+  "monitorTileQuantizerThreads": 2,
   "monitorMapUpdateRadiusBlocks": 128,
   "monitorYoutubePollActiveIntervalMs": 50,
   "monitorYoutubePollIdleIntervalMs": 200

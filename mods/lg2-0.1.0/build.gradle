@@ -25,6 +25,12 @@ def skinRestorerJavaClientJars = fileTree(dir: skinRestorerNestedLibDir, include
 def rendererBotNameProp = providers.systemProperty("lg2.rendererBotName").orElse("RendererBot")
 def rendererBotServerProp = providers.systemProperty("lg2.rendererBotServer").orElse("127.0.0.1:25565")
 def cameraMediaCacheRoot = file("${serverRootDir}/cache/lg2-camera").canonicalFile
+// Keep the normal development profile explicit, while letting the VPS service
+// set a bounded heap for the server and the renderer bot independently.
+def serverXmsProp = providers.systemProperty("lg2.serverXms").orElse("8G")
+def serverXmxProp = providers.systemProperty("lg2.serverXmx").orElse("8G")
+def rendererBotXmsProp = providers.systemProperty("lg2.rendererBotXms").orElse("4G")
+def rendererBotXmxProp = providers.systemProperty("lg2.rendererBotXmx").orElse("4G")
 
 repositories {
 	// Add repositories to retrieve artifacts from in here.
@@ -58,7 +64,7 @@ loom {
 	runs {
 		named("server") {
 			runDir("../../")
-			vmArgs("-Xms8G", "-Xmx8G")
+			vmArgs("-Xms${serverXmsProp.get()}", "-Xmx${serverXmxProp.get()}")
 		}
 
 		rendererBotClient {
@@ -67,8 +73,8 @@ loom {
 			ideConfigGenerated = true
 			runDir(rendererBotRunDir.absolutePath)
 			vmArgs(
-					"-Xms4G",
-					"-Xmx4G",
+					"-Xms${rendererBotXmsProp.get()}",
+					"-Xmx${rendererBotXmxProp.get()}",
 					"-Dlg2.rendererBot=true",
 					"-Dlg2.rendererBotName=${rendererBotNameProp.get()}",
 					"-Dlg2.rendererBotServer=${rendererBotServerProp.get()}",

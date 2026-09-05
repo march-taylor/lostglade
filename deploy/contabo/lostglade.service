@@ -1,0 +1,27 @@
+[Unit]
+Description=Lostglade Fabric server with local camera renderer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=lostglade
+Group=lostglade
+WorkingDirectory=/srv/lostglade/mods/lg2-0.1.0
+Environment=JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
+Environment=LIBGL_ALWAYS_SOFTWARE=1
+Environment=MESA_LOADER_DRIVER_OVERRIDE=llvmpipe
+Environment=LIBGL_DRIVERS_PATH=/usr/lib/x86_64-linux-gnu/dri
+Environment=GRADLE_USER_HOME=/srv/lostglade/.gradle-runtime
+Environment=LG2_CAMERA_RENDERER_PROFILE=contabo-vps8
+Environment=JAVA_TOOL_OPTIONS=-XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+ParallelRefProcEnabled -XX:InitiatingHeapOccupancyPercent=15 -Djava.awt.headless=true -Dlg2.rendererBotXms=4G -Dlg2.rendererBotXmx=4G
+ExecStart=/srv/lostglade/deploy/contabo/run-server.sh
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=90
+LimitNOFILE=1048576
+TasksMax=4096
+OOMScoreAdjust=-500
+
+[Install]
+WantedBy=multi-user.target
